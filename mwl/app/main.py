@@ -16,6 +16,14 @@ from pynetdicom.sop_class import ModalityWorklistInformationFind, Verification
 DEFAULT_AE_TITLE = "VIEWREX_WL"
 DEFAULT_PORT = 105
 DEFAULT_WORKLIST_PATH = Path("/app/config/worklist.json")
+REQUIRED_FIELDS = (
+    "PatientID",
+    "PatientName",
+    "AccessionNumber",
+    "Modality",
+    "ScheduledStationAETitle",
+    "ScheduledProcedureStepDescription",
+)
 
 LOGGER = logging.getLogger("kaospacs.mwl")
 
@@ -36,7 +44,65 @@ def _item_summary(dataset: Dataset) -> str:
     )
 
 
-def _load_worklist(path: Path) -> list[dict[str, Any]]:
+def _parse_expires_at(value: Any) -> datetime:
+    raw = _text(value)
+    if raw.endswith("Z"):
+        raw = f"{raw[:-1]}+00:00"
+    return datetime.fromisoformat(raw)
+
+
+def _is_expired(expires_at: datetime, now: datetime) -> bool:
+    if expires_at.tzinfo is None:
+        compare_now = now.replace(tzinfo=None)
+    else:
+        compare_now = now if now.tzinfo is not None else now.astimezone()
+    return expires_at <= compare_now
+
+
+def _is_valid_entry(entry: dict[str, Any], index: int, now: datetime) -> bool:
+    active = entry.get("Active", True)
+    if not isinstance(active, bool):
+        LOGGER.warning(
+            "Skipping invalid worklist entry index=%s reason=Active must be true or false",
+            index,
+        )
+        return False
+    if not active:
+        LOGGER.info("Skipping inactive worklist entry index=%s", index)
+        return False
+
+    missing = [field for field in REQUIRED_FIELDS if not _text(entry.get(field))]
+    if missing:
+        LOGGER.warning(
+            "Skipping invalid worklist entry index=%s reason=missing required fields fields=%s",
+            index,
+            ",".join(missing),
+        )
+        return False
+
+    expires_at = _text(entry.get("ExpiresAt"))
+    if expires_at:
+        try:
+            parsed_expires_at = _parse_expires_at(expires_at)
+        except ValueError:
+            LOGGER.warning(
+                "Skipping invalid worklist entry index=%s reason=invalid ExpiresAt value=%r",
+                index,
+                expires_at,
+            )
+            return False
+        if _is_expired(parsed_expires_at, now):
+            LOGGER.info(
+                "Skipping expired worklist entry index=%s expires_at=%s",
+                index,
+                expires_at,
+            )
+            return False
+
+    return True
+
+
+def _load_worklist(path: Path, now: datetime | None = None) -> list[dict[str, Any]]:
     with path.open("r", encoding="utf-8") as source:
         payload = json.load(source)
 
@@ -44,10 +110,13 @@ def _load_worklist(path: Path) -> list[dict[str, Any]]:
     if not isinstance(entries, list):
         raise ValueError("worklist config must be a list or an object with entries")
 
+    effective_now = now or datetime.now().astimezone()
     normalized = []
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             LOGGER.warning("Skipping non-object worklist entry index=%s", index)
+            continue
+        if not _is_valid_entry(entry, index, effective_now):
             continue
         normalized.append(entry)
     return normalized
@@ -82,8 +151,11 @@ def _entry_to_dataset(entry: dict[str, Any]) -> Dataset:
     return dataset
 
 
-def load_worklist_datasets(path: Path = DEFAULT_WORKLIST_PATH) -> list[Dataset]:
-    return [_entry_to_dataset(entry) for entry in _load_worklist(path)]
+def load_worklist_datasets(
+    path: Path = DEFAULT_WORKLIST_PATH,
+    now: datetime | None = None,
+) -> list[Dataset]:
+    return [_entry_to_dataset(entry) for entry in _load_worklist(path, now=now)]
 
 
 def _dataset_value(dataset: Dataset, keyword: str) -> str:

@@ -1,6 +1,8 @@
 {
   "entries": [
     {
+      "Active": true,
+      "ExpiresAt": "2099-12-31T23:59:59+09:00",
       "SpecificCharacterSet": "ISO_IR 192",
       "PatientName": "TEST^BMD",
       "PatientID": "KAOSMWL001",
@@ -18,6 +20,8 @@
       "ScheduledProcedureStepStartTime": "090000"
     },
     {
+      "Active": true,
+      "ExpiresAt": "2099-12-31T23:59:59+09:00",
       "SpecificCharacterSet": "ISO_IR 192",
       "PatientName": "TEST^XRAY",
       "PatientID": "KAOSMWL002",
