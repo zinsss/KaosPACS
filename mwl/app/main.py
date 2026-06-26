@@ -26,6 +26,16 @@ def _text(value: Any) -> str:
     return str(value).strip()
 
 
+def _item_summary(dataset: Dataset) -> str:
+    step = dataset.ScheduledProcedureStepSequence[0]
+    return (
+        f"patient_id={_dataset_value(dataset, 'PatientID')!r} "
+        f"accession={_dataset_value(dataset, 'AccessionNumber')!r} "
+        f"modality={_dataset_value(step, 'Modality')!r} "
+        f"station_aet={_dataset_value(step, 'ScheduledStationAETitle')!r}"
+    )
+
+
 def _load_worklist(path: Path) -> list[dict[str, Any]]:
     with path.open("r", encoding="utf-8") as source:
         payload = json.load(source)
@@ -136,11 +146,8 @@ def make_handle_find(worklist_path: Path):
             return
 
         matches = [dataset for dataset in datasets if matches_query(identifier, dataset)]
-        for dataset in matches:
-            yield 0xFF00, dataset
-
         LOGGER.info(
-            "C-FIND remote_ip=%s calling_ae=%s called_ae=%s patient_id=%s accession=%s modality=%s station_aet=%s matches=%s",
+            "C-FIND query remote_ip=%s calling_ae=%s called_ae=%s patient_id=%r accession=%r modality=%r station_aet=%r loaded=%s matches=%s",
             remote_ip,
             calling_ae,
             called_ae,
@@ -148,6 +155,18 @@ def make_handle_find(worklist_path: Path):
             requested_accession,
             requested_modality,
             requested_station,
+            len(datasets),
+            len(matches),
+        )
+        for dataset in matches:
+            LOGGER.info("C-FIND match %s", _item_summary(dataset))
+            yield 0xFF00, dataset
+
+        LOGGER.info(
+            "C-FIND complete remote_ip=%s calling_ae=%s called_ae=%s matches=%s status=0x0000",
+            remote_ip,
+            calling_ae,
+            called_ae,
             len(matches),
         )
         yield 0x0000, None

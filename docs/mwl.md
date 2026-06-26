@@ -15,7 +15,18 @@ Legacy modalities expect this identity. Production behavior must preserve it.
 
 ## Current Milestone
 
-The current implementation returns one fictional BMD test worklist item:
+The current implementation reads worklist entries from JSON:
+
+```text
+mwl/config/worklist.json
+```
+
+This JSON file is the current integration boundary. KaosPACS remains
+EMR-agnostic: it does not connect to eGHIS and contains no eGHIS database code.
+Later, KaosEghis-PACS can update this JSON file or call a KaosPACS API that
+updates the same worklist model.
+
+The checked-in sample contains fictional test entries including:
 
 ```text
 PatientName: TEST^BMD
@@ -30,9 +41,10 @@ The service supports:
 
 - Verification C-ECHO
 - Modality Worklist C-FIND
-- Basic query matching by PatientID, AccessionNumber, Modality, and
-  ScheduledStationAETitle
-- C-FIND summary logging for BMD test sessions
+- Multiple JSON worklist entries
+- Query matching by PatientID, AccessionNumber, Modality, and
+  ScheduledStationAETitle; blank query fields are wildcards
+- C-FIND query, match, and completion logging
 
 Run it with:
 
@@ -47,13 +59,14 @@ Query it from inside the container:
 docker compose exec mwl python tools/query_mwl.py
 ```
 
-The utility queries `127.0.0.1:105` with calling AE `KAOSPACS_TEST` and called
-AE `VIEWREX_WL`, then prints the returned patient and scheduled step fields.
+The utility defaults to `127.0.0.1:105` with calling AE `KAOSPACS_TEST` and
+called AE `VIEWREX_WL`, then prints the returned patient and scheduled step
+fields. Optional filters are available:
 
-The worklist item is configured in:
-
-```text
-mwl/config/worklist.json
+```bash
+docker compose exec mwl python tools/query_mwl.py --patient-id KAOSMWL001
+docker compose exec mwl python tools/query_mwl.py --accession-number KAOSMWL002
+docker compose exec mwl python tools/query_mwl.py --modality BMD --station-aet BMD
 ```
 
 ## Later Milestone
