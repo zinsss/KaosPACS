@@ -1,0 +1,21 @@
+{
+  "entries": [
+    {
+      "SpecificCharacterSet": "ISO_IR 192",
+      "PatientName": "TEST^BMD",
+      "PatientID": "KAOSMWL001",
+      "PatientBirthDate": "19700101",
+      "PatientSex": "O",
+      "AccessionNumber": "KAOSMWL001",
+      "Modality": "BMD",
+      "ScheduledStationAETitle": "BMD",
+      "ScheduledProcedureStepDescription": "BMD TEST",
+      "StudyDescription": "BMD TEST",
+      "RequestedProcedureDescription": "BMD TEST",
+      "RequestedProcedureID": "KAOSMWL001",
+      "ScheduledProcedureStepID": "KAOSMWL001",
+      "ScheduledProcedureStepStartDate": "20260626",
+      "ScheduledProcedureStepStartTime": "090000"
+    }
+  ]
+}
