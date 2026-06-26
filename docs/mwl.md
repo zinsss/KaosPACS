@@ -29,6 +29,8 @@ updates the same worklist model.
 The checked-in sample contains fictional test entries including:
 
 ```text
+Active: true
+ExpiresAt: 2099-12-31T23:59:59+09:00
 PatientName: TEST^BMD
 PatientID: KAOSMWL001
 AccessionNumber: KAOSMWL001
@@ -42,9 +44,30 @@ The service supports:
 - Verification C-ECHO
 - Modality Worklist C-FIND
 - Multiple JSON worklist entries
+- Optional `Active` flags; inactive entries are not returned
+- Optional `ExpiresAt` ISO datetime values; expired entries are not returned
+- Per-entry validation with warning logs for invalid entries
 - Query matching by PatientID, AccessionNumber, Modality, and
   ScheduledStationAETitle; blank query fields are wildcards
 - C-FIND query, match, and completion logging
+
+Required JSON fields for a returnable entry:
+
+- `PatientID`
+- `PatientName`
+- `AccessionNumber`
+- `Modality`
+- `ScheduledStationAETitle`
+- `ScheduledProcedureStepDescription`
+
+Optional safety fields:
+
+- `Active`: defaults to `true`; set to `false` to keep an entry in JSON without
+  returning it in MWL responses
+- `ExpiresAt`: ISO datetime string; expired entries are skipped
+
+Invalid entries are skipped with warning logs. One bad entry must not prevent
+the MWL SCP from serving other valid entries.
 
 Run it with:
 
