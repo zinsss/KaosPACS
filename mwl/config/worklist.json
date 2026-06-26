@@ -16,6 +16,23 @@
       "ScheduledProcedureStepID": "KAOSMWL001",
       "ScheduledProcedureStepStartDate": "20260626",
       "ScheduledProcedureStepStartTime": "090000"
+    },
+    {
+      "SpecificCharacterSet": "ISO_IR 192",
+      "PatientName": "TEST^XRAY",
+      "PatientID": "KAOSMWL002",
+      "PatientBirthDate": "19800101",
+      "PatientSex": "O",
+      "AccessionNumber": "KAOSMWL002",
+      "Modality": "CR",
+      "ScheduledStationAETitle": "INNOVISION",
+      "ScheduledProcedureStepDescription": "CR TEST",
+      "StudyDescription": "CR TEST",
+      "RequestedProcedureDescription": "CR TEST",
+      "RequestedProcedureID": "KAOSMWL002",
+      "ScheduledProcedureStepID": "KAOSMWL002",
+      "ScheduledProcedureStepStartDate": "20260626",
+      "ScheduledProcedureStepStartTime": "091500"
     }
   ]
 }

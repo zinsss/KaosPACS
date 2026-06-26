@@ -67,6 +67,8 @@ services:
       MWL_AET: ${MWL_AET:-VIEWREX_WL}
       MWL_PORT: "105"
       WORKLIST_PATH: /app/config/worklist.json
+    volumes:
+      - ./mwl/config:/app/config:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 105), 2).close()"]
       interval: 10s

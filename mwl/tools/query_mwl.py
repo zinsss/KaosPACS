@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+import argparse
 
 from pydicom.dataset import Dataset
 from pydicom.sequence import Sequence
@@ -17,19 +18,24 @@ CALLING_AE = "KAOSPACS_TEST"
 CALLED_AE = "VIEWREX_WL"
 
 
-def build_query() -> Dataset:
+def build_query(
+    patient_id: str,
+    accession_number: str,
+    modality: str,
+    station_aet: str,
+) -> Dataset:
     query = Dataset()
     query.QueryRetrieveLevel = "WORKLIST"
     query.PatientName = ""
-    query.PatientID = ""
+    query.PatientID = patient_id
     query.PatientBirthDate = ""
     query.PatientSex = ""
-    query.AccessionNumber = ""
+    query.AccessionNumber = accession_number
     query.RequestedProcedureDescription = ""
 
     step = Dataset()
-    step.Modality = "BMD"
-    step.ScheduledStationAETitle = "BMD"
+    step.Modality = modality
+    step.ScheduledStationAETitle = station_aet
     step.ScheduledProcedureStepStartDate = ""
     step.ScheduledProcedureStepStartTime = ""
     step.ScheduledProcedureStepDescription = ""
@@ -46,6 +52,7 @@ def value(dataset: Dataset, keyword: str) -> str:
 
 def print_match(identifier: Dataset) -> None:
     step = identifier.ScheduledProcedureStepSequence[0]
+    print("---")
     print("PatientID:", value(identifier, "PatientID"))
     print("PatientName:", value(identifier, "PatientName"))
     print("AccessionNumber:", value(identifier, "AccessionNumber"))
@@ -58,17 +65,34 @@ def print_match(identifier: Dataset) -> None:
 
 
 def main() -> int:
-    ae = AE(ae_title=CALLING_AE)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--host", default=HOST)
+    parser.add_argument("--port", default=PORT, type=int)
+    parser.add_argument("--calling-ae", default=CALLING_AE)
+    parser.add_argument("--called-ae", default=CALLED_AE)
+    parser.add_argument("--patient-id", default="")
+    parser.add_argument("--accession-number", default="")
+    parser.add_argument("--modality", default="")
+    parser.add_argument("--station-aet", default="")
+    args = parser.parse_args()
+
+    ae = AE(ae_title=args.calling_ae)
     ae.add_requested_context(ModalityWorklistInformationFind)
 
-    assoc = ae.associate(HOST, PORT, ae_title=CALLED_AE)
+    assoc = ae.associate(args.host, args.port, ae_title=args.called_ae)
     if not assoc.is_established:
-        print(f"Association failed: {CALLED_AE}@{HOST}:{PORT}", file=sys.stderr)
+        print(f"Association failed: {args.called_ae}@{args.host}:{args.port}", file=sys.stderr)
         return 1
 
     matches = 0
     try:
-        for status, identifier in assoc.send_c_find(build_query(), ModalityWorklistInformationFind):
+        query = build_query(
+            patient_id=args.patient_id,
+            accession_number=args.accession_number,
+            modality=args.modality,
+            station_aet=args.station_aet,
+        )
+        for status, identifier in assoc.send_c_find(query, ModalityWorklistInformationFind):
             if status is None:
                 print("C-FIND failed: no status returned", file=sys.stderr)
                 return 1
