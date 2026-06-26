@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: kaospacs-postgres
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Seoul}
+      POSTGRES_DB: ${POSTGRES_DB:-orthanc}
+      POSTGRES_USER: ${POSTGRES_USER:-orthanc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+    volumes:
+      - ${POSTGRES_DATA:-/srv/docker/kaospacs/postgres}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-orthanc} -d ${POSTGRES_DB:-orthanc}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  orthanc:
+    image: orthancteam/orthanc:latest
+    container_name: kaospacs-orthanc
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${ORTHANC_DICOM_PORT:-104}:104"
+      - "${ORTHANC_HTTP_PORT:-8042}:8042"
+    environment:
+      TZ: ${TZ:-Asia/Seoul}
+      ORTHANC__NAME: ${ORTHANC_NAME:-KaosPACS}
+      ORTHANC__DICOM_AET: ${ORTHANC_AET:-VIEWREX}
+      ORTHANC__DICOM_PORT: "104"
+      ORTHANC__DICOM_SERVER_ENABLED: "true"
+      ORTHANC__HTTP_PORT: "8042"
+      ORTHANC__REMOTE_ACCESS_ALLOWED: "true"
+      ORTHANC__AUTHENTICATION_ENABLED: "false"
+      ORTHANC__STORAGE_DIRECTORY: /var/lib/orthanc/storage
+      ORTHANC__POSTGRESQL__ENABLE_INDEX: "true"
+      ORTHANC__POSTGRESQL__ENABLE_STORAGE: "false"
+      ORTHANC__POSTGRESQL__HOST: postgres
+      ORTHANC__POSTGRESQL__PORT: "5432"
+      ORTHANC__POSTGRESQL__DATABASE: ${POSTGRES_DB:-orthanc}
+      ORTHANC__POSTGRESQL__USERNAME: ${POSTGRES_USER:-orthanc}
+      ORTHANC__POSTGRESQL__PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+      DICOM_WEB_PLUGIN_ENABLED: "true"
+      STONE_WEB_VIEWER_PLUGIN_ENABLED: "true"
+      POSTGRESQL_PLUGIN_ENABLED: "true"
+    volumes:
+      - ./orthanc/orthanc.json:/etc/orthanc/orthanc.json:ro
+      - ${ORTHANC_STORAGE:-/srv/docker/kaospacs/orthanc-storage}:/var/lib/orthanc/storage
+    healthcheck:
+      test: ["CMD", "python3", "/probes/test-aliveness.py"]
+      interval: 10s
+      timeout: 5s
+      retries: 12

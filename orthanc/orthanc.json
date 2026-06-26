@@ -1,0 +1,26 @@
+{
+  "Name": "KaosPACS",
+  "DicomAet": "VIEWREX",
+  "DicomServerEnabled": true,
+  "DicomPort": 104,
+  "HttpServerEnabled": true,
+  "HttpPort": 8042,
+  "RemoteAccessAllowed": true,
+  "AuthenticationEnabled": false,
+  "StorageDirectory": "/var/lib/orthanc/storage",
+  "PostgreSQL": {
+    "EnableIndex": true,
+    "EnableStorage": false,
+    "Host": "postgres",
+    "Port": 5432,
+    "Database": "orthanc",
+    "Username": "orthanc",
+    "Password": "change_me"
+  },
+  "DicomWeb": {
+    "Enable": true,
+    "Root": "/dicom-web/",
+    "EnableWado": true,
+    "WadoRoot": "/wado"
+  }
+}
