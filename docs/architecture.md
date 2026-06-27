@@ -17,18 +17,37 @@ These values are production compatibility requirements, not branding choices.
 
 ## Current Scope
 
-The current implementation contains only:
+The current implementation contains:
 
 - Orthanc as the DICOM server and REST API.
 - PostgreSQL as the Orthanc metadata/index database.
 - Host-mounted file storage for DICOM binaries.
+- KaosPACS MWL SCP at `VIEWREX_WL:105`.
+- MWL local HTTP API bound to `127.0.0.1:8055`.
+- Active MWL JSON state at `/app/data/worklist.json`, initialized from the
+  read-only seed `/app/config/worklist.json`.
+- Minimal MWL SQLite audit database at `/app/data/mwl_audit.sqlite3`.
+
+## Current Boundary
+
+```text
+KaosPACS MWL API / JSON
+  -> MWL service VIEWREX_WL:105
+  -> modality worklist
+  -> modality acquisition
+  -> Orthanc storage VIEWREX:104
+```
+
+The MWL API is local-only by default and manages explicit worklist state:
+active, completed, cancelled, and expired. It does not infer workflow from
+Orthanc studies.
 
 ## Future Flow
 
 ```text
 eGHIS
-  -> KaosPACS Gateway
-  -> MWL service VIEWREX_WL:105
+  -> KaosEghis-PACS / KaosPACS Gateway
+  -> KaosPACS MWL API or JSON update
   -> modality worklist
   -> modality acquisition
   -> Orthanc storage VIEWREX:104
@@ -42,8 +61,10 @@ infrastructure. It should stay boring.
 
 Business logic belongs outside Orthanc:
 
-- Gateway: eGHIS integration, launch coordination, and future workflow APIs.
-- MWL: modality worklist responses and eGHIS order-derived scheduling.
+- Gateway / KaosEghis-PACS: eGHIS integration, launch coordination, and future
+  workflow APIs.
+- MWL: modality worklist responses, local worklist state, and minimal audit
+  tracking.
 - Web: browser launch, viewer routing, and EMR-facing PACS screens.
 - Migration: read-only ViewRex extraction and additive import tooling.
 

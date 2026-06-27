@@ -3,12 +3,13 @@
 KaosPACS is a Docker-based PACS replacement stack for an expired proprietary
 ViewRex PACS system used with eGHIS EMR and legacy imaging devices.
 
-The current initial scope is deliberately small: run Orthanc with PostgreSQL
-metadata/index storage while keeping DICOM binaries on host file storage.
+The current scope runs Orthanc with PostgreSQL metadata/index storage while
+keeping DICOM binaries on host file storage. It also includes a KaosPACS MWL
+service with a localhost-only update API and a minimal SQLite audit database.
 
-Future services such as MWL, eGHIS polling, gateway logic, web launch, Weasis
-launching, charset evaluation, and ViewRex database migration are documented
-but not implemented yet.
+KaosPACS remains EMR-agnostic. eGHIS integration, polling, routing, web launch,
+Weasis launch coordination, charset evaluation, and ViewRex database migration
+remain separate future work.
 
 ## Legacy Identity
 
@@ -66,6 +67,17 @@ docker compose ps
 
 - Orthanc HTTP: `http://192.168.0.200:8042`
 - DICOM SCP: `192.168.0.200:104`, AET `VIEWREX`
+- MWL SCP: `192.168.0.200:105`, AET `VIEWREX_WL`
+- MWL local API: `http://127.0.0.1:8055/health`
 
 Port `104` is a privileged low port. Binding it may require a rootful Docker
 daemon, host networking, or adjusted capabilities depending on the environment.
+
+## MWL Runtime Data
+
+The checked-in MWL seed file is mounted read-only at
+`/app/config/worklist.json`. On first startup, the MWL service initializes the
+active runtime worklist at `/app/data/worklist.json`.
+
+`/app/data` persists on the host at `/srv/docker/kaospacs/mwl` and also stores
+the minimal audit database at `/app/data/mwl_audit.sqlite3`.
