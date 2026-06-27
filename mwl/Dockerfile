@@ -12,5 +12,6 @@ COPY config ./config
 COPY tools ./tools
 
 EXPOSE 105
+EXPOSE 8055
 
 CMD ["python", "-m", "app.main"]
