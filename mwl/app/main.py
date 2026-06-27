@@ -23,7 +23,8 @@ DEFAULT_AE_TITLE = "VIEWREX_WL"
 DEFAULT_PORT = 105
 DEFAULT_API_HOST = "0.0.0.0"
 DEFAULT_API_PORT = 8055
-DEFAULT_WORKLIST_PATH = Path("/app/config/worklist.json")
+DEFAULT_WORKLIST_SEED_PATH = Path("/app/config/worklist.json")
+DEFAULT_WORKLIST_PATH = Path("/app/data/worklist.json")
 DEFAULT_AUDIT_DB_PATH = Path("/app/data/mwl_audit.sqlite3")
 REQUIRED_FIELDS = (
     "PatientID",
@@ -212,6 +213,23 @@ def write_worklist_payload(path: Path, payload: dict[str, Any]) -> None:
     finally:
         if temp_path and temp_path.exists():
             temp_path.unlink()
+
+
+def initialize_worklist_from_seed(worklist_path: Path, seed_path: Path) -> None:
+    if worklist_path.exists():
+        LOGGER.info("Using existing runtime worklist path=%s", worklist_path)
+        return
+
+    LOGGER.info(
+        "Initializing runtime worklist path=%s seed_path=%s",
+        worklist_path,
+        seed_path,
+    )
+    payload = read_worklist_payload(seed_path)
+    errors = validate_worklist_payload(payload)
+    if errors:
+        raise ValueError(f"invalid seed worklist: {'; '.join(errors)}")
+    write_worklist_payload(worklist_path, payload)
 
 
 def init_audit_db(path: Path) -> None:
@@ -745,9 +763,11 @@ def main() -> None:
     port = int(os.getenv("MWL_PORT", str(DEFAULT_PORT)))
     api_host = os.getenv("MWL_API_HOST", DEFAULT_API_HOST)
     api_port = int(os.getenv("MWL_API_PORT", str(DEFAULT_API_PORT)))
+    seed_path = Path(os.getenv("WORKLIST_SEED_PATH", str(DEFAULT_WORKLIST_SEED_PATH)))
     worklist_path = Path(os.getenv("WORKLIST_PATH", str(DEFAULT_WORKLIST_PATH)))
     audit_db_path = Path(os.getenv("MWL_AUDIT_DB", str(DEFAULT_AUDIT_DB_PATH)))
     LOGGER.info("Runtime timestamp=%s", datetime.now().isoformat(timespec="seconds"))
+    initialize_worklist_from_seed(worklist_path=worklist_path, seed_path=seed_path)
     start_api_server(
         host=api_host,
         port=api_port,

@@ -70,9 +70,10 @@ services:
       MWL_API_HOST: "0.0.0.0"
       MWL_API_PORT: "8055"
       MWL_AUDIT_DB: /app/data/mwl_audit.sqlite3
-      WORKLIST_PATH: /app/config/worklist.json
+      WORKLIST_SEED_PATH: /app/config/worklist.json
+      WORKLIST_PATH: /app/data/worklist.json
     volumes:
-      - ./mwl/config:/app/config
+      - ./mwl/config:/app/config:ro
       - ${MWL_DATA:-/srv/docker/kaospacs/mwl}:/app/data
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 105), 2).close()"]

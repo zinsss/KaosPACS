@@ -10,7 +10,12 @@ from pydicom.sequence import Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.main import load_worklist_datasets, matches_query, start_api_server
+from app.main import (
+    initialize_worklist_from_seed,
+    load_worklist_datasets,
+    matches_query,
+    start_api_server,
+)
 
 
 NOW = datetime(2026, 6, 27, 9, 0, 0, tzinfo=timezone.utc)
@@ -214,6 +219,22 @@ def test_api_get_worklist_returns_current_entries(tmp_path):
 
     assert status == 200
     assert payload["entries"][0]["PatientID"] == "VALID001"
+
+
+def test_initialize_worklist_from_seed_copies_only_when_missing(tmp_path):
+    seed = write_worklist(tmp_path, [valid_entry(PatientID="SEED", AccessionNumber="SEED")])
+    runtime = tmp_path / "data" / "worklist.json"
+
+    initialize_worklist_from_seed(runtime, seed)
+
+    assert json.loads(runtime.read_text(encoding="utf-8"))["entries"][0]["PatientID"] == "SEED"
+
+    replacement = {"entries": [valid_entry(PatientID="RUNTIME", AccessionNumber="RUNTIME")]}
+    runtime.write_text(json.dumps(replacement), encoding="utf-8")
+
+    initialize_worklist_from_seed(runtime, seed)
+
+    assert json.loads(runtime.read_text(encoding="utf-8")) == replacement
 
 
 def test_api_valid_put_updates_file(tmp_path):

@@ -15,11 +15,22 @@ Legacy modalities expect this identity. Production behavior must preserve it.
 
 ## Current Milestone
 
-The current implementation reads worklist entries from JSON:
+The checked-in seed worklist is:
 
 ```text
 mwl/config/worklist.json
 ```
+
+At runtime, the container copies this seed into the persistent data directory
+only when the runtime file does not already exist:
+
+```text
+WORKLIST_SEED_PATH=/app/config/worklist.json
+WORKLIST_PATH=/app/data/worklist.json
+```
+
+`/app/config` is mounted read-only. API writes must go to `/app/data`, never to
+the seed file.
 
 This JSON file, the local MWL HTTP API, and a minimal SQLite audit database are
 the current PACS-side integration boundary. KaosPACS remains EMR-agnostic: it
@@ -138,7 +149,8 @@ and expired. It does not infer clinical workflow from Orthanc studies.
 
 The active worklist and the audit database have different jobs:
 
-- Active worklist JSON: operational state used to answer DICOM MWL C-FIND.
+- Active worklist JSON: `/app/data/worklist.json`, operational state used to
+  answer DICOM MWL C-FIND.
 - Audit SQLite DB: minimal daily/history tracking for PACS-side integration
   events.
 
