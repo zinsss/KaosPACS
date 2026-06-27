@@ -21,10 +21,10 @@ The current implementation reads worklist entries from JSON:
 mwl/config/worklist.json
 ```
 
-This JSON file is the current integration boundary. KaosPACS remains
-EMR-agnostic: it does not connect to eGHIS and contains no eGHIS database code.
-Later, KaosEghis-PACS can update this JSON file or call a KaosPACS API that
-updates the same worklist model.
+This JSON file and the local MWL HTTP API are the current integration boundary.
+KaosPACS remains EMR-agnostic: it does not connect to eGHIS and contains no
+eGHIS database code. Later, KaosEghis-PACS can update this JSON file or call the
+KaosPACS MWL API that updates the same worklist model.
 
 The checked-in sample contains fictional test entries including:
 
@@ -68,6 +68,70 @@ Optional safety fields:
 
 Invalid entries are skipped with warning logs. One bad entry must not prevent
 the MWL SCP from serving other valid entries.
+
+## Local Update API
+
+The MWL container also runs a small local HTTP API for controlled updates to the
+JSON worklist file:
+
+```text
+GET  /health
+GET  /worklist
+PUT  /worklist
+POST /worklist/complete
+POST /worklist/cancel
+```
+
+By default Docker publishes this API only on host loopback:
+
+```text
+127.0.0.1:8055
+```
+
+Do not expose this API publicly. External access should go through a future
+controlled KaosPACS Gateway or KaosEghis-PACS adapter.
+
+Examples:
+
+```bash
+curl http://127.0.0.1:8055/health
+curl http://127.0.0.1:8055/worklist
+curl -X PUT http://127.0.0.1:8055/worklist \
+  -H 'Content-Type: application/json' \
+  --data @mwl/config/worklist.json
+```
+
+`PUT /worklist` requires the same file shape:
+
+```json
+{
+  "entries": []
+}
+```
+
+The API validates required fields, `Active`, and `ExpiresAt` before writing. An
+invalid payload returns HTTP 400 and does not overwrite the current file. Valid
+writes are atomic replacements of `WORKLIST_PATH`.
+
+Workflow state updates identify entries by `AccessionNumber`:
+
+```bash
+curl -X POST http://127.0.0.1:8055/worklist/complete \
+  -H 'Content-Type: application/json' \
+  -d '{"AccessionNumber":"KAOSMWL001"}'
+
+curl -X POST http://127.0.0.1:8055/worklist/cancel \
+  -H 'Content-Type: application/json' \
+  -d '{"AccessionNumber":"KAOSMWL001","CancelReason":"patient no-show"}'
+```
+
+`complete` sets `Active=false` and `CompletedAt` to the current ISO datetime.
+`cancel` sets `Active=false`, `CancelledAt` to the current ISO datetime, and
+optionally stores `CancelReason`. These actions do not physically delete
+entries.
+
+The MWL API only manages explicit worklist state: active, completed, cancelled,
+and expired. It does not infer clinical workflow from Orthanc studies.
 
 Run it with:
 

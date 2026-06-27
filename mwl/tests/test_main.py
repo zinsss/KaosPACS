@@ -1,6 +1,7 @@
 import json
 import sys
 from datetime import datetime, timezone
+from http.client import HTTPConnection
 from pathlib import Path
 
 from pydicom.dataset import Dataset
@@ -8,7 +9,7 @@ from pydicom.sequence import Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.main import load_worklist_datasets, matches_query
+from app.main import load_worklist_datasets, matches_query, start_api_server
 
 
 NOW = datetime(2026, 6, 27, 9, 0, 0, tzinfo=timezone.utc)
@@ -18,6 +19,29 @@ def write_worklist(tmp_path, entries):
     path = tmp_path / "worklist.json"
     path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
     return path
+
+
+def api_request(server, method, path, payload=None):
+    host, port = server.server_address
+    body = None
+    headers = {}
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    connection = HTTPConnection(host, port, timeout=5)
+    try:
+        connection.request(method, path, body=body, headers=headers)
+        response = connection.getresponse()
+        raw = response.read()
+        parsed = json.loads(raw.decode("utf-8")) if raw else None
+        return response.status, parsed
+    finally:
+        connection.close()
+
+
+def start_test_api(path):
+    return start_api_server("127.0.0.1", 0, path)
 
 
 def valid_entry(**overrides):
@@ -159,3 +183,120 @@ def test_invalid_expires_at_is_skipped(tmp_path, caplog):
 
     assert datasets == []
     assert "invalid ExpiresAt" in caplog.text
+
+
+def test_api_get_worklist_returns_current_entries(tmp_path):
+    path = write_worklist(tmp_path, [valid_entry()])
+    server = start_test_api(path)
+    try:
+        status, payload = api_request(server, "GET", "/worklist")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert status == 200
+    assert payload["entries"][0]["PatientID"] == "VALID001"
+
+
+def test_api_valid_put_updates_file(tmp_path):
+    path = write_worklist(tmp_path, [valid_entry(PatientID="OLD")])
+    server = start_test_api(path)
+    replacement = {
+        "entries": [
+            valid_entry(PatientID="NEW001", AccessionNumber="NEW001"),
+        ]
+    }
+    try:
+        status, payload = api_request(server, "PUT", "/worklist", replacement)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert status == 200
+    assert payload["entries"][0]["PatientID"] == "NEW001"
+    assert json.loads(path.read_text(encoding="utf-8"))["entries"][0]["PatientID"] == "NEW001"
+
+
+def test_api_invalid_put_does_not_overwrite_file(tmp_path):
+    original = {"entries": [valid_entry(PatientID="ORIGINAL")]}
+    path = write_worklist(tmp_path, original["entries"])
+    server = start_test_api(path)
+    invalid = {"entries": [valid_entry(PatientID="")]}
+    try:
+        status, payload = api_request(server, "PUT", "/worklist", invalid)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert status == 400
+    assert "PatientID" in " ".join(payload["details"])
+    assert json.loads(path.read_text(encoding="utf-8")) == original
+
+
+def test_api_put_accepts_inactive_and_expired_but_loader_filters_them(tmp_path):
+    path = write_worklist(tmp_path, [valid_entry()])
+    server = start_test_api(path)
+    replacement = {
+        "entries": [
+            valid_entry(PatientID="INACTIVE", AccessionNumber="INACTIVE", Active=False),
+            valid_entry(
+                PatientID="EXPIRED",
+                AccessionNumber="EXPIRED",
+                ExpiresAt="2000-01-01T00:00:00+00:00",
+            ),
+        ]
+    }
+    try:
+        status, payload = api_request(server, "PUT", "/worklist", replacement)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert status == 200
+    assert len(payload["entries"]) == 2
+    assert load_worklist_datasets(path, now=NOW) == []
+
+
+def test_api_complete_marks_entry_inactive_without_deleting(tmp_path):
+    path = write_worklist(tmp_path, [valid_entry()])
+    server = start_test_api(path)
+    try:
+        status, payload = api_request(
+            server,
+            "POST",
+            "/worklist/complete",
+            {"AccessionNumber": "VALID001"},
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    entry = payload["worklist"]["entries"][0]
+    assert status == 200
+    assert payload["updated"] == 1
+    assert entry["Active"] is False
+    assert entry["PatientName"] == "TEST^VALID"
+    assert "CompletedAt" in entry
+    assert load_worklist_datasets(path, now=NOW) == []
+
+
+def test_api_cancel_marks_entry_inactive_with_reason(tmp_path):
+    path = write_worklist(tmp_path, [valid_entry()])
+    server = start_test_api(path)
+    try:
+        status, payload = api_request(
+            server,
+            "POST",
+            "/worklist/cancel",
+            {"AccessionNumber": "VALID001", "CancelReason": "patient no-show"},
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    entry = payload["worklist"]["entries"][0]
+    assert status == 200
+    assert entry["Active"] is False
+    assert entry["CancelReason"] == "patient no-show"
+    assert "CancelledAt" in entry
+    assert load_worklist_datasets(path, now=NOW) == []
