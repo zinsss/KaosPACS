@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sqlite3
 import tempfile
 import threading
 from datetime import datetime
@@ -23,6 +24,7 @@ DEFAULT_PORT = 105
 DEFAULT_API_HOST = "0.0.0.0"
 DEFAULT_API_PORT = 8055
 DEFAULT_WORKLIST_PATH = Path("/app/config/worklist.json")
+DEFAULT_AUDIT_DB_PATH = Path("/app/data/mwl_audit.sqlite3")
 REQUIRED_FIELDS = (
     "PatientID",
     "PatientName",
@@ -39,6 +41,15 @@ def _text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _entry_summary(entry: dict[str, Any]) -> str:
+    return (
+        f"accession={_text(entry.get('AccessionNumber'))!r} "
+        f"chart_no={_text(entry.get('PatientID'))!r} "
+        f"modality={_text(entry.get('Modality'))!r} "
+        f"station_aet={_text(entry.get('ScheduledStationAETitle'))!r}"
+    )
 
 
 def _item_summary(dataset: Dataset) -> str:
@@ -62,12 +73,49 @@ def _iso_now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def _scheduled_at(entry: dict[str, Any]) -> str:
+    date = _text(entry.get("ScheduledProcedureStepStartDate"))
+    time = _text(entry.get("ScheduledProcedureStepStartTime"))
+    if not date:
+        return ""
+    if len(date) == 8:
+        formatted_date = f"{date[0:4]}-{date[4:6]}-{date[6:8]}"
+    else:
+        formatted_date = date
+    if not time:
+        return formatted_date
+    if len(time) >= 6:
+        formatted_time = f"{time[0:2]}:{time[2:4]}:{time[4:6]}"
+    else:
+        formatted_time = time
+    return f"{formatted_date}T{formatted_time}"
+
+
 def _is_expired(expires_at: datetime, now: datetime) -> bool:
     if expires_at.tzinfo is None:
         compare_now = now.replace(tzinfo=None)
     else:
         compare_now = now if now.tzinfo is not None else now.astimezone()
     return expires_at <= compare_now
+
+
+def _entry_status(entry: dict[str, Any], now: datetime | None = None) -> str:
+    if _text(entry.get("CancelledAt")):
+        return "cancelled"
+    if _text(entry.get("CompletedAt")):
+        return "completed"
+    if not entry.get("Active", True):
+        return "inactive"
+
+    expires_at = _text(entry.get("ExpiresAt"))
+    if expires_at:
+        effective_now = now or datetime.now().astimezone()
+        try:
+            if _is_expired(_parse_expires_at(expires_at), effective_now):
+                return "expired"
+        except ValueError:
+            return "invalid"
+    return "active"
 
 
 def validate_worklist_entry(entry: Any, index: int) -> list[str]:
@@ -164,6 +212,107 @@ def write_worklist_payload(path: Path, payload: dict[str, Any]) -> None:
     finally:
         if temp_path and temp_path.exists():
             temp_path.unlink()
+
+
+def init_audit_db(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mwl_audit (
+                accession_number TEXT PRIMARY KEY,
+                chart_no TEXT,
+                study_type TEXT,
+                modality TEXT,
+                station_aet TEXT,
+                scheduled_at TEXT,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT,
+                cancelled_at TEXT,
+                cancel_reason TEXT
+            )
+            """
+        )
+
+
+def _audit_values(entry: dict[str, Any], now: str) -> dict[str, str]:
+    status = _entry_status(entry)
+    return {
+        "accession_number": _text(entry.get("AccessionNumber")),
+        "chart_no": _text(entry.get("PatientID")),
+        "study_type": (
+            _text(entry.get("RequestedProcedureDescription"))
+            or _text(entry.get("StudyDescription"))
+            or _text(entry.get("ScheduledProcedureStepDescription"))
+        ),
+        "modality": _text(entry.get("Modality")),
+        "station_aet": _text(entry.get("ScheduledStationAETitle")),
+        "scheduled_at": _scheduled_at(entry),
+        "status": status,
+        "updated_at": now,
+        "completed_at": _text(entry.get("CompletedAt")),
+        "cancelled_at": _text(entry.get("CancelledAt")),
+        "cancel_reason": _text(entry.get("CancelReason")),
+    }
+
+
+def upsert_audit_entries(path: Path, entries: list[dict[str, Any]]) -> None:
+    init_audit_db(path)
+    now = _iso_now()
+    with sqlite3.connect(path) as connection:
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            values = _audit_values(entry, now)
+            accession_number = values["accession_number"]
+            if not accession_number:
+                continue
+            LOGGER.info("Upserting MWL audit %s status=%s", _entry_summary(entry), values["status"])
+            connection.execute(
+                """
+                INSERT INTO mwl_audit (
+                    accession_number,
+                    chart_no,
+                    study_type,
+                    modality,
+                    station_aet,
+                    scheduled_at,
+                    status,
+                    created_at,
+                    updated_at,
+                    completed_at,
+                    cancelled_at,
+                    cancel_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(accession_number) DO UPDATE SET
+                    chart_no=excluded.chart_no,
+                    study_type=excluded.study_type,
+                    modality=excluded.modality,
+                    station_aet=excluded.station_aet,
+                    scheduled_at=excluded.scheduled_at,
+                    status=excluded.status,
+                    updated_at=excluded.updated_at,
+                    completed_at=excluded.completed_at,
+                    cancelled_at=excluded.cancelled_at,
+                    cancel_reason=excluded.cancel_reason
+                """,
+                (
+                    values["accession_number"],
+                    values["chart_no"],
+                    values["study_type"],
+                    values["modality"],
+                    values["station_aet"],
+                    values["scheduled_at"],
+                    values["status"],
+                    now,
+                    values["updated_at"],
+                    values["completed_at"],
+                    values["cancelled_at"],
+                    values["cancel_reason"],
+                ),
+            )
 
 
 def _load_worklist(path: Path, now: datetime | None = None) -> list[dict[str, Any]]:
@@ -378,7 +527,7 @@ def _read_request_json(handler: BaseHTTPRequestHandler) -> Any:
     return json.loads(raw.decode("utf-8"))
 
 
-def make_api_handler(worklist_path: Path):
+def make_api_handler(worklist_path: Path, audit_db_path: Path):
     class WorklistApiHandler(BaseHTTPRequestHandler):
         server_version = "KaosPACSMWL/1.0"
 
@@ -432,8 +581,13 @@ def make_api_handler(worklist_path: Path):
 
             try:
                 write_worklist_payload(worklist_path, payload)
+                upsert_audit_entries(audit_db_path, payload.get("entries", []))
             except Exception:
-                LOGGER.exception("MWL API failed to write worklist path=%s", worklist_path)
+                LOGGER.exception(
+                    "MWL API failed to write worklist or audit path=%s audit_db=%s",
+                    worklist_path,
+                    audit_db_path,
+                )
                 _json_response(
                     self,
                     HTTPStatus.INTERNAL_SERVER_ERROR,
@@ -491,6 +645,11 @@ def make_api_handler(worklist_path: Path):
                     state=state,
                     cancel_reason=_text(request.get("CancelReason")),
                 )
+                if updated:
+                    upsert_audit_entries(
+                        audit_db_path,
+                        _find_entries_by_accession(payload, accession_number),
+                    )
             except ValueError as error:
                 _json_response(
                     self,
@@ -534,11 +693,19 @@ def start_api_server(
     host: str,
     port: int,
     worklist_path: Path,
+    audit_db_path: Path,
 ) -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer((host, port), make_api_handler(worklist_path))
+    init_audit_db(audit_db_path)
+    server = ThreadingHTTPServer((host, port), make_api_handler(worklist_path, audit_db_path))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    LOGGER.info("Started KaosPACS MWL API host=%s port=%s worklist=%s", host, port, worklist_path)
+    LOGGER.info(
+        "Started KaosPACS MWL API host=%s port=%s worklist=%s audit_db=%s",
+        host,
+        port,
+        worklist_path,
+        audit_db_path,
+    )
     return server
 
 
@@ -579,8 +746,14 @@ def main() -> None:
     api_host = os.getenv("MWL_API_HOST", DEFAULT_API_HOST)
     api_port = int(os.getenv("MWL_API_PORT", str(DEFAULT_API_PORT)))
     worklist_path = Path(os.getenv("WORKLIST_PATH", str(DEFAULT_WORKLIST_PATH)))
+    audit_db_path = Path(os.getenv("MWL_AUDIT_DB", str(DEFAULT_AUDIT_DB_PATH)))
     LOGGER.info("Runtime timestamp=%s", datetime.now().isoformat(timespec="seconds"))
-    start_api_server(host=api_host, port=api_port, worklist_path=worklist_path)
+    start_api_server(
+        host=api_host,
+        port=api_port,
+        worklist_path=worklist_path,
+        audit_db_path=audit_db_path,
+    )
     start_server(ae_title=ae_title, port=port, worklist_path=worklist_path)
 
 

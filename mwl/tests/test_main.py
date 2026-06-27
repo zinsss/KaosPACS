@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import sys
 from datetime import datetime, timezone
 from http.client import HTTPConnection
@@ -40,8 +41,25 @@ def api_request(server, method, path, payload=None):
         connection.close()
 
 
-def start_test_api(path):
-    return start_api_server("127.0.0.1", 0, path)
+def start_test_api(path, audit_db_path=None):
+    audit_db_path = audit_db_path or path.with_name("mwl_audit.sqlite3")
+    return start_api_server("127.0.0.1", 0, path, audit_db_path)
+
+
+def audit_rows(path):
+    with sqlite3.connect(path) as connection:
+        connection.row_factory = sqlite3.Row
+        return [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM mwl_audit ORDER BY accession_number"
+            )
+        ]
+
+
+def audit_columns(path):
+    with sqlite3.connect(path) as connection:
+        return [row[1] for row in connection.execute("PRAGMA table_info(mwl_audit)")]
 
 
 def valid_entry(**overrides):
@@ -200,7 +218,8 @@ def test_api_get_worklist_returns_current_entries(tmp_path):
 
 def test_api_valid_put_updates_file(tmp_path):
     path = write_worklist(tmp_path, [valid_entry(PatientID="OLD")])
-    server = start_test_api(path)
+    audit_db = tmp_path / "audit.sqlite3"
+    server = start_test_api(path, audit_db)
     replacement = {
         "entries": [
             valid_entry(PatientID="NEW001", AccessionNumber="NEW001"),
@@ -215,6 +234,14 @@ def test_api_valid_put_updates_file(tmp_path):
     assert status == 200
     assert payload["entries"][0]["PatientID"] == "NEW001"
     assert json.loads(path.read_text(encoding="utf-8"))["entries"][0]["PatientID"] == "NEW001"
+    rows = audit_rows(audit_db)
+    assert rows[0]["accession_number"] == "NEW001"
+    assert rows[0]["chart_no"] == "NEW001"
+    assert rows[0]["study_type"] == "BMD TEST"
+    assert rows[0]["modality"] == "BMD"
+    assert rows[0]["station_aet"] == "BMD"
+    assert rows[0]["scheduled_at"] == "2026-06-27T09:00:00"
+    assert rows[0]["status"] == "active"
 
 
 def test_api_invalid_put_does_not_overwrite_file(tmp_path):
@@ -259,7 +286,9 @@ def test_api_put_accepts_inactive_and_expired_but_loader_filters_them(tmp_path):
 
 def test_api_complete_marks_entry_inactive_without_deleting(tmp_path):
     path = write_worklist(tmp_path, [valid_entry()])
-    server = start_test_api(path)
+    audit_db = tmp_path / "audit.sqlite3"
+    server = start_test_api(path, audit_db)
+    api_request(server, "PUT", "/worklist", {"entries": [valid_entry()]})
     try:
         status, payload = api_request(
             server,
@@ -278,11 +307,16 @@ def test_api_complete_marks_entry_inactive_without_deleting(tmp_path):
     assert entry["PatientName"] == "TEST^VALID"
     assert "CompletedAt" in entry
     assert load_worklist_datasets(path, now=NOW) == []
+    rows = audit_rows(audit_db)
+    assert rows[0]["status"] == "completed"
+    assert rows[0]["completed_at"]
 
 
 def test_api_cancel_marks_entry_inactive_with_reason(tmp_path):
     path = write_worklist(tmp_path, [valid_entry()])
-    server = start_test_api(path)
+    audit_db = tmp_path / "audit.sqlite3"
+    server = start_test_api(path, audit_db)
+    api_request(server, "PUT", "/worklist", {"entries": [valid_entry()]})
     try:
         status, payload = api_request(
             server,
@@ -300,3 +334,27 @@ def test_api_cancel_marks_entry_inactive_with_reason(tmp_path):
     assert entry["CancelReason"] == "patient no-show"
     assert "CancelledAt" in entry
     assert load_worklist_datasets(path, now=NOW) == []
+    rows = audit_rows(audit_db)
+    assert rows[0]["status"] == "cancelled"
+    assert rows[0]["cancelled_at"]
+    assert rows[0]["cancel_reason"] == "patient no-show"
+
+
+def test_audit_db_does_not_contain_demographic_columns(tmp_path):
+    path = write_worklist(tmp_path, [valid_entry()])
+    audit_db = tmp_path / "audit.sqlite3"
+    server = start_test_api(path, audit_db)
+    try:
+        status, _ = api_request(server, "PUT", "/worklist", {"entries": [valid_entry()]})
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert status == 200
+    columns = set(audit_columns(audit_db))
+    assert "PatientName" not in columns
+    assert "PatientBirthDate" not in columns
+    assert "PatientSex" not in columns
+    assert "patient_name" not in columns
+    assert "patient_birth_date" not in columns
+    assert "patient_sex" not in columns

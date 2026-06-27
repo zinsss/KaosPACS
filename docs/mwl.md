@@ -21,10 +21,11 @@ The current implementation reads worklist entries from JSON:
 mwl/config/worklist.json
 ```
 
-This JSON file and the local MWL HTTP API are the current integration boundary.
-KaosPACS remains EMR-agnostic: it does not connect to eGHIS and contains no
-eGHIS database code. Later, KaosEghis-PACS can update this JSON file or call the
-KaosPACS MWL API that updates the same worklist model.
+This JSON file, the local MWL HTTP API, and a minimal SQLite audit database are
+the current PACS-side integration boundary. KaosPACS remains EMR-agnostic: it
+does not connect to eGHIS and contains no eGHIS database code. Later,
+KaosEghis-PACS can update this JSON file or call the KaosPACS MWL API that
+updates the same worklist model.
 
 The checked-in sample contains fictional test entries including:
 
@@ -132,6 +133,48 @@ entries.
 
 The MWL API only manages explicit worklist state: active, completed, cancelled,
 and expired. It does not infer clinical workflow from Orthanc studies.
+
+## Audit Database
+
+The active worklist and the audit database have different jobs:
+
+- Active worklist JSON: operational state used to answer DICOM MWL C-FIND.
+- Audit SQLite DB: minimal daily/history tracking for PACS-side integration
+  events.
+
+The audit database is stored inside the MWL service by default:
+
+```text
+MWL_AUDIT_DB=/app/data/mwl_audit.sqlite3
+```
+
+Docker persists `/app/data` to:
+
+```text
+/srv/docker/kaospacs/mwl
+```
+
+The audit table stores only minimal metadata:
+
+- `accession_number`
+- `chart_no`
+- `study_type`
+- `modality`
+- `station_aet`
+- `scheduled_at`
+- `status`
+- `created_at`
+- `updated_at`
+- `completed_at`
+- `cancelled_at`
+- `cancel_reason`
+
+Privacy rule: the audit DB intentionally does not store patient name, date of
+birth, sex, resident ID, phone, address, diagnosis, or EMR notes. `PatientID`
+from the worklist JSON is treated as the chart number for audit purposes.
+
+`PUT /worklist` upserts audit rows by `AccessionNumber`. Complete and cancel
+actions update both the JSON worklist entry and the matching audit row.
 
 Run it with:
 
