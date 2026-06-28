@@ -17,9 +17,11 @@ These values are production compatibility requirements, not branding choices.
 
 ## Current Scope
 
-The current implementation contains:
+The current implementation is transitional and intentionally keeps the verified
+Orthanc + MWL runtime stable. It contains:
 
-- Orthanc as the DICOM server and REST API.
+- Orthanc temporarily exposed as the modality-facing DICOM Storage SCP at
+  `VIEWREX:104`.
 - PostgreSQL as the Orthanc metadata/index database.
 - Host-mounted file storage for DICOM binaries.
 - KaosPACS MWL SCP at `VIEWREX_WL:105`.
@@ -27,8 +29,9 @@ The current implementation contains:
 - Active MWL JSON state at `/app/data/worklist.json`, initialized from the
   read-only seed `/app/config/worklist.json`.
 - Minimal MWL SQLite audit database at `/app/data/mwl_audit.sqlite3`.
+- No Gateway service yet.
 
-## Current Boundary
+## Current Transitional Boundary
 
 ```text
 KaosPACS MWL API / JSON
@@ -42,29 +45,51 @@ The MWL API is local-only by default and manages explicit worklist state:
 active, completed, cancelled, and expired. It does not infer workflow from
 Orthanc studies.
 
-## Future Flow
+Orthanc owning `VIEWREX:104` is a temporary runtime stage, not the final
+architecture.
+
+## Final Gateway-Centered Boundary
 
 ```text
 eGHIS
-  -> KaosEghis-PACS / KaosPACS Gateway
-  -> KaosPACS MWL API or JSON update
+  -> KaosEghis-PACS
+  -> Gateway or KaosPACS MWL API for worklist create/update/cancel
   -> modality worklist
   -> modality acquisition
-  -> Orthanc storage VIEWREX:104
+  -> Gateway storage SCP VIEWREX:104
+  -> Gateway validates safe charset/tag handling
+  -> Gateway forwards study to Orthanc internal backend
+  -> Gateway calls POST /worklist/complete after successful receive/forward
   -> KaosPACS Web / Weasis launch
 ```
 
+In the final architecture, Gateway owns the legacy storage identity:
+
+```text
+PACS IP:          192.168.0.200
+Storage SCP AET: VIEWREX
+Storage SCP port: 104
+```
+
+Orthanc moves behind Gateway as an internal storage, index, REST, DICOMweb, and
+viewer backend. Orthanc should not remain the final modality-facing owner of
+`VIEWREX:104`.
+
 ## Boundaries
 
-Orthanc is storage, index, DICOM networking, REST, DICOMweb, and viewer plugin
-infrastructure. It should stay boring.
+Orthanc is storage, index, REST, DICOMweb, and viewer plugin infrastructure. It
+should stay boring. In the final architecture its DICOM receive path is behind
+Gateway, not directly exposed as the legacy modality endpoint.
 
 Business logic belongs outside Orthanc:
 
-- Gateway / KaosEghis-PACS: eGHIS integration, launch coordination, and future
-  workflow APIs.
-- MWL: modality worklist responses, local worklist state, and minimal audit
-  tracking.
+- Gateway: modality-facing DICOM Storage SCP, safe DICOM ingress inspection,
+  optional charset/tag fixes after validation, forwarding to Orthanc, and MWL
+  completion calls after successful storage/forwarding.
+- KaosEghis-PACS: eGHIS order discovery with read-only access, normalization,
+  and worklist create/update/cancel. It should not infer DICOM completion.
+- MWL: modality worklist responses, local worklist state, local MWL API, and
+  minimal audit tracking. It must not connect directly to eGHIS.
 - Web: browser launch, viewer routing, and EMR-facing PACS screens.
 - Migration: read-only ViewRex extraction and additive import tooling.
 

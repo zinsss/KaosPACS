@@ -5,7 +5,7 @@
 KaosPACS replaces the expired ViewRex PACS while keeping the same production
 identity for legacy devices.
 
-## Current Verified Storage Path
+## Current Transitional Storage Path
 
 INNOVISION CR has already been verified sending images to Orthanc when Orthanc
 impersonates ViewRex:
@@ -17,6 +17,8 @@ Port: 104
 ```
 
 The current stack keeps that storage path working through Orthanc.
+Orthanc owning `VIEWREX:104` is transitional only. It keeps the working
+Orthanc + MWL stack stable until Gateway is implemented.
 
 ## BMD Path
 
@@ -56,6 +58,11 @@ directly to external systems.
 Completed or cancelled entries are kept in JSON and marked `Active=false`; they
 are not physically deleted and are not returned in DICOM MWL C-FIND responses.
 
+In the final architecture, Gateway is the expected caller of
+`POST /worklist/complete` after it has successfully received and forwarded a
+study to Orthanc. KaosEghis-PACS should create, update, or cancel worklist
+entries based on eGHIS orders, but it should not infer DICOM study completion.
+
 The MWL audit database is:
 
 ```text
@@ -65,7 +72,7 @@ The MWL audit database is:
 It stores minimal PACS-side metadata only. It does not store patient name, DOB,
 sex, resident ID, phone, address, diagnosis, or EMR notes.
 
-## Current Clinical Flow
+## Current Transitional Clinical Flow
 
 ```text
 KaosPACS MWL JSON/API
@@ -75,18 +82,22 @@ KaosPACS MWL JSON/API
   -> Orthanc stores DICOM
 ```
 
-## Future EMR Flow
+## Final Gateway-Centered Flow
 
 ```text
 eGHIS order
-  -> KaosEghis-PACS / KaosPACS Gateway
-  -> KaosPACS MWL API or JSON update
+  -> KaosEghis-PACS normalizes order
+  -> Gateway or KaosPACS MWL API creates/updates/cancels worklist entry
   -> KaosPACS MWL VIEWREX_WL:105
   -> modality selects scheduled patient
   -> modality acquires image
-  -> Orthanc stores DICOM
+  -> Gateway receives DICOM as VIEWREX:104
+  -> Gateway safely inspects/fixes charset or tag issues when validated
+  -> Gateway forwards study to Orthanc internal backend
+  -> Gateway calls POST /worklist/complete
   -> future KaosPACS Web / Weasis opens study
 ```
 
-Do not add eGHIS DB polling to KaosPACS itself. eGHIS integration belongs in a
-future KaosEghis-PACS adapter or Gateway component.
+Do not add eGHIS DB polling to KaosPACS itself. eGHIS integration belongs in
+KaosEghis-PACS. MWL must not connect directly to eGHIS, and KaosEghis-PACS
+must not decide DICOM completion from image storage.

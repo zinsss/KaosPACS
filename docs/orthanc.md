@@ -1,16 +1,22 @@
 # Orthanc
 
-Orthanc is the DICOM storage and index service for KaosPACS.
+Orthanc is the storage, index, REST, DICOMweb, and viewer backend for
+KaosPACS.
 
 ## Identity
 
-Production storage identity:
+Current transitional storage identity:
 
 ```text
 AET:  VIEWREX
 Port: 104
 HTTP: 8042
 ```
+
+Orthanc currently owns `VIEWREX:104` to keep the verified legacy modality
+storage path working. This is temporary. In the final Gateway-centered
+architecture, Gateway will own `VIEWREX:104` and Orthanc will move behind
+Gateway as an internal backend.
 
 Orthanc HTTP is available for initial local testing at:
 
@@ -48,6 +54,11 @@ Default host path:
 ```text
 /srv/docker/kaospacs/orthanc-storage
 ```
+
+In the final architecture, modalities should not send directly to Orthanc.
+Gateway will receive studies, perform validated safe ingestion checks or fixes,
+forward accepted studies to Orthanc, and call the MWL completion endpoint after
+successful receive/forward/storage.
 
 ## Viewer Assumptions
 

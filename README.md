@@ -11,6 +11,29 @@ KaosPACS remains EMR-agnostic. eGHIS integration, polling, routing, web launch,
 Weasis launch coordination, charset evaluation, and ViewRex database migration
 remain separate future work.
 
+## Architecture Stage
+
+Current transitional runtime:
+
+- Orthanc temporarily owns the legacy storage identity `VIEWREX:104`.
+- MWL owns `VIEWREX_WL:105`, active worklist state, the local MWL API, and the
+  minimal audit database.
+- This keeps the verified Orthanc + MWL stack stable while Gateway is still
+  unimplemented.
+
+Final Gateway-centered runtime:
+
+- Gateway will become the modality-facing DICOM Storage SCP at
+  `192.168.0.200:104`, AET `VIEWREX`.
+- Orthanc will move behind Gateway as the internal storage, index, REST,
+  DICOMweb, and viewer backend.
+- Gateway will receive studies from modalities, inspect or fix Korean
+  charset/tag issues only after safe validation, forward studies to Orthanc,
+  and then call `POST /worklist/complete` after successful receive/forward.
+- KaosEghis-PACS will remain the EMR-aware adapter that reads eGHIS with
+  read-only access and creates, updates, or cancels worklist entries. It should
+  not infer DICOM study completion.
+
 ## Legacy Identity
 
 Production behavior must preserve the old PACS identity expected by legacy
@@ -66,12 +89,14 @@ docker compose ps
 ## Test Endpoints
 
 - Orthanc HTTP: `http://192.168.0.200:8042`
-- DICOM SCP: `192.168.0.200:104`, AET `VIEWREX`
+- Current transitional DICOM SCP: `192.168.0.200:104`, AET `VIEWREX`
 - MWL SCP: `192.168.0.200:105`, AET `VIEWREX_WL`
 - MWL local API: `http://127.0.0.1:8055/health`
 
 Port `104` is a privileged low port. Binding it may require a rootful Docker
 daemon, host networking, or adjusted capabilities depending on the environment.
+In the final architecture, Gateway will own this port and Orthanc will no
+longer be the modality-facing Storage SCP.
 
 ## MWL Runtime Data
 

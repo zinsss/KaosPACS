@@ -5,6 +5,11 @@
 Port `104` is a privileged low port. Depending on the host, binding it may
 require rootful Docker, host networking, or extra capabilities.
 
+In the current transitional stack, Orthanc binds `VIEWREX:104`. In the final
+Gateway-centered stack, Gateway will bind `VIEWREX:104` and Orthanc will be an
+internal backend. Do not change the compose port owner until Gateway is
+implemented and a cutover is planned.
+
 Check:
 
 ```bash
@@ -57,13 +62,19 @@ Port: 104
 IP:   192.168.0.200
 ```
 
-If the modality uses a different called AET, Orthanc may reject the association
-or the workflow may not match the legacy configuration.
+If the modality uses a different called AET, the current transitional receiver
+may reject the association or the workflow may not match the legacy
+configuration. Today that receiver is Orthanc. In the final architecture it
+will be Gateway.
 
 ## Korean Text Display Issue
 
 `SpecificCharacterSet=ISO_IR 149` has been observed. Initial setup does not
 rewrite DICOM character sets.
+
+The final charset/tag handling point is Gateway ingestion, not Orthanc or MWL.
+Gateway should only inspect or fix Korean charset/tag issues after validation
+with real samples and a rollback plan.
 
 Compare behavior in:
 
@@ -107,8 +118,10 @@ curl http://127.0.0.1:8055/health
 curl http://127.0.0.1:8055/worklist
 ```
 
-Do not expose this API publicly. External access should go through a future
-controlled Gateway or KaosEghis-PACS adapter.
+Do not expose this API publicly. External access should go through a controlled
+Gateway or KaosEghis-PACS adapter path. KaosEghis-PACS may create, update, or
+cancel worklist entries, but final DICOM completion should be called by Gateway
+after successful receive/forward.
 
 ## MWL Worklist Is Empty
 
@@ -174,3 +187,17 @@ Host path:
 
 It is minimal by design and should not contain patient name, DOB, sex, resident
 ID, phone, address, diagnosis, or EMR notes.
+
+## Worklist Entry Not Completing
+
+In the current transitional stage, worklist completion is an explicit API call.
+The MWL service does not infer completion from Orthanc studies.
+
+In the final Gateway-centered stage, Gateway is responsible for calling:
+
+```text
+POST /worklist/complete
+```
+
+after it successfully receives the DICOM study and forwards it to Orthanc. Do
+not add DICOM completion inference to KaosEghis-PACS.

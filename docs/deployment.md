@@ -29,7 +29,7 @@ Create the runtime environment file:
 cp .env.example .env
 ```
 
-Production defaults preserve:
+Current transitional deployment defaults preserve:
 
 - `ORTHANC_AET=VIEWREX`
 - `ORTHANC_DICOM_PORT=104`
@@ -37,6 +37,12 @@ Production defaults preserve:
 - `MWL_PORT=105`
 - `MWL_API_PORT=8055`
 - `PACS_HOST_IP=192.168.0.200`
+
+Today, Orthanc owns `VIEWREX:104` so the working storage path remains stable.
+This is not the final architecture. When Gateway is implemented, Gateway will
+own `VIEWREX:104` and Orthanc will move behind Gateway as an internal backend.
+Do not change `docker-compose.yml` for that future stage until Gateway exists
+and the cutover is planned.
 
 MWL runtime paths:
 
@@ -65,6 +71,10 @@ curl http://127.0.0.1:8055/worklist
 docker compose logs mwl
 ```
 
+Current DICOM storage checks still target Orthanc on `192.168.0.200:104`, AET
+`VIEWREX`. In the final Gateway-centered deployment, the same modality-facing
+identity will be owned by Gateway and Orthanc will be internal.
+
 ## Shutdown
 
 ```bash
@@ -88,4 +98,6 @@ Future backup jobs should cover:
 - PostgreSQL database dumps from `POSTGRES_DB`.
 - MWL runtime data under `/srv/docker/kaospacs/mwl`, including
   `worklist.json` and `mwl_audit.sqlite3`.
+- Future Gateway runtime logs and any Gateway quarantine/staging directories
+  once Gateway is implemented.
 - KaosPACS configuration and operational logs.
