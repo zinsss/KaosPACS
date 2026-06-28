@@ -10,10 +10,20 @@ implementation.
 Orthanc can receive and store DICOM data. Viewer behavior and Korean text
 display must be evaluated with actual clinical samples and target viewers.
 
-## Initial Rule
+## Current Rule
 
 Do not rewrite, normalize, or mass-fix DICOM character sets during initial
 Orthanc/PostgreSQL setup.
+
+## Final Handling Point
+
+In the final Gateway-centered architecture, Korean charset and tag inspection
+belongs at the Gateway ingestion point. Gateway may fix charset/tag issues only
+after safe validation with real samples, viewer checks, and a rollback plan.
+
+Do not put charset normalization inside MWL. Do not rely on Orthanc as the
+long-term place for modality-facing charset fixes; Orthanc should remain the
+internal storage/index/viewer backend.
 
 Future charset work should document:
 
@@ -21,4 +31,5 @@ Future charset work should document:
 - Orthanc stored tags.
 - Orthanc Explorer / Stone Viewer display.
 - Weasis display.
+- Gateway ingress behavior.
 - Any proposed normalization point and rollback strategy.

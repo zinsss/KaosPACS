@@ -1,8 +1,8 @@
 # Modality Worklist
 
-KaosPACS MWL is a small DICOM Modality Worklist SCP for legacy modality
-testing. The first milestone is intentionally hardcoded and does not connect to
-eGHIS.
+KaosPACS MWL is a DICOM Modality Worklist SCP for legacy modality workflow. It
+owns the worklist identity, active runtime worklist, local MWL API, and minimal
+audit database. It does not connect directly to eGHIS.
 
 ## Fixed Production Identity
 
@@ -34,9 +34,10 @@ the seed file.
 
 This JSON file, the local MWL HTTP API, and a minimal SQLite audit database are
 the current PACS-side integration boundary. KaosPACS remains EMR-agnostic: it
-does not connect to eGHIS and contains no eGHIS database code. Later,
-KaosEghis-PACS can update this JSON file or call the KaosPACS MWL API that
-updates the same worklist model.
+does not connect to eGHIS and contains no eGHIS database code.
+KaosEghis-PACS is responsible for reading eGHIS with read-only access,
+normalizing orders, and creating, updating, or cancelling worklist entries
+through Gateway or the KaosPACS MWL API.
 
 The checked-in sample contains fictional test entries including:
 
@@ -100,8 +101,8 @@ By default Docker publishes this API only on host loopback:
 127.0.0.1:8055
 ```
 
-Do not expose this API publicly. External access should go through a future
-controlled KaosPACS Gateway or KaosEghis-PACS adapter.
+Do not expose this API publicly. External access should go through a controlled
+KaosPACS Gateway or KaosEghis-PACS adapter path.
 
 Examples:
 
@@ -144,6 +145,15 @@ entries.
 
 The MWL API only manages explicit worklist state: active, completed, cancelled,
 and expired. It does not infer clinical workflow from Orthanc studies.
+
+Completion ownership:
+
+- KaosEghis-PACS creates, updates, and cancels worklist entries based on eGHIS
+  order state.
+- Gateway is the future caller of `POST /worklist/complete` after successful
+  DICOM receive/forward/storage.
+- MWL must not infer completion from Orthanc, and KaosEghis-PACS must not infer
+  DICOM completion from order state.
 
 ## Audit Database
 
@@ -211,11 +221,12 @@ docker compose exec mwl python tools/query_mwl.py --accession-number KAOSMWL002
 docker compose exec mwl python tools/query_mwl.py --modality BMD --station-aet BMD
 ```
 
-## Later Milestone
+## Integration Boundary
 
-Later MWL should derive worklist entries from eGHIS orders using read-only
-database access or a read-only upstream feed. eGHIS polling must never mutate
-the eGHIS database.
+MWL must remain EMR-agnostic. It should not derive entries from eGHIS, poll
+eGHIS, or contain eGHIS database code.
 
-Do not add eGHIS polling, route logic, or Orthanc-side behavior in this
-milestone.
+KaosEghis-PACS is the EMR-aware adapter. It reads eGHIS with read-only access,
+normalizes orders, and sends worklist changes into KaosPACS through Gateway or
+the local MWL API. Gateway is the DICOM-side owner of completion once it becomes
+the modality-facing Storage SCP.
