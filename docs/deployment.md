@@ -42,7 +42,9 @@ Today, Orthanc owns `VIEWREX:104` so the working storage path remains stable.
 This is not the final architecture. When Gateway is implemented, Gateway will
 own `VIEWREX:104` and Orthanc will move behind Gateway as an internal backend.
 Do not change `docker-compose.yml` for that future stage until Gateway exists
-and the cutover is planned.
+and the cutover is planned. `VIEWREX_WL:105` remains owned by the MWL service
+in both the current and final architectures; Gateway does not proxy the DICOM
+MWL SCP.
 
 MWL runtime paths:
 
@@ -73,7 +75,9 @@ docker compose logs mwl
 
 Current DICOM storage checks still target Orthanc on `192.168.0.200:104`, AET
 `VIEWREX`. In the final Gateway-centered deployment, the same modality-facing
-identity will be owned by Gateway and Orthanc will be internal.
+storage identity will be owned by Gateway and Orthanc will be internal. Current
+MWL checks continue to target MWL on `192.168.0.200:105`, AET `VIEWREX_WL`, and
+that ownership does not move to Gateway.
 
 ## Shutdown
 

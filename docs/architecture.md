@@ -51,16 +51,32 @@ architecture.
 ## Final Gateway-Centered Boundary
 
 ```text
-eGHIS
-  -> KaosEghis-PACS
-  -> Gateway or KaosPACS MWL API for worklist create/update/cancel
-  -> modality worklist
-  -> modality acquisition
-  -> Gateway storage SCP VIEWREX:104
-  -> Gateway validates safe charset/tag handling
-  -> Gateway forwards study to Orthanc internal backend
-  -> Gateway calls POST /worklist/complete after successful receive/forward
-  -> KaosPACS Web / Weasis launch
+                     eGHIS
+                       │
+                       ▼
+                KaosEghis-PACS
+                       │
+                 HTTP / Events
+                       │
+                       ▼
+               KaosPACS Gateway
+                  │           │
+                  │           ▼
+                  │      Orthanc
+                  │    (internal backend)
+                  │
+                  ▼
+           KaosPACS MWL API
+                  │
+                  ▼
+          MWL Service
+       VIEWREX_WL :105
+
+Legacy Modality
+    │
+    ├── C-FIND ─────────► MWL (VIEWREX_WL:105)
+    │
+    └── C-STORE ───────► Gateway (VIEWREX:104)
 ```
 
 In the final architecture, Gateway owns the legacy storage identity:
@@ -75,6 +91,11 @@ Orthanc moves behind Gateway as an internal storage, index, REST, DICOMweb, and
 viewer backend. Orthanc should not remain the final modality-facing owner of
 `VIEWREX:104`.
 
+Gateway is the single workflow and storage integration boundary. It is not the
+MWL DICOM SCP and does not own `VIEWREX_WL:105`. Legacy modalities continue to
+query MWL directly using DICOM C-FIND. Gateway updates MWL through the local
+MWL API for create, update, cancel, and completion state.
+
 ## Boundaries
 
 Orthanc is storage, index, REST, DICOMweb, and viewer plugin infrastructure. It
@@ -84,12 +105,17 @@ Gateway, not directly exposed as the legacy modality endpoint.
 Business logic belongs outside Orthanc:
 
 - Gateway: modality-facing DICOM Storage SCP, safe DICOM ingress inspection,
-  optional charset/tag fixes after validation, forwarding to Orthanc, and MWL
-  completion calls after successful storage/forwarding.
-- KaosEghis-PACS: eGHIS order discovery with read-only access, normalization,
-  and worklist create/update/cancel. It should not infer DICOM completion.
+  optional charset/tag fixes after validation, forwarding to Orthanc, worklist
+  create/update/cancel through the MWL API, and MWL completion calls after
+  successful storage/forwarding.
+- KaosEghis-PACS: eGHIS order discovery with read-only access, polling or event
+  handling, normalization, and sending worklist events to Gateway. It should
+  not call MWL directly in production, call Orthanc directly, or infer DICOM
+  completion.
 - MWL: modality worklist responses, local worklist state, local MWL API, and
-  minimal audit tracking. It must not connect directly to eGHIS.
+  minimal audit tracking. It is not a workflow engine, must not connect
+  directly to eGHIS, must not infer study completion, and must not communicate
+  directly with Orthanc.
 - Web: browser launch, viewer routing, and EMR-facing PACS screens.
 - Migration: read-only ViewRex extraction and additive import tooling.
 

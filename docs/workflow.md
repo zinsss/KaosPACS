@@ -60,8 +60,8 @@ are not physically deleted and are not returned in DICOM MWL C-FIND responses.
 
 In the final architecture, Gateway is the expected caller of
 `POST /worklist/complete` after it has successfully received and forwarded a
-study to Orthanc. KaosEghis-PACS should create, update, or cancel worklist
-entries based on eGHIS orders, but it should not infer DICOM study completion.
+study to Orthanc. KaosEghis-PACS sends normalized order events to Gateway; it
+should not call MWL directly in production or infer DICOM study completion.
 
 The MWL audit database is:
 
@@ -84,12 +84,28 @@ KaosPACS MWL JSON/API
 
 ## Final Gateway-Centered Flow
 
+Order path:
+
 ```text
 eGHIS order
   -> KaosEghis-PACS normalizes order
-  -> Gateway or KaosPACS MWL API creates/updates/cancels worklist entry
-  -> KaosPACS MWL VIEWREX_WL:105
+  -> KaosPACS Gateway validates workflow event
+  -> Gateway creates/updates/cancels via KaosPACS MWL API
+  -> MWL active runtime worklist
+```
+
+Modality worklist path:
+
+```text
+Legacy modality
+  -> C-FIND to KaosPACS MWL VIEWREX_WL:105
   -> modality selects scheduled patient
+```
+
+Image path:
+
+```text
+Legacy modality
   -> modality acquires image
   -> Gateway receives DICOM as VIEWREX:104
   -> Gateway safely inspects/fixes charset or tag issues when validated
@@ -99,5 +115,8 @@ eGHIS order
 ```
 
 Do not add eGHIS DB polling to KaosPACS itself. eGHIS integration belongs in
-KaosEghis-PACS. MWL must not connect directly to eGHIS, and KaosEghis-PACS
-must not decide DICOM completion from image storage.
+KaosEghis-PACS. In production, KaosEghis-PACS sends worklist events to Gateway
+rather than calling MWL directly. MWL must not connect directly to eGHIS, must
+not communicate directly with Orthanc, and must not decide DICOM completion
+from image storage. Gateway is the only component that understands both
+workflow state and image state.

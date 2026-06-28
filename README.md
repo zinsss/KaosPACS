@@ -25,14 +25,19 @@ Final Gateway-centered runtime:
 
 - Gateway will become the modality-facing DICOM Storage SCP at
   `192.168.0.200:104`, AET `VIEWREX`.
+- Gateway will become the single workflow and storage integration boundary.
 - Orthanc will move behind Gateway as the internal storage, index, REST,
   DICOMweb, and viewer backend.
 - Gateway will receive studies from modalities, inspect or fix Korean
   charset/tag issues only after safe validation, forward studies to Orthanc,
   and then call `POST /worklist/complete` after successful receive/forward.
 - KaosEghis-PACS will remain the EMR-aware adapter that reads eGHIS with
-  read-only access and creates, updates, or cancels worklist entries. It should
-  not infer DICOM study completion.
+  read-only access, normalizes orders, and sends worklist events to Gateway.
+  It should not call MWL directly in production, call Orthanc directly, or
+  infer DICOM study completion.
+- MWL remains the dedicated DICOM Modality Worklist SCP at `VIEWREX_WL:105`.
+  Legacy modalities query MWL directly with C-FIND; Gateway does not own or
+  proxy the MWL DICOM port.
 
 ## Legacy Identity
 

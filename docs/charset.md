@@ -21,9 +21,9 @@ In the final Gateway-centered architecture, Korean charset and tag inspection
 belongs at the Gateway ingestion point. Gateway may fix charset/tag issues only
 after safe validation with real samples, viewer checks, and a rollback plan.
 
-Do not put charset normalization inside MWL. Do not rely on Orthanc as the
-long-term place for modality-facing charset fixes; Orthanc should remain the
-internal storage/index/viewer backend.
+Do not put charset normalization inside MWL or KaosEghis-PACS. Do not rely on
+Orthanc as the long-term place for modality-facing charset fixes; Orthanc
+should remain the internal storage/index/viewer backend.
 
 Future charset work should document:
 
