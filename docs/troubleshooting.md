@@ -10,6 +10,9 @@ Gateway-centered stack, Gateway will bind `VIEWREX:104` and Orthanc will be an
 internal backend. Do not change the compose port owner until Gateway is
 implemented and a cutover is planned.
 
+MWL remains separate. Gateway does not own `VIEWREX_WL:105`; the MWL service
+continues to answer legacy modality C-FIND requests directly.
+
 Check:
 
 ```bash
@@ -119,9 +122,10 @@ curl http://127.0.0.1:8055/worklist
 ```
 
 Do not expose this API publicly. External access should go through a controlled
-Gateway or KaosEghis-PACS adapter path. KaosEghis-PACS may create, update, or
-cancel worklist entries, but final DICOM completion should be called by Gateway
-after successful receive/forward.
+Gateway path in production. KaosEghis-PACS should send normalized worklist
+events to Gateway rather than calling MWL directly. Gateway creates, updates,
+or cancels worklist entries through the MWL API, and calls completion after
+successful receive/forward.
 
 ## MWL Worklist Is Empty
 
@@ -200,4 +204,5 @@ POST /worklist/complete
 ```
 
 after it successfully receives the DICOM study and forwards it to Orthanc. Do
-not add DICOM completion inference to KaosEghis-PACS.
+not add DICOM completion inference to KaosEghis-PACS, and do not make MWL
+communicate directly with Orthanc.

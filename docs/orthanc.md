@@ -18,6 +18,10 @@ storage path working. This is temporary. In the final Gateway-centered
 architecture, Gateway will own `VIEWREX:104` and Orthanc will move behind
 Gateway as an internal backend.
 
+Gateway is the workflow and storage integration boundary in the final
+architecture. Orthanc should not receive directly from modalities, from
+KaosEghis-PACS, or from MWL.
+
 Orthanc HTTP is available for initial local testing at:
 
 ```text
