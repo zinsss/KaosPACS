@@ -18,8 +18,10 @@ Current transitional runtime:
 - Orthanc temporarily owns the legacy storage identity `VIEWREX:104`.
 - MWL owns `VIEWREX_WL:105`, active worklist state, the local MWL API, and the
   minimal audit database.
-- This keeps the verified Orthanc + MWL stack stable while Gateway is still
-  unimplemented.
+- Gateway Phase 0 provides an inert localhost-only HTTP health endpoint. It
+  does not own DICOM ports, receive studies, forward to Orthanc, or call MWL.
+- This keeps the verified Orthanc + MWL stack stable while Gateway behavior is
+  still unimplemented.
 
 Final Gateway-centered runtime:
 
@@ -97,6 +99,7 @@ docker compose ps
 - Current transitional DICOM SCP: `192.168.0.200:104`, AET `VIEWREX`
 - MWL SCP: `192.168.0.200:105`, AET `VIEWREX_WL`
 - MWL local API: `http://127.0.0.1:8055/health`
+- Gateway Phase 0 health: `http://127.0.0.1:8060/health`
 
 Port `104` is a privileged low port. Binding it may require a rootful Docker
 daemon, host networking, or adjusted capabilities depending on the environment.

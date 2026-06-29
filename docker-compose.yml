@@ -80,3 +80,22 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+
+  gateway:
+    build:
+      context: ./gateway
+    container_name: kaospacs-gateway
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${GATEWAY_HTTP_PORT:-8060}:8060"
+    environment:
+      TZ: ${TZ:-Asia/Seoul}
+      GATEWAY_HTTP_PORT: "8060"
+      ORTHANC_URL: http://orthanc:8042
+      MWL_API_URL: http://mwl:8055
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8060/health', timeout=2).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
