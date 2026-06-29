@@ -106,18 +106,24 @@ class RecordingForwarder:
 
 
 class RecordingMwlClient:
-    def __init__(self, payload):
+    def __init__(self, payload, *, complete_status=200, complete_error=None):
         self.payload = payload
+        self.complete_status = complete_status
+        self.complete_error = complete_error
         self.get_calls = 0
         self.complete_calls = 0
+        self.complete_payloads = []
 
     def get_worklist(self):
         self.get_calls += 1
         return type("MwlResponse", (), {"status_code": 200, "payload": self.payload})()
 
-    def complete_worklist(self, _payload):
+    def complete_worklist(self, payload):
         self.complete_calls += 1
-        raise AssertionError("DICOM matching must not complete worklists")
+        self.complete_payloads.append(payload)
+        if self.complete_error is not None:
+            raise self.complete_error
+        return type("MwlResponse", (), {"status_code": self.complete_status, "payload": {}})()
 
 
 def test_handle_store_forwarding_disabled_stores_locally_only(tmp_path) -> None:
@@ -171,7 +177,7 @@ def test_handle_store_forwarding_failure_returns_failure_status(tmp_path, caplog
     assert "PatientID" not in caplog.text
 
 
-def test_handle_store_success_gets_worklist_and_audits_match_without_completion(
+def test_handle_store_success_gets_worklist_and_completes_matched_accession(
     tmp_path,
     caplog,
 ) -> None:
@@ -204,10 +210,15 @@ def test_handle_store_success_gets_worklist_and_audits_match_without_completion(
 
     assert status == 0x0000
     assert mwl_client.get_calls == 1
-    assert mwl_client.complete_calls == 0
+    assert mwl_client.complete_calls == 1
+    assert mwl_client.complete_payloads == [{"AccessionNumber": "ACC-TEST"}]
     assert _dicom_match_events(audit_db) == [
         ("dicom_match", "ACC-TEST", "AccessionNumber", 1, None),
     ]
+    assert _dicom_completion_events(audit_db) == [
+        ("dicom_worklist_complete", "ACC-TEST", "AccessionNumber", 1, None),
+    ]
+    assert "DICOM worklist completion result" in caplog.text
     assert "matched=True" in caplog.text
     assert "AccessionNumber" in caplog.text
     assert "SHOULD^NOTLOG" not in caplog.text
@@ -249,6 +260,118 @@ def test_handle_store_no_match_audits_accession_only_without_demographics(tmp_pa
         ("dicom_match", "ACC-TEST", None, 0, "no_active_match"),
     ]
     assert "matched=False" in caplog.text
+    assert "SHOULD^NOTLOG" not in caplog.text
+    assert "SECRETID" not in caplog.text
+    assert "PatientName" not in caplog.text
+    assert "PatientID" not in caplog.text
+
+
+def test_handle_store_does_not_complete_when_forward_fails(tmp_path) -> None:
+    dataset = _minimal_dataset()
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    forwarder = RecordingForwarder(ForwardResult(False, None, "association_failed"))
+    mwl_client = RecordingMwlClient({"entries": [{"Active": True, "AccessionNumber": "ACC-TEST"}]})
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        forwarder=forwarder,
+        mwl_client=mwl_client,
+    )
+
+    assert status == WRITE_FAILURE_STATUS
+    assert mwl_client.get_calls == 0
+    assert mwl_client.complete_calls == 0
+
+
+def test_handle_store_does_not_complete_when_match_accession_missing(tmp_path) -> None:
+    dataset = _minimal_dataset()
+    del dataset.AccessionNumber
+    dataset.RequestedProcedureID = "RP1"
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    mwl_client = RecordingMwlClient({"entries": [{"Active": True, "RequestedProcedureID": "RP1"}]})
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    init_audit_db(audit_db)
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        mwl_client=mwl_client,
+        audit_db=audit_db,
+    )
+
+    assert status == 0x0000
+    assert mwl_client.get_calls == 1
+    assert mwl_client.complete_calls == 0
+    assert _dicom_match_events(audit_db) == [
+        ("dicom_match", None, "RequestedProcedureID", 1, None),
+    ]
+    assert _dicom_completion_events(audit_db) == []
+
+
+def test_handle_store_completion_failure_does_not_fail_c_store(tmp_path, caplog) -> None:
+    caplog.set_level(logging.INFO)
+    dataset = _minimal_dataset()
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    mwl_client = RecordingMwlClient(
+        {"entries": [{"Active": True, "AccessionNumber": "ACC-TEST"}]},
+        complete_status=500,
+    )
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    init_audit_db(audit_db)
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        mwl_client=mwl_client,
+        audit_db=audit_db,
+    )
+
+    assert status == 0x0000
+    assert mwl_client.complete_calls == 1
+    assert _dicom_completion_events(audit_db) == [
+        ("dicom_worklist_complete", "ACC-TEST", "AccessionNumber", 0, "mwl_error"),
+    ]
+    assert "SHOULD^NOTLOG" not in caplog.text
+    assert "SECRETID" not in caplog.text
+    assert "PatientName" not in caplog.text
+    assert "PatientID" not in caplog.text
+
+
+def test_handle_store_unexpected_completion_exception_does_not_fail_c_store(
+    tmp_path,
+    caplog,
+) -> None:
+    caplog.set_level(logging.INFO)
+    dataset = _minimal_dataset()
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    mwl_client = RecordingMwlClient(
+        {"entries": [{"Active": True, "AccessionNumber": "ACC-TEST"}]},
+        complete_error=RuntimeError("unexpected completion failure SHOULD^NOTLOG SECRETID"),
+    )
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    init_audit_db(audit_db)
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        mwl_client=mwl_client,
+        audit_db=audit_db,
+    )
+
+    assert status == 0x0000
+    assert mwl_client.complete_calls == 1
+    assert _dicom_completion_events(audit_db) == [
+        (
+            "dicom_worklist_complete",
+            "ACC-TEST",
+            "AccessionNumber",
+            0,
+            "completion_failed",
+        ),
+    ]
+    assert "RuntimeError" in caplog.text
+    assert "unexpected completion failure" not in caplog.text
     assert "SHOULD^NOTLOG" not in caplog.text
     assert "SECRETID" not in caplog.text
     assert "PatientName" not in caplog.text
@@ -364,6 +487,18 @@ def _dicom_match_events(db_path: Path):
             SELECT event_type, accession_number, matched_by, success, error_code
             FROM gateway_events
             WHERE event_type = 'dicom_match'
+            ORDER BY id
+            """
+        ).fetchall()
+
+
+def _dicom_completion_events(db_path: Path):
+    with sqlite3.connect(db_path) as connection:
+        return connection.execute(
+            """
+            SELECT event_type, accession_number, matched_by, success, error_code
+            FROM gateway_events
+            WHERE event_type = 'dicom_worklist_complete'
             ORDER BY id
             """
         ).fetchall()

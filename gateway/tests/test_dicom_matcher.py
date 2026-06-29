@@ -48,6 +48,17 @@ def test_requested_procedure_id_match() -> None:
     assert result.accession_number == "A1"
 
 
+def test_requested_procedure_id_match_without_accession_has_no_completion_accession() -> None:
+    result = match_dataset_to_worklist(
+        dataset_with(RequestedProcedureID="RP1"),
+        worklist_with(active_entry(RequestedProcedureID="RP1")),
+    )
+
+    assert result.matched is True
+    assert result.matched_by == "RequestedProcedureID"
+    assert result.accession_number is None
+
+
 def test_scheduled_procedure_step_id_match() -> None:
     result = match_dataset_to_worklist(
         dataset_with(ScheduledProcedureStepID="SPS1"),

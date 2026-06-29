@@ -71,8 +71,9 @@ forwarding from the local inbox to Orthanc is available only when
 `GATEWAY_DICOM_FORWARD_ENABLED=true`. After successful local storage and
 optional forwarding, Gateway fetches the active MWL worklist and attempts a
 deterministic match by `AccessionNumber`, `RequestedProcedureID`, then
-`ScheduledProcedureStepID`. It does not modify datasets, inspect or fix Korean
-charset issues, call MWL completion, or expose stored files over HTTP.
+`ScheduledProcedureStepID`. If the match succeeds and has an accession number,
+Gateway calls MWL completion. It does not modify datasets, inspect or fix
+Korean charset issues, or expose stored files over HTTP.
 
 ## Final Gateway-Centered Boundary
 
@@ -146,8 +147,8 @@ Business logic belongs outside Orthanc:
   client usage is limited to non-PHI reachability/future-integration
   scaffolding. Current Gateway DICOM C-STORE usage is disabled test scaffolding
   only; optional forwarding is test-mode only and is not the production
-  `VIEWREX:104` ingress. Current MWL matching is lookup-only and does not
-  complete worklists.
+  `VIEWREX:104` ingress. Current MWL completion is limited to matched
+  test-mode DICOM receives.
 - KaosEghis-PACS: eGHIS order discovery with read-only access, polling or event
   handling, normalization, and sending normalized order events to Gateway. It
   should not call MWL directly in production, call Orthanc directly, or infer

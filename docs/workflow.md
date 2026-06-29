@@ -32,9 +32,9 @@ explicitly enabled, it uses `KAOSPACS_GW_TEST:11104` on `127.0.0.1`, stores
 files in `/app/data/dicom-inbox`, and can forward to Orthanc only when
 `GATEWAY_DICOM_FORWARD_ENABLED=true`. After successful local storage and
 optional forwarding, Gateway reads the active MWL worklist and attempts a
-deterministic match. It does not call `POST /worklist/complete` and does not
-perform charset fixes. It must not be used as the production `VIEWREX:104`
-receiver.
+deterministic match. If the match succeeds and has an accession number, Gateway
+calls `POST /worklist/complete`. It does not perform charset fixes. It must not
+be used as the production `VIEWREX:104` receiver.
 
 Gateway records minimal workflow audit events for worklist API calls in its own
 SQLite database. This audit is separate from the MWL audit DB and stores only
@@ -157,12 +157,13 @@ Gateway test C-STORE KAOSPACS_GW_TEST:11104
   -> optionally forward to Orthanc when test forwarding is enabled
   -> GET active MWL worklist
   -> match by AccessionNumber, RequestedProcedureID, ScheduledProcedureStepID
+  -> POST /worklist/complete when matched accession is present
   -> STOP
 ```
 
-Completion is intentionally not implemented in this stage. A future PR will
-use successful matching as the prerequisite for calling
-`POST /worklist/complete`.
+Completion is now implemented only for this matched test-mode Gateway DICOM
+path. Completion failure is logged and audited but does not reject a DICOM
+object that was already stored and, if enabled, forwarded successfully.
 
 Do not add eGHIS DB polling to KaosPACS itself. eGHIS integration belongs in
 KaosEghis-PACS. In production, KaosEghis-PACS sends worklist events to Gateway
