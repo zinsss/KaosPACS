@@ -117,6 +117,24 @@ def setup_recording_mwl(response_payload: dict[str, Any] | None = None):
     return start_server(RecordingMwlHandler)
 
 
+def valid_order_payload(**overrides):
+    payload = {
+        "ChartNo": "12345",
+        "PatientName": "TEST^PATIENT",
+        "PatientBirthDate": "19700101",
+        "PatientSex": "O",
+        "AccessionNumber": "20260629-12345-1",
+        "StudyType": "BMD",
+        "Modality": "BMD",
+        "StationAET": "BMD",
+        "ScheduledAt": "2026-06-29T09:00:00+09:00",
+        "Description": "BMD",
+        "ExpiresAt": "2026-06-29T23:59:59+09:00",
+    }
+    payload.update(overrides)
+    return payload
+
+
 def test_get_worklist_proxies_mwl_response(tmp_path) -> None:
     audit_db = tmp_path / "gateway_audit.sqlite3"
     mwl_server, mwl_thread = setup_recording_mwl({"entries": [{"PatientID": "P1"}]})
@@ -327,3 +345,218 @@ def test_audit_failure_does_not_break_request(tmp_path) -> None:
     finally:
         stop_server(gateway_server, gateway_thread)
         stop_server(mwl_server, mwl_thread)
+
+
+def test_order_upsert_appends_worklist_entry(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl(
+        {"entries": [{"AccessionNumber": "A1", "PatientID": "keep"}]}
+    )
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+    )
+    payload = valid_order_payload(AccessionNumber="A2")
+
+    try:
+        status, body = request_json("POST", f"{gateway_url}/orders/upsert", payload)
+
+        assert status == 200
+        assert body == {
+            "status": "ok",
+            "action": "upserted",
+            "AccessionNumber": "A2",
+        }
+        assert RecordingMwlHandler.calls[0] == {
+            "method": "GET",
+            "path": "/worklist",
+            "payload": None,
+        }
+        put_call = RecordingMwlHandler.calls[1]
+        assert put_call["method"] == "PUT"
+        assert put_call["path"] == "/worklist"
+        assert put_call["payload"]["entries"][0] == {"AccessionNumber": "A1", "PatientID": "keep"}
+        new_entry = put_call["payload"]["entries"][1]
+        assert new_entry["PatientID"] == "12345"
+        assert new_entry["PatientName"] == "TEST^PATIENT"
+        assert new_entry["AccessionNumber"] == "A2"
+        assert new_entry["ScheduledProcedureStepStartDate"] == "20260629"
+        assert new_entry["ScheduledProcedureStepStartTime"] == "090000"
+        assert new_entry["SpecificCharacterSet"] == "ISO_IR 192"
+        assert audit_rows(audit_db) == [
+            ("order_upsert", "/orders/upsert", "A2", 200, 1, None)
+        ]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_order_upsert_replaces_matching_accession(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl(
+        {
+            "entries": [
+                {"AccessionNumber": "A1", "PatientID": "old"},
+                {"AccessionNumber": "A2", "PatientID": "keep", "Active": False},
+            ]
+        }
+    )
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+    )
+
+    try:
+        status, _body = request_json(
+            "POST",
+            f"{gateway_url}/orders/upsert",
+            valid_order_payload(AccessionNumber="A1", ChartNo="new-chart"),
+        )
+
+        assert status == 200
+        put_entries = RecordingMwlHandler.calls[1]["payload"]["entries"]
+        assert put_entries[0]["AccessionNumber"] == "A1"
+        assert put_entries[0]["PatientID"] == "new-chart"
+        assert put_entries[0]["Active"] is True
+        assert put_entries[1] == {"AccessionNumber": "A2", "PatientID": "keep", "Active": False}
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_order_upsert_invalid_request_does_not_call_mwl(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl()
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+    )
+
+    try:
+        status, body = request_json("POST", f"{gateway_url}/orders/upsert", {"ChartNo": "12345"})
+
+        assert status == 400
+        assert body["error"] == "invalid order"
+        assert "PatientName is required" in body["details"]
+        assert "AccessionNumber is required" in body["details"]
+        assert RecordingMwlHandler.calls == []
+        assert audit_rows(audit_db) == [
+            ("validation_error", "/orders/upsert", None, 400, 0, "invalid_order")
+        ]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_order_upsert_invalid_mwl_worklist_returns_502_without_put(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl({"status": "not a worklist"})
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+    )
+
+    try:
+        status, body = request_json(
+            "POST",
+            f"{gateway_url}/orders/upsert",
+            valid_order_payload(AccessionNumber="A1"),
+        )
+
+        assert status == 502
+        assert body == {
+            "error": "bad_gateway",
+            "message": "MWL API returned an invalid worklist",
+        }
+        assert RecordingMwlHandler.calls == [
+            {"method": "GET", "path": "/worklist", "payload": None}
+        ]
+        assert audit_rows(audit_db) == [
+            ("order_upsert", "/orders/upsert", "A1", 502, 0, "invalid_mwl_worklist")
+        ]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_order_cancel_calls_mwl_cancel(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl({"status": "cancelled"})
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+    )
+    payload = {"AccessionNumber": "A1", "CancelReason": "cancelled from eGHIS"}
+
+    try:
+        status, body = request_json("POST", f"{gateway_url}/orders/cancel", payload)
+
+        assert status == 200
+        assert body == {"status": "cancelled"}
+        assert RecordingMwlHandler.calls == [
+            {"method": "POST", "path": "/worklist/cancel", "payload": payload}
+        ]
+        assert audit_rows(audit_db) == [
+            ("order_cancel", "/orders/cancel", "A1", 200, 1, None)
+        ]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_order_cancel_invalid_request_does_not_call_mwl(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl()
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+    )
+
+    try:
+        status, body = request_json(
+            "POST",
+            f"{gateway_url}/orders/cancel",
+            {"CancelReason": "cancelled from eGHIS"},
+        )
+
+        assert status == 400
+        assert body["details"] == ["AccessionNumber is required"]
+        assert RecordingMwlHandler.calls == []
+        assert audit_rows(audit_db) == [
+            ("validation_error", "/orders/cancel", None, 400, 0, "invalid_order_cancel")
+        ]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_order_upsert_mwl_unavailable_returns_502(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        "http://127.0.0.1:1",
+        audit_db,
+    )
+
+    try:
+        status, body = request_json(
+            "POST",
+            f"{gateway_url}/orders/upsert",
+            valid_order_payload(AccessionNumber="A1"),
+        )
+
+        assert status == 502
+        assert body == {
+            "error": "bad_gateway",
+            "message": "MWL API is unavailable",
+        }
+        assert audit_rows(audit_db) == [
+            ("order_upsert", "/orders/upsert", "A1", 502, 0, "mwl_unavailable")
+        ]
+    finally:
+        stop_server(gateway_server, gateway_thread)

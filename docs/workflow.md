@@ -20,8 +20,10 @@ The current stack keeps that storage path working through Orthanc.
 Orthanc owning `VIEWREX:104` is transitional only. It keeps the working
 Orthanc + MWL stack stable until Gateway is implemented.
 
-Gateway exposes localhost-only workflow API endpoints in front of MWL. It does
-not receive DICOM, forward to Orthanc, or participate in image ingestion yet.
+Gateway exposes localhost-only workflow API endpoints in front of MWL. It also
+accepts normalized order events at `POST /orders/upsert` and
+`POST /orders/cancel` for future KaosEghis-PACS integration. It does not
+receive DICOM, forward to Orthanc, or participate in image ingestion yet.
 Orthanc still owns `VIEWREX:104` transitionally.
 
 Gateway records minimal workflow audit events for worklist API calls in its own
@@ -66,6 +68,18 @@ The API is bound to `127.0.0.1:8055` by default and should not be exposed
 directly to external systems. Production workflow requests should go through
 Gateway on `127.0.0.1:8060`.
 
+Gateway's production-facing order endpoints are:
+
+```text
+POST /orders/upsert
+POST /orders/cancel
+```
+
+KaosEghis-PACS should send normalized order events to these endpoints rather
+than raw MWL JSON. Gateway validates those events, converts them into MWL
+entries, and updates the internal MWL API. Raw Gateway `/worklist` endpoints
+remain internal/development helpers.
+
 Completed or cancelled entries are kept in JSON and marked `Active=false`; they
 are not physically deleted and are not returned in DICOM MWL C-FIND responses.
 
@@ -100,7 +114,7 @@ Order path:
 ```text
 eGHIS order
   -> KaosEghis-PACS normalizes order
-  -> KaosPACS Gateway validates workflow event
+  -> KaosPACS Gateway POST /orders/upsert or POST /orders/cancel
   -> Gateway creates/updates/cancels via KaosPACS MWL API
   -> MWL active runtime worklist
 ```

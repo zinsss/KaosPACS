@@ -11,6 +11,13 @@ from .audit import init_audit_db, record_gateway_event
 from .config import GatewayConfig, load_config
 from .health import health_payload
 from .mwl_client import MwlApiClient, MwlHttpError, MwlUnavailableError
+from .orders import (
+    order_to_mwl_entry,
+    text as order_text,
+    upsert_worklist_entry,
+    validate_order_cancel,
+    validate_order_upsert,
+)
 
 
 LOGGER = logging.getLogger("kaospacs.gateway")
@@ -244,6 +251,10 @@ def make_handler(config: GatewayConfig):
 
         def do_POST(self) -> None:
             path = urlparse(self.path).path
+            if path in {"/orders/upsert", "/orders/cancel"}:
+                self._handle_order_post(path)
+                return
+
             if path not in {"/worklist/complete", "/worklist/cancel"}:
                 _json_response(self, HTTPStatus.NOT_FOUND, {"error": "not found"})
                 return
@@ -318,6 +329,180 @@ def make_handler(config: GatewayConfig):
             _audit_event(
                 self,
                 event_type=_workflow_event_type(path),
+                request_path=path,
+                accession_number=accession_number,
+                status_code=response.status_code,
+                success=response.status_code < 400,
+            )
+            _proxy_mwl_response(self, response.status_code, response.payload)
+
+        def _handle_order_post(self, path: str) -> None:
+            try:
+                payload = _read_json_request(self)
+            except json.JSONDecodeError as error:
+                _audit_event(
+                    self,
+                    event_type="validation_error",
+                    request_path=path,
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    success=False,
+                    error_code="invalid_json",
+                )
+                _json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "invalid JSON", "details": [str(error)]},
+                )
+                return
+
+            if path == "/orders/upsert":
+                self._handle_order_upsert(path, payload)
+                return
+            self._handle_order_cancel(path, payload)
+
+        def _handle_order_upsert(self, path: str, payload: Any) -> None:
+            accession_number = (
+                order_text(payload.get("AccessionNumber")) if isinstance(payload, dict) else ""
+            )
+            errors = validate_order_upsert(payload)
+            if errors:
+                _audit_event(
+                    self,
+                    event_type="validation_error",
+                    request_path=path,
+                    accession_number=accession_number or None,
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    success=False,
+                    error_code="invalid_order",
+                )
+                _json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "invalid order", "details": errors},
+                )
+                return
+
+            entry = order_to_mwl_entry(payload)
+            client = self._mwl_client()
+            try:
+                current_worklist = client.get_worklist()
+                current_worklist_errors = _validate_worklist_payload(current_worklist.payload)
+                if current_worklist_errors:
+                    _audit_event(
+                        self,
+                        event_type="order_upsert",
+                        request_path=path,
+                        accession_number=accession_number,
+                        status_code=HTTPStatus.BAD_GATEWAY,
+                        success=False,
+                        error_code="invalid_mwl_worklist",
+                    )
+                    _json_response(
+                        self,
+                        HTTPStatus.BAD_GATEWAY,
+                        {
+                            "error": "bad_gateway",
+                            "message": "MWL API returned an invalid worklist",
+                        },
+                    )
+                    return
+                updated_worklist = upsert_worklist_entry(current_worklist.payload, entry)
+                response = client.put_worklist(updated_worklist)
+            except MwlHttpError as error:
+                _audit_event(
+                    self,
+                    event_type="order_upsert",
+                    request_path=path,
+                    accession_number=accession_number,
+                    status_code=error.status_code,
+                    success=False,
+                    error_code="mwl_error",
+                )
+                _proxy_mwl_response(self, error.status_code, error.payload)
+                return
+            except MwlUnavailableError:
+                _audit_event(
+                    self,
+                    event_type="order_upsert",
+                    request_path=path,
+                    accession_number=accession_number,
+                    status_code=HTTPStatus.BAD_GATEWAY,
+                    success=False,
+                    error_code="mwl_unavailable",
+                )
+                _gateway_bad_gateway(self)
+                return
+
+            _audit_event(
+                self,
+                event_type="order_upsert",
+                request_path=path,
+                accession_number=accession_number,
+                status_code=response.status_code,
+                success=response.status_code < 400,
+            )
+            _json_response(
+                self,
+                HTTPStatus.OK,
+                {
+                    "status": "ok",
+                    "action": "upserted",
+                    "AccessionNumber": accession_number,
+                },
+            )
+
+        def _handle_order_cancel(self, path: str, payload: Any) -> None:
+            accession_number = (
+                order_text(payload.get("AccessionNumber")) if isinstance(payload, dict) else ""
+            )
+            errors = validate_order_cancel(payload)
+            if errors:
+                _audit_event(
+                    self,
+                    event_type="validation_error",
+                    request_path=path,
+                    accession_number=accession_number or None,
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    success=False,
+                    error_code="invalid_order_cancel",
+                )
+                _json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "invalid order cancel", "details": errors},
+                )
+                return
+
+            try:
+                response = self._mwl_client().cancel_worklist(payload)
+            except MwlHttpError as error:
+                _audit_event(
+                    self,
+                    event_type="order_cancel",
+                    request_path=path,
+                    accession_number=accession_number,
+                    status_code=error.status_code,
+                    success=False,
+                    error_code="mwl_error",
+                )
+                _proxy_mwl_response(self, error.status_code, error.payload)
+                return
+            except MwlUnavailableError:
+                _audit_event(
+                    self,
+                    event_type="order_cancel",
+                    request_path=path,
+                    accession_number=accession_number,
+                    status_code=HTTPStatus.BAD_GATEWAY,
+                    success=False,
+                    error_code="mwl_unavailable",
+                )
+                _gateway_bad_gateway(self)
+                return
+
+            _audit_event(
+                self,
+                event_type="order_cancel",
                 request_path=path,
                 accession_number=accession_number,
                 status_code=response.status_code,

@@ -52,11 +52,14 @@ Useful endpoints:
 ```text
 http://127.0.0.1:8060/health
 http://127.0.0.1:8060/worklist
+POST http://127.0.0.1:8060/orders/upsert
+POST http://127.0.0.1:8060/orders/cancel
 ```
 
 It does not bind port `104`, receive DICOM studies, forward to Orthanc, poll
 eGHIS, or change current PACS runtime behavior. Production order integrations
-should call Gateway, and Gateway calls the internal MWL API.
+should send normalized order events to Gateway, and Gateway calls the internal
+MWL API. Raw Gateway `/worklist` endpoints remain internal/development helpers.
 
 Gateway writes a minimal workflow audit database at:
 
@@ -101,6 +104,12 @@ curl http://127.0.0.1:8055/health
 curl http://127.0.0.1:8055/worklist
 curl http://127.0.0.1:8060/health
 curl http://127.0.0.1:8060/worklist
+curl -X POST http://127.0.0.1:8060/orders/upsert \
+  -H 'Content-Type: application/json' \
+  --data '{"ChartNo":"12345","PatientName":"TEST^PATIENT","AccessionNumber":"TEST-ORDER-1","StudyType":"BMD","Modality":"BMD","StationAET":"BMD","ScheduledAt":"2026-06-29T09:00:00+09:00","Description":"BMD"}'
+curl -X POST http://127.0.0.1:8060/orders/cancel \
+  -H 'Content-Type: application/json' \
+  --data '{"AccessionNumber":"TEST-ORDER-1","CancelReason":"test cleanup"}'
 docker compose logs mwl
 ```
 

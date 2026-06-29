@@ -19,7 +19,9 @@ Current transitional runtime:
 - MWL owns `VIEWREX_WL:105`, active worklist state, the local MWL API, and the
   minimal audit database.
 - Gateway provides localhost-only workflow API endpoints in front of the MWL
-  API. It does not own DICOM ports, receive studies, or forward to Orthanc yet.
+  API, including normalized order event endpoints for future KaosEghis-PACS
+  integration. It does not own DICOM ports, receive studies, or forward to
+  Orthanc yet.
 - Gateway writes a minimal workflow audit DB at
   `/app/data/gateway_audit.sqlite3`, persisted under
   `/srv/docker/kaospacs/gateway`.
@@ -104,6 +106,9 @@ docker compose ps
 - MWL local API: `http://127.0.0.1:8055/health`
 - Gateway health: `http://127.0.0.1:8060/health`
 - Gateway worklist API: `http://127.0.0.1:8060/worklist`
+- Gateway normalized order API:
+  - `POST http://127.0.0.1:8060/orders/upsert`
+  - `POST http://127.0.0.1:8060/orders/cancel`
 
 Port `104` is a privileged low port. Binding it may require a rootful Docker
 daemon, host networking, or adjusted capabilities depending on the environment.
