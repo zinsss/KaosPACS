@@ -70,14 +70,17 @@ The disabled Gateway C-STORE skeleton stores explicitly tested datasets in
 forwarding from the local inbox to Orthanc is available only when
 `GATEWAY_DICOM_FORWARD_ENABLED=true`. A persistent DICOM forwarding queue
 foundation exists at `/app/data/gateway_queue.sqlite3`, but it is disabled by
-default with `GATEWAY_DICOM_QUEUE_ENABLED=false` and has no retry worker yet.
-When enabled, successful local stores enqueue pending rows while the current
-direct-forwarding path remains active. After successful local storage and
-optional forwarding, Gateway fetches the active MWL worklist and attempts a
-deterministic match by `AccessionNumber`, `RequestedProcedureID`, then
-`ScheduledProcedureStepID`. If the match succeeds and has an accession number,
-Gateway calls MWL completion. It does not modify datasets, inspect or fix
-Korean charset issues, or expose stored files over HTTP.
+default with `GATEWAY_DICOM_QUEUE_ENABLED=false`. A background retry worker can
+be separately enabled with `GATEWAY_QUEUE_WORKER_ENABLED=true`; it forwards
+queued files to Orthanc and updates queue state, but it does not match studies
+or call MWL completion. When queueing is enabled, successful local stores
+enqueue pending rows while the current direct-forwarding path remains active.
+After successful local storage and optional direct forwarding, Gateway fetches
+the active MWL worklist and attempts a deterministic match by
+`AccessionNumber`, `RequestedProcedureID`, then `ScheduledProcedureStepID`. If
+the match succeeds and has an accession number, Gateway calls MWL completion.
+It does not modify datasets, inspect or fix Korean charset issues, or expose
+stored files over HTTP.
 
 ## Final Gateway-Centered Boundary
 
@@ -151,10 +154,10 @@ Business logic belongs outside Orthanc:
   client usage is limited to non-PHI reachability/future-integration
   scaffolding. Current Gateway DICOM C-STORE usage is disabled test scaffolding
   only; optional forwarding is test-mode only and is not the production
-  `VIEWREX:104` ingress. The current forwarding queue is only persisted
-  operational state for a future retry worker; it does not change the active
-  forwarding/completion flow. Current MWL completion is limited to matched
-  test-mode DICOM receives.
+  `VIEWREX:104` ingress. The forwarding queue and retry worker are operational
+  infrastructure only and do not replace the active direct-forwarding or
+  completion flow. Current MWL completion is limited to matched test-mode DICOM
+  receives.
 - KaosEghis-PACS: eGHIS order discovery with read-only access, polling or event
   handling, normalization, and sending normalized order events to Gateway. It
   should not call MWL directly in production, call Orthanc directly, or infer

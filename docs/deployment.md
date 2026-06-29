@@ -73,6 +73,9 @@ GATEWAY_DICOM_PORT=11104
 GATEWAY_DICOM_STORAGE_DIR=/app/data/dicom-inbox
 GATEWAY_QUEUE_DB=/app/data/gateway_queue.sqlite3
 GATEWAY_DICOM_QUEUE_ENABLED=false
+GATEWAY_QUEUE_WORKER_ENABLED=false
+GATEWAY_QUEUE_POLL_INTERVAL_SECONDS=5
+GATEWAY_QUEUE_MAX_ATTEMPTS=10
 GATEWAY_DICOM_FORWARD_ENABLED=false
 ORTHANC_DICOM_HOST=orthanc
 ORTHANC_DICOM_PORT=104
@@ -92,9 +95,21 @@ do not perform charset fixes.
 The Gateway DICOM forwarding queue foundation is persisted under the same
 Gateway data mount as `/app/data/gateway_queue.sqlite3`. It is disabled by
 default with `GATEWAY_DICOM_QUEUE_ENABLED=false`. Enabling it records pending
-queue rows after successful local stores, but this release does not include a
-background retry worker and does not replace the current direct-forwarding
-test path.
+queue rows after successful local stores. The retry worker is separately
+disabled by default with `GATEWAY_QUEUE_WORKER_ENABLED=false`. When explicitly
+enabled, it processes queued files in the background and forwards them to
+Orthanc, but it does not match worklist entries, call completion, delete local
+files, or replace the current direct-forwarding test path.
+
+Retry scheduling is intentionally simple:
+
+- attempt 1: immediate
+- attempt 2: 30 seconds
+- attempt 3: 60 seconds
+- attempt 4 and later: 300 seconds
+
+Rows that reach `GATEWAY_QUEUE_MAX_ATTEMPTS` are marked `dead_letter` and are
+not deleted.
 
 Gateway also has an internal Orthanc HTTP client configured by:
 

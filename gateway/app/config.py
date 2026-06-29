@@ -22,6 +22,9 @@ DEFAULT_GATEWAY_DICOM_PORT = 11104
 DEFAULT_GATEWAY_DICOM_BIND = "127.0.0.1"
 DEFAULT_GATEWAY_DICOM_STORAGE_DIR = Path("/app/data/dicom-inbox")
 DEFAULT_GATEWAY_DICOM_QUEUE_ENABLED = False
+DEFAULT_GATEWAY_QUEUE_WORKER_ENABLED = False
+DEFAULT_GATEWAY_QUEUE_POLL_INTERVAL_SECONDS = 5.0
+DEFAULT_GATEWAY_QUEUE_MAX_ATTEMPTS = 10
 DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED = False
 DEFAULT_ORTHANC_DICOM_HOST = "orthanc"
 DEFAULT_ORTHANC_DICOM_PORT = 104
@@ -49,6 +52,11 @@ class GatewayConfig:
     gateway_dicom_bind: str = DEFAULT_GATEWAY_DICOM_BIND
     gateway_dicom_storage_dir: Path = DEFAULT_GATEWAY_DICOM_STORAGE_DIR
     gateway_dicom_queue_enabled: bool = DEFAULT_GATEWAY_DICOM_QUEUE_ENABLED
+    gateway_queue_worker_enabled: bool = DEFAULT_GATEWAY_QUEUE_WORKER_ENABLED
+    gateway_queue_poll_interval_seconds: float = (
+        DEFAULT_GATEWAY_QUEUE_POLL_INTERVAL_SECONDS
+    )
+    gateway_queue_max_attempts: int = DEFAULT_GATEWAY_QUEUE_MAX_ATTEMPTS
     gateway_dicom_forward_enabled: bool = DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED
     orthanc_dicom_host: str = DEFAULT_ORTHANC_DICOM_HOST
     orthanc_dicom_port: int = DEFAULT_ORTHANC_DICOM_PORT
@@ -126,6 +134,18 @@ def load_config(env: Mapping[str, str] | None = None) -> GatewayConfig:
         gateway_dicom_queue_enabled=_bool_from_env(
             source.get("GATEWAY_DICOM_QUEUE_ENABLED"),
             DEFAULT_GATEWAY_DICOM_QUEUE_ENABLED,
+        ),
+        gateway_queue_worker_enabled=_bool_from_env(
+            source.get("GATEWAY_QUEUE_WORKER_ENABLED"),
+            DEFAULT_GATEWAY_QUEUE_WORKER_ENABLED,
+        ),
+        gateway_queue_poll_interval_seconds=_float_from_env(
+            source.get("GATEWAY_QUEUE_POLL_INTERVAL_SECONDS"),
+            DEFAULT_GATEWAY_QUEUE_POLL_INTERVAL_SECONDS,
+        ),
+        gateway_queue_max_attempts=_int_from_env(
+            source.get("GATEWAY_QUEUE_MAX_ATTEMPTS"),
+            DEFAULT_GATEWAY_QUEUE_MAX_ATTEMPTS,
         ),
         gateway_dicom_forward_enabled=_bool_from_env(
             source.get("GATEWAY_DICOM_FORWARD_ENABLED"),

@@ -6,12 +6,14 @@ from pydicom.dataset import Dataset
 from app.dicom.queue import (
     QUEUE_TABLE,
     enqueue_stored_dataset,
+    get_pending_rows,
     get_queue_counts,
     init_queue_db,
     mark_completed,
     mark_dead_letter,
     mark_failed,
     mark_forwarding,
+    requeue_due_failed_rows,
 )
 
 
@@ -108,3 +110,22 @@ def test_queue_counts_include_all_statuses(tmp_path) -> None:
         "failed": 1,
         "dead_letter": 1,
     }
+
+
+def test_due_failed_rows_requeue_to_pending(tmp_path) -> None:
+    db_path = tmp_path / "gateway_queue.sqlite3"
+    queue_id = enqueue_stored_dataset(db_path, _dataset(), tmp_path / "one.dcm")
+    mark_forwarding(db_path, queue_id)
+    mark_failed(
+        db_path,
+        queue_id,
+        last_error="association_failed",
+        next_attempt_at="2000-01-01T00:00:00+00:00",
+    )
+
+    requeue_due_failed_rows(db_path, max_attempts=10)
+
+    rows = get_pending_rows(db_path)
+    assert len(rows) == 1
+    assert rows[0].id == queue_id
+    assert rows[0].attempts == 1

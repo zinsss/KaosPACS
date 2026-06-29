@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 from app.clients.orthanc import OrthancHttpClient
 from app.config import GatewayConfig
 from app.dicom.queue import get_queue_counts
+from app.dicom.retry_worker import is_queue_retry_worker_running
 from app.services.auth import is_auth_enabled
 
 
@@ -45,6 +46,12 @@ def status_payload(config: GatewayConfig) -> dict[str, Any]:
             "queue_enabled": config.gateway_dicom_queue_enabled,
             "queue_db": _check_queue_db(config.gateway_queue_db),
             "queue_counts": _queue_counts(config.gateway_queue_db),
+            "worker": {
+                "enabled": config.gateway_queue_worker_enabled,
+                "running": is_queue_retry_worker_running(),
+                "poll_interval_seconds": config.gateway_queue_poll_interval_seconds,
+                "max_attempts": config.gateway_queue_max_attempts,
+            },
             "forward_enabled": config.gateway_dicom_forward_enabled,
             "forward_target": {
                 "host": config.orthanc_dicom_host,
