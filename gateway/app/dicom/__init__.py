@@ -1,0 +1,1 @@
+"""Gateway DICOM skeleton modules."""

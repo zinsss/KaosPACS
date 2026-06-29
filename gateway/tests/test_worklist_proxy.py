@@ -10,7 +10,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from app.audit import init_audit_db
+from app.services.audit import init_audit_db
 from app.config import GatewayConfig
 from app.main import create_server
 
