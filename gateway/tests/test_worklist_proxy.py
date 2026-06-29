@@ -10,9 +10,10 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from app.services.audit import init_audit_db
 from app.config import GatewayConfig
+from app.dicom.queue import init_queue_db
 from app.main import create_server
+from app.services.audit import init_audit_db
 
 
 class RecordingMwlHandler(BaseHTTPRequestHandler):
@@ -95,9 +96,13 @@ def request_json(
 def gateway_base_url(
     mwl_base_url: str,
     audit_db=None,
+    gateway_queue_db=None,
     gateway_api_token: str | None = None,
     orthanc_url: str = "http://orthanc:8042",
 ) -> tuple[str, ThreadingHTTPServer, threading.Thread]:
+    config_kwargs = {}
+    if gateway_queue_db is not None:
+        config_kwargs["gateway_queue_db"] = gateway_queue_db
     config = GatewayConfig(
         http_host="127.0.0.1",
         http_port=0,
@@ -106,6 +111,7 @@ def gateway_base_url(
         mwl_api_timeout_seconds=0.5,
         gateway_audit_db=audit_db,
         gateway_api_token=gateway_api_token,
+        **config_kwargs,
     )
     server = create_server(config)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -391,7 +397,9 @@ def test_status_without_token_returns_401_when_auth_enabled(tmp_path) -> None:
 
 def test_status_with_token_returns_operational_metadata(tmp_path) -> None:
     audit_db = tmp_path / "gateway_audit.sqlite3"
+    queue_db = tmp_path / "gateway_queue.sqlite3"
     init_audit_db(audit_db)
+    init_queue_db(queue_db)
     mwl_server, mwl_thread = setup_recording_mwl({"status": "ok"})
     orthanc_server, orthanc_thread = setup_recording_mwl({"Name": "Orthanc"})
     mwl_host, mwl_port = mwl_server.server_address
@@ -401,6 +409,7 @@ def test_status_with_token_returns_operational_metadata(tmp_path) -> None:
     gateway_url, gateway_server, gateway_thread = gateway_base_url(
         mwl_url,
         audit_db,
+        gateway_queue_db=queue_db,
         gateway_api_token="secret-token",
         orthanc_url=orthanc_url,
     )
@@ -437,6 +446,18 @@ def test_status_with_token_returns_operational_metadata(tmp_path) -> None:
             "bind": "127.0.0.1",
             "port": 11104,
             "storage_dir": "/app/data/dicom-inbox",
+            "queue_enabled": False,
+            "queue_db": {
+                "path": str(queue_db),
+                "reachable": True,
+            },
+            "queue_counts": {
+                "pending": 0,
+                "forwarding": 0,
+                "completed": 0,
+                "failed": 0,
+                "dead_letter": 0,
+            },
             "forward_enabled": False,
             "forward_target": {
                 "host": "orthanc",
@@ -458,6 +479,8 @@ def test_status_with_token_returns_operational_metadata(tmp_path) -> None:
             "stage": "current-final",
         }
         assert body["ownership"]["gateway_http"]["owner"] == "gateway"
+        assert "PatientName" not in str(body)
+        assert "PatientID" not in str(body)
     finally:
         stop_server(gateway_server, gateway_thread)
         stop_server(mwl_server, mwl_thread)
@@ -598,6 +621,40 @@ def test_status_reports_audit_db_unavailable(tmp_path) -> None:
             "path": str(tmp_path),
             "reachable": False,
         }
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+        stop_server(orthanc_server, orthanc_thread)
+
+
+def test_status_reports_queue_db_unavailable(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    init_audit_db(audit_db)
+    mwl_server, mwl_thread = setup_recording_mwl({"status": "ok"})
+    orthanc_server, orthanc_thread = setup_recording_mwl({"Name": "Orthanc"})
+    mwl_host, mwl_port = mwl_server.server_address
+    orthanc_host, orthanc_port = orthanc_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_queue_db=tmp_path,
+        gateway_api_token="secret-token",
+        orthanc_url=f"http://{orthanc_host}:{orthanc_port}",
+    )
+
+    try:
+        status, body = request_json(
+            "GET",
+            f"{gateway_url}/status",
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        assert status == 200
+        assert body["gateway_dicom"]["queue_db"] == {
+            "path": str(tmp_path),
+            "reachable": False,
+        }
+        assert body["gateway_dicom"]["queue_counts"] is None
     finally:
         stop_server(gateway_server, gateway_thread)
         stop_server(mwl_server, mwl_thread)

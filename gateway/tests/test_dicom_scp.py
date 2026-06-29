@@ -10,6 +10,7 @@ from pynetdicom import AE
 from app.config import GatewayConfig
 from app.dicom import server as dicom_server
 from app.dicom.forwarder import DicomForwarder, ForwardResult
+from app.dicom.queue import QUEUE_TABLE, get_queue_counts
 from app.dicom.server import (
     WRITE_FAILURE_STATUS,
     GatewayDicomServer,
@@ -134,6 +135,68 @@ def test_handle_store_forwarding_disabled_stores_locally_only(tmp_path) -> None:
 
     assert status == 0x0000
     assert (tmp_path / f"{dataset.SOPInstanceUID}.dcm").exists()
+
+
+def test_handle_store_queue_disabled_does_not_enqueue(tmp_path) -> None:
+    dataset = _minimal_dataset()
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    queue_db = tmp_path / "gateway_queue.sqlite3"
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        queue_db=queue_db,
+        queue_enabled=False,
+    )
+
+    assert status == 0x0000
+    assert not queue_db.exists()
+
+
+def test_handle_store_queue_enabled_enqueues_after_local_write(tmp_path) -> None:
+    dataset = _minimal_dataset()
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    queue_db = tmp_path / "gateway_queue.sqlite3"
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        queue_db=queue_db,
+        queue_enabled=True,
+    )
+
+    stored_path = tmp_path / "inbox" / f"{dataset.SOPInstanceUID}.dcm"
+    assert status == 0x0000
+    assert stored_path.exists()
+    assert get_queue_counts(queue_db) == {
+        "pending": 1,
+        "forwarding": 0,
+        "completed": 0,
+        "failed": 0,
+        "dead_letter": 0,
+    }
+    with sqlite3.connect(queue_db) as connection:
+        row = connection.execute(
+            f"""
+            SELECT sop_instance_uid, study_instance_uid, accession_number,
+                   modality, file_path, status
+            FROM {QUEUE_TABLE}
+            """
+        ).fetchone()
+        columns = [
+            item[1]
+            for item in connection.execute(f"PRAGMA table_info({QUEUE_TABLE})")
+        ]
+    assert row == (
+        str(dataset.SOPInstanceUID),
+        str(dataset.StudyInstanceUID),
+        "ACC-TEST",
+        "OT",
+        str(stored_path),
+        "pending",
+    )
+    assert "PatientName" not in columns
+    assert "PatientID" not in columns
 
 
 def test_handle_store_forwarding_enabled_calls_forwarder_after_local_write(tmp_path) -> None:

@@ -56,6 +56,17 @@ does not imply Gateway owns `VIEWREX:104`. Matched test-mode DICOM receives can
 call MWL completion after successful storage and optional forwarding, but they
 do not apply charset fixes.
 
+If queue rows appear unexpectedly, verify:
+
+```text
+GATEWAY_DICOM_QUEUE_ENABLED=false
+```
+
+The queue foundation is persisted at `/app/data/gateway_queue.sqlite3` under
+the Gateway data mount. It is disabled by default and has no background retry
+worker yet. When enabled, it records pending rows after successful local stores
+but does not replace the current direct-forwarding test path.
+
 ## Orthanc Cannot Connect To PostgreSQL
 
 Check PostgreSQL health and credentials:
@@ -160,6 +171,10 @@ Gateway path in production. KaosEghis-PACS should send normalized worklist
 events to Gateway rather than calling MWL directly. Gateway creates, updates,
 or cancels worklist entries through the MWL API, and calls completion after
 successful receive/forward.
+
+Gateway `/status` also reports DICOM queue counts by status when the queue DB
+is reachable. Those counts are operational state only and must not contain
+patient demographics or dataset contents.
 
 ## Gateway Status Endpoint
 
@@ -295,6 +310,10 @@ ID, phone, address, diagnosis, or EMR notes.
 
 In the current transitional stage, worklist completion is an explicit API call.
 The MWL service does not infer completion from Orthanc studies.
+
+Gateway test-mode completion currently runs after local store, optional direct
+forwarding, and MWL matching. The queue foundation does not change that active
+flow yet; queued retry forwarding is future work.
 
 In the final Gateway-centered stage, Gateway is responsible for calling:
 

@@ -1,10 +1,12 @@
 from app.config import (
     DEFAULT_GATEWAY_AUDIT_DB,
+    DEFAULT_GATEWAY_QUEUE_DB,
     DEFAULT_GATEWAY_DICOM_AET,
     DEFAULT_GATEWAY_DICOM_BIND,
     DEFAULT_GATEWAY_DICOM_ENABLED,
     DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED,
     DEFAULT_GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS,
+    DEFAULT_GATEWAY_DICOM_QUEUE_ENABLED,
     DEFAULT_GATEWAY_DICOM_PORT,
     DEFAULT_GATEWAY_DICOM_STORAGE_DIR,
     DEFAULT_GATEWAY_FORWARDING_AET,
@@ -32,12 +34,14 @@ def test_config_defaults() -> None:
     assert config.mwl_api_timeout_seconds == DEFAULT_MWL_API_TIMEOUT_SECONDS
     assert config.orthanc_timeout_seconds == DEFAULT_ORTHANC_TIMEOUT_SECONDS
     assert config.gateway_audit_db == DEFAULT_GATEWAY_AUDIT_DB
+    assert config.gateway_queue_db == DEFAULT_GATEWAY_QUEUE_DB
     assert config.gateway_api_token is None
     assert config.gateway_dicom_enabled == DEFAULT_GATEWAY_DICOM_ENABLED
     assert config.gateway_dicom_aet == DEFAULT_GATEWAY_DICOM_AET
     assert config.gateway_dicom_port == DEFAULT_GATEWAY_DICOM_PORT
     assert config.gateway_dicom_bind == DEFAULT_GATEWAY_DICOM_BIND
     assert config.gateway_dicom_storage_dir == DEFAULT_GATEWAY_DICOM_STORAGE_DIR
+    assert config.gateway_dicom_queue_enabled == DEFAULT_GATEWAY_DICOM_QUEUE_ENABLED
     assert config.gateway_dicom_forward_enabled == DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED
     assert config.orthanc_dicom_host == DEFAULT_ORTHANC_DICOM_HOST
     assert config.orthanc_dicom_port == DEFAULT_ORTHANC_DICOM_PORT
@@ -62,12 +66,14 @@ def test_config_env_overrides() -> None:
             "MWL_API_TIMEOUT_SECONDS": "7.5",
             "ORTHANC_TIMEOUT_SECONDS": "4.5",
             "GATEWAY_AUDIT_DB": "/tmp/gateway-audit.sqlite3",
+            "GATEWAY_QUEUE_DB": "/tmp/gateway-queue.sqlite3",
             "GATEWAY_API_TOKEN": "secret-token",
             "GATEWAY_DICOM_ENABLED": "true",
             "GATEWAY_DICOM_AET": "GW_TEST",
             "GATEWAY_DICOM_PORT": "11105",
             "GATEWAY_DICOM_BIND": "127.0.0.2",
             "GATEWAY_DICOM_STORAGE_DIR": "/tmp/dicom-inbox",
+            "GATEWAY_DICOM_QUEUE_ENABLED": "true",
             "GATEWAY_DICOM_FORWARD_ENABLED": "true",
             "ORTHANC_DICOM_HOST": "orthanc.local",
             "ORTHANC_DICOM_PORT": "4242",
@@ -85,12 +91,14 @@ def test_config_env_overrides() -> None:
     assert config.mwl_api_timeout_seconds == 7.5
     assert config.orthanc_timeout_seconds == 4.5
     assert str(config.gateway_audit_db) == "/tmp/gateway-audit.sqlite3"
+    assert str(config.gateway_queue_db) == "/tmp/gateway-queue.sqlite3"
     assert config.gateway_api_token == "secret-token"
     assert config.gateway_dicom_enabled is True
     assert config.gateway_dicom_aet == "GW_TEST"
     assert config.gateway_dicom_port == 11105
     assert config.gateway_dicom_bind == "127.0.0.2"
     assert str(config.gateway_dicom_storage_dir) == "/tmp/dicom-inbox"
+    assert config.gateway_dicom_queue_enabled is True
     assert config.gateway_dicom_forward_enabled is True
     assert config.orthanc_dicom_host == "orthanc.local"
     assert config.orthanc_dicom_port == 4242

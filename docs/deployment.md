@@ -71,6 +71,8 @@ GATEWAY_DICOM_AET=KAOSPACS_GW_TEST
 GATEWAY_DICOM_BIND=127.0.0.1
 GATEWAY_DICOM_PORT=11104
 GATEWAY_DICOM_STORAGE_DIR=/app/data/dicom-inbox
+GATEWAY_QUEUE_DB=/app/data/gateway_queue.sqlite3
+GATEWAY_DICOM_QUEUE_ENABLED=false
 GATEWAY_DICOM_FORWARD_ENABLED=false
 ORTHANC_DICOM_HOST=orthanc
 ORTHANC_DICOM_PORT=104
@@ -86,6 +88,13 @@ requires both `GATEWAY_DICOM_ENABLED=true` and
 `GATEWAY_DICOM_FORWARD_ENABLED=true`. Matched test-mode DICOM receives can call
 MWL completion after successful storage and optional forwarding, but they still
 do not perform charset fixes.
+
+The Gateway DICOM forwarding queue foundation is persisted under the same
+Gateway data mount as `/app/data/gateway_queue.sqlite3`. It is disabled by
+default with `GATEWAY_DICOM_QUEUE_ENABLED=false`. Enabling it records pending
+queue rows after successful local stores, but this release does not include a
+background retry worker and does not replace the current direct-forwarding
+test path.
 
 Gateway also has an internal Orthanc HTTP client configured by:
 
@@ -151,6 +160,11 @@ This Gateway audit DB is separate from the MWL audit DB. It stores workflow
 event metadata only: event type, request path, accession number when present,
 status, success flag, error code, and timestamp. It must not store patient
 demographics, clinical notes, or full payload JSON.
+
+The Gateway queue DB is operational state, not audit. It stores only DICOM
+identifiers, accession number, modality, local file path, status, attempts, and
+retry timing fields. It must not store patient demographics, clinical notes, or
+full dataset payloads.
 
 MWL runtime paths:
 

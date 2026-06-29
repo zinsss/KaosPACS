@@ -8,6 +8,7 @@ from urllib.request import Request, urlopen
 
 from app.clients.orthanc import OrthancHttpClient
 from app.config import GatewayConfig
+from app.dicom.queue import get_queue_counts
 from app.services.auth import is_auth_enabled
 
 
@@ -41,6 +42,9 @@ def status_payload(config: GatewayConfig) -> dict[str, Any]:
             "bind": config.gateway_dicom_bind,
             "port": config.gateway_dicom_port,
             "storage_dir": str(config.gateway_dicom_storage_dir),
+            "queue_enabled": config.gateway_dicom_queue_enabled,
+            "queue_db": _check_queue_db(config.gateway_queue_db),
+            "queue_counts": _queue_counts(config.gateway_queue_db),
             "forward_enabled": config.gateway_dicom_forward_enabled,
             "forward_target": {
                 "host": config.orthanc_dicom_host,
@@ -113,3 +117,23 @@ def _check_audit_db(path: Path) -> dict[str, Any]:
         "path": str(path),
         "reachable": reachable,
     }
+
+
+def _check_queue_db(path: Path) -> dict[str, Any]:
+    try:
+        get_queue_counts(path)
+        reachable = True
+    except sqlite3.Error:
+        reachable = False
+
+    return {
+        "path": str(path),
+        "reachable": reachable,
+    }
+
+
+def _queue_counts(path: Path) -> dict[str, int] | None:
+    try:
+        return get_queue_counts(path)
+    except sqlite3.Error:
+        return None

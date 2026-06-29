@@ -30,11 +30,14 @@ participate in production image ingestion yet. Orthanc still owns
 Gateway has a disabled C-STORE skeleton for loopback test datasets only. When
 explicitly enabled, it uses `KAOSPACS_GW_TEST:11104` on `127.0.0.1`, stores
 files in `/app/data/dicom-inbox`, and can forward to Orthanc only when
-`GATEWAY_DICOM_FORWARD_ENABLED=true`. After successful local storage and
-optional forwarding, Gateway reads the active MWL worklist and attempts a
-deterministic match. If the match succeeds and has an accession number, Gateway
-calls `POST /worklist/complete`. It does not perform charset fixes. It must not
-be used as the production `VIEWREX:104` receiver.
+`GATEWAY_DICOM_FORWARD_ENABLED=true`. A persistent queue foundation can be
+enabled with `GATEWAY_DICOM_QUEUE_ENABLED=true`, which records pending queue
+rows after successful local stores. There is no retry worker yet, so current
+test-mode direct forwarding remains the active path. After successful local
+storage and optional forwarding, Gateway reads the active MWL worklist and
+attempts a deterministic match. If the match succeeds and has an accession
+number, Gateway calls `POST /worklist/complete`. It does not perform charset
+fixes. It must not be used as the production `VIEWREX:104` receiver.
 
 Gateway records minimal workflow audit events for worklist API calls in its own
 SQLite database. This audit is separate from the MWL audit DB and stores only
@@ -154,6 +157,7 @@ Current test-mode Gateway DICOM flow:
 ```text
 Gateway test C-STORE KAOSPACS_GW_TEST:11104
   -> store locally in /app/data/dicom-inbox
+  -> optionally enqueue pending forwarding row when queue is enabled
   -> optionally forward to Orthanc when test forwarding is enabled
   -> GET active MWL worklist
   -> match by AccessionNumber, RequestedProcedureID, ScheduledProcedureStepID
@@ -164,6 +168,19 @@ Gateway test C-STORE KAOSPACS_GW_TEST:11104
 Completion is now implemented only for this matched test-mode Gateway DICOM
 path. Completion failure is logged and audited but does not reject a DICOM
 object that was already stored and, if enabled, forwarded successfully.
+
+Future queued Gateway DICOM flow:
+
+```text
+Gateway C-STORE
+  -> store locally
+  -> enqueue
+  -> retry worker forwards to Orthanc
+  -> match
+  -> complete
+```
+
+The retry worker is not implemented yet.
 
 Do not add eGHIS DB polling to KaosPACS itself. eGHIS integration belongs in
 KaosEghis-PACS. In production, KaosEghis-PACS sends worklist events to Gateway

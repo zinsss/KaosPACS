@@ -17,6 +17,7 @@ from app.api.worklist import (
 )
 from app.config import GatewayConfig, load_config
 from app.dicom.server import start_dicom_listener
+from app.dicom.queue import init_queue_db
 from app.health import health_payload
 from app.services.audit import init_audit_db
 from app.services.auth import is_auth_enabled, is_authorized
@@ -140,6 +141,7 @@ def main() -> None:
             "GATEWAY_API_TOKEN is not configured; Gateway authentication is disabled for development"
         )
     init_audit_db(config.gateway_audit_db)
+    init_queue_db(config.gateway_queue_db)
     dicom_server = start_dicom_listener(config)
     server = create_server(config)
     LOGGER.info("Gateway listening host=%s port=%s", config.http_host, config.http_port)
