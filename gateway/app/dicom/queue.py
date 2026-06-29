@@ -30,6 +30,13 @@ class DicomQueueRow:
     updated_at: str
 
 
+@dataclass(frozen=True)
+class EnqueueResult:
+    queue_id: int
+    inserted: bool
+    status: str
+
+
 def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -71,13 +78,115 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
         ON {QUEUE_TABLE} (status, next_attempt_at)
         """
     )
+    _deduplicate_sop_instance_uids(connection)
+    connection.execute(
+        f"""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_{QUEUE_TABLE}_sop_instance_uid_unique
+        ON {QUEUE_TABLE} (sop_instance_uid)
+        WHERE sop_instance_uid IS NOT NULL
+        """
+    )
 
 
-def enqueue_stored_dataset(db_path: Path, dataset: Any, file_path: Path) -> int:
+def _deduplicate_sop_instance_uids(connection: sqlite3.Connection) -> None:
+    duplicate_sops = connection.execute(
+        f"""
+        SELECT sop_instance_uid
+        FROM {QUEUE_TABLE}
+        WHERE sop_instance_uid IS NOT NULL
+        GROUP BY sop_instance_uid
+        HAVING COUNT(*) > 1
+        """
+    ).fetchall()
+    for (sop_instance_uid,) in duplicate_sops:
+        rows = connection.execute(
+            f"""
+            SELECT id, status
+            FROM {QUEUE_TABLE}
+            WHERE sop_instance_uid = ?
+            ORDER BY
+                CASE status
+                    WHEN 'completed' THEN 0
+                    WHEN 'forwarding' THEN 1
+                    WHEN 'pending' THEN 2
+                    WHEN 'failed' THEN 3
+                    WHEN 'dead_letter' THEN 4
+                    ELSE 5
+                END,
+                id
+            """,
+            (sop_instance_uid,),
+        ).fetchall()
+        keep_id = int(rows[0][0])
+        duplicate_ids = [int(row[0]) for row in rows[1:]]
+        if not duplicate_ids:
+            continue
+        placeholders = ",".join("?" for _ in duplicate_ids)
+        connection.execute(
+            f"""
+            UPDATE {QUEUE_TABLE}
+            SET sop_instance_uid = NULL,
+                status = 'dead_letter',
+                last_error = 'duplicate_sop_instance_uid',
+                updated_at = ?
+            WHERE id IN ({placeholders})
+            """,
+            (_now(), *duplicate_ids),
+        )
+        LOGGER.warning(
+            "DICOM queue duplicate SOPInstanceUID rows deduplicated "
+            "sop_instance_uid=%s kept_queue_id=%s duplicate_count=%s",
+            sop_instance_uid,
+            keep_id,
+            len(duplicate_ids),
+        )
+
+
+def enqueue_stored_dataset(db_path: Path, dataset: Any, file_path: Path) -> EnqueueResult:
     now = _now()
+    sop_instance_uid = _text(getattr(dataset, "SOPInstanceUID", "")) or None
+    study_instance_uid = _text(getattr(dataset, "StudyInstanceUID", "")) or None
+    accession_number = _text(getattr(dataset, "AccessionNumber", "")) or None
+    modality = _text(getattr(dataset, "Modality", "")) or None
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as connection:
         _ensure_schema(connection)
+        if sop_instance_uid is not None:
+            existing = connection.execute(
+                f"""
+                SELECT id, status
+                FROM {QUEUE_TABLE}
+                WHERE sop_instance_uid = ?
+                ORDER BY id
+                LIMIT 1
+                """,
+                (sop_instance_uid,),
+            ).fetchone()
+            if existing is not None:
+                queue_id = int(existing[0])
+                status = str(existing[1])
+                if status in {"pending", "failed", "dead_letter"}:
+                    connection.execute(
+                        f"""
+                        UPDATE {QUEUE_TABLE}
+                        SET study_instance_uid = COALESCE(?, study_instance_uid),
+                            accession_number = COALESCE(?, accession_number),
+                            modality = COALESCE(?, modality),
+                            file_path = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            study_instance_uid,
+                            accession_number,
+                            modality,
+                            str(file_path),
+                            now,
+                            queue_id,
+                        ),
+                    )
+                return EnqueueResult(queue_id, False, status)
+
         cursor = connection.execute(
             f"""
             INSERT INTO {QUEUE_TABLE} (
@@ -96,16 +205,16 @@ def enqueue_stored_dataset(db_path: Path, dataset: Any, file_path: Path) -> int:
             VALUES (?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, ?, ?)
             """,
             (
-                _text(getattr(dataset, "SOPInstanceUID", "")) or None,
-                _text(getattr(dataset, "StudyInstanceUID", "")) or None,
-                _text(getattr(dataset, "AccessionNumber", "")) or None,
-                _text(getattr(dataset, "Modality", "")) or None,
+                sop_instance_uid,
+                study_instance_uid,
+                accession_number,
+                modality,
                 str(file_path),
                 now,
                 now,
             ),
         )
-        return int(cursor.lastrowid)
+        return EnqueueResult(int(cursor.lastrowid), True, "pending")
 
 
 def get_queue_counts(db_path: Path) -> dict[str, int]:

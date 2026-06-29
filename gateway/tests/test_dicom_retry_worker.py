@@ -42,7 +42,11 @@ def _dataset() -> Dataset:
 
 
 def _enqueue(db_path: Path, file_path: Path | None = None) -> int:
-    return enqueue_stored_dataset(db_path, _dataset(), file_path or Path("/tmp/test.dcm"))
+    return enqueue_stored_dataset(
+        db_path,
+        _dataset(),
+        file_path or Path("/tmp/test.dcm"),
+    ).queue_id
 
 
 def _row(db_path: Path):
@@ -104,6 +108,36 @@ def test_pending_row_successful_forward_marks_completed(tmp_path) -> None:
     assert processed == 1
     assert forwarder.paths == [file_path]
     assert _row(db_path) == ("completed", 1, None, None)
+    assert get_queue_counts(db_path)["completed"] == 1
+
+
+def test_worker_does_not_reforward_completed_duplicate_row(tmp_path) -> None:
+    db_path = tmp_path / "gateway_queue.sqlite3"
+    file_path = tmp_path / "one.dcm"
+    first = enqueue_stored_dataset(db_path, _dataset(), file_path)
+    worker = DicomQueueRetryWorker(
+        queue_db=db_path,
+        forwarder=RecordingForwarder(ForwardResult(True, 0x0000)),
+        poll_interval_seconds=5,
+        max_attempts=10,
+    )
+    worker.process_once()
+    duplicate = enqueue_stored_dataset(db_path, _dataset(), tmp_path / "two.dcm")
+    forwarder = RecordingForwarder(ForwardResult(True, 0x0000))
+    worker = DicomQueueRetryWorker(
+        queue_db=db_path,
+        forwarder=forwarder,
+        poll_interval_seconds=5,
+        max_attempts=10,
+    )
+
+    processed = worker.process_once()
+
+    assert duplicate.queue_id == first.queue_id
+    assert duplicate.inserted is False
+    assert duplicate.status == "completed"
+    assert processed == 0
+    assert forwarder.paths == []
     assert get_queue_counts(db_path)["completed"] == 1
 
 
