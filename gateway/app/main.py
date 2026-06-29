@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from .audit import init_audit_db, record_gateway_event
 from .auth import is_auth_enabled, is_authorized
 from .config import GatewayConfig, load_config
+from .dicom_scp import start_dicom_listener
 from .health import health_payload
 from .mwl_client import MwlApiClient, MwlHttpError, MwlUnavailableError
 from .orders import (
@@ -681,9 +682,14 @@ def main() -> None:
             "GATEWAY_API_TOKEN is not configured; Gateway authentication is disabled for development"
         )
     init_audit_db(config.gateway_audit_db)
+    dicom_server = start_dicom_listener(config)
     server = create_server(config)
     LOGGER.info("Gateway listening host=%s port=%s", config.http_host, config.http_port)
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        if dicom_server is not None:
+            dicom_server.stop()
 
 
 if __name__ == "__main__":

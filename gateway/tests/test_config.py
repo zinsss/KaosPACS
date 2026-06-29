@@ -1,5 +1,10 @@
 from app.config import (
     DEFAULT_GATEWAY_AUDIT_DB,
+    DEFAULT_GATEWAY_DICOM_AET,
+    DEFAULT_GATEWAY_DICOM_BIND,
+    DEFAULT_GATEWAY_DICOM_ENABLED,
+    DEFAULT_GATEWAY_DICOM_PORT,
+    DEFAULT_GATEWAY_DICOM_STORAGE_DIR,
     DEFAULT_LOG_LEVEL,
     DEFAULT_MWL_API_TIMEOUT_SECONDS,
     DEFAULT_MWL_API_URL,
@@ -22,6 +27,11 @@ def test_config_defaults() -> None:
     assert config.orthanc_timeout_seconds == DEFAULT_ORTHANC_TIMEOUT_SECONDS
     assert config.gateway_audit_db == DEFAULT_GATEWAY_AUDIT_DB
     assert config.gateway_api_token is None
+    assert config.gateway_dicom_enabled == DEFAULT_GATEWAY_DICOM_ENABLED
+    assert config.gateway_dicom_aet == DEFAULT_GATEWAY_DICOM_AET
+    assert config.gateway_dicom_port == DEFAULT_GATEWAY_DICOM_PORT
+    assert config.gateway_dicom_bind == DEFAULT_GATEWAY_DICOM_BIND
+    assert config.gateway_dicom_storage_dir == DEFAULT_GATEWAY_DICOM_STORAGE_DIR
     assert "gateway_api_token" not in config.safe_log_dict()
     assert config.safe_log_dict()["gateway_api_token_configured"] is False
 
@@ -38,6 +48,11 @@ def test_config_env_overrides() -> None:
             "ORTHANC_TIMEOUT_SECONDS": "4.5",
             "GATEWAY_AUDIT_DB": "/tmp/gateway-audit.sqlite3",
             "GATEWAY_API_TOKEN": "secret-token",
+            "GATEWAY_DICOM_ENABLED": "true",
+            "GATEWAY_DICOM_AET": "GW_TEST",
+            "GATEWAY_DICOM_PORT": "11105",
+            "GATEWAY_DICOM_BIND": "127.0.0.2",
+            "GATEWAY_DICOM_STORAGE_DIR": "/tmp/dicom-inbox",
         }
     )
 
@@ -50,6 +65,11 @@ def test_config_env_overrides() -> None:
     assert config.orthanc_timeout_seconds == 4.5
     assert str(config.gateway_audit_db) == "/tmp/gateway-audit.sqlite3"
     assert config.gateway_api_token == "secret-token"
+    assert config.gateway_dicom_enabled is True
+    assert config.gateway_dicom_aet == "GW_TEST"
+    assert config.gateway_dicom_port == 11105
+    assert config.gateway_dicom_bind == "127.0.0.2"
+    assert str(config.gateway_dicom_storage_dir) == "/tmp/dicom-inbox"
     assert "secret-token" not in str(config.safe_log_dict())
     assert config.safe_log_dict()["gateway_api_token_configured"] is True
 

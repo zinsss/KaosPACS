@@ -35,6 +35,14 @@ def status_payload(config: GatewayConfig) -> dict[str, Any]:
             ).is_reachable(),
             "gateway_audit_db": _check_audit_db(config.gateway_audit_db),
         },
+        "gateway_dicom": {
+            "enabled": config.gateway_dicom_enabled,
+            "aet": config.gateway_dicom_aet,
+            "bind": config.gateway_dicom_bind,
+            "port": config.gateway_dicom_port,
+            "storage_dir": str(config.gateway_dicom_storage_dir),
+            "mode": "skeleton-test-only",
+        },
         "ownership": {
             "storage_scp": {
                 "aet": "VIEWREX",

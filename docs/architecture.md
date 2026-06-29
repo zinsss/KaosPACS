@@ -38,6 +38,8 @@ Orthanc + MWL runtime stable. It contains:
   persisted under `/srv/docker/kaospacs/gateway`.
 - Gateway internal Orthanc HTTP client using `ORTHANC_URL` for operational
   reachability checks and future Gateway-to-Orthanc integration.
+- Gateway disabled DICOM C-STORE skeleton configured as
+  `KAOSPACS_GW_TEST:11104` on `127.0.0.1` for local tests only.
 
 ## Current Transitional Boundary
 
@@ -54,12 +56,19 @@ active, completed, cancelled, and expired. It does not infer workflow from
 Orthanc studies.
 
 Orthanc owning `VIEWREX:104` is a temporary runtime stage, not the final
-architecture. Gateway does not bind DICOM ports, receive C-STORE, or forward
-to Orthanc yet.
+architecture. Gateway does not bind port `104`, does not use AET `VIEWREX`,
+does not receive production C-STORE traffic, and does not forward to Orthanc
+yet. The current Gateway DICOM listener is disabled by default and is only a
+loopback skeleton for test datasets when explicitly enabled.
 
 The current Gateway Orthanc client calls Orthanc HTTP only. It is used for
 operational reachability in `/status` and as a future integration skeleton. It
 does not send DICOM to Orthanc, inspect studies, expose studies, or return PHI.
+
+The disabled Gateway C-STORE skeleton stores explicitly tested datasets in
+`/app/data/dicom-inbox` only when `GATEWAY_DICOM_ENABLED=true`. It does not
+modify datasets, inspect or fix Korean charset issues, call MWL completion, or
+expose stored files over HTTP.
 
 ## Final Gateway-Centered Boundary
 
@@ -130,7 +139,9 @@ Business logic belongs outside Orthanc:
   MWL API, and MWL completion calls after successful storage/forwarding.
   Current Gateway audit stores only workflow event metadata and accession
   numbers, not demographics or full payloads. Current Gateway Orthanc HTTP
-  client usage is limited to non-PHI reachability/future-integration scaffolding.
+  client usage is limited to non-PHI reachability/future-integration
+  scaffolding. Current Gateway DICOM C-STORE usage is disabled test scaffolding
+  only; it is not the production `VIEWREX:104` ingress.
 - KaosEghis-PACS: eGHIS order discovery with read-only access, polling or event
   handling, normalization, and sending normalized order events to Gateway. It
   should not call MWL directly in production, call Orthanc directly, or infer

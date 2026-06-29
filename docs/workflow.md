@@ -22,9 +22,14 @@ Orthanc + MWL stack stable until Gateway is implemented.
 
 Gateway exposes localhost-only workflow API endpoints in front of MWL. It also
 accepts normalized order events at `POST /orders/upsert` and
-`POST /orders/cancel` for future KaosEghis-PACS integration. It does not
-receive DICOM, forward to Orthanc, or participate in image ingestion yet.
-Orthanc still owns `VIEWREX:104` transitionally.
+`POST /orders/cancel` for future KaosEghis-PACS integration. It does not bind
+the production DICOM identity, forward to Orthanc, or participate in production
+image ingestion yet. Orthanc still owns `VIEWREX:104` transitionally.
+
+Gateway has a disabled C-STORE skeleton for loopback test datasets only. When
+explicitly enabled, it uses `KAOSPACS_GW_TEST:11104` on `127.0.0.1`, stores
+files in `/app/data/dicom-inbox`, and does not call `POST /worklist/complete`.
+It must not be used as the production `VIEWREX:104` receiver.
 
 Gateway records minimal workflow audit events for worklist API calls in its own
 SQLite database. This audit is separate from the MWL audit DB and stores only

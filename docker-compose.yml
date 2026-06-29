@@ -97,6 +97,11 @@ services:
       MWL_API_TIMEOUT_SECONDS: "3"
       GATEWAY_AUDIT_DB: /app/data/gateway_audit.sqlite3
       GATEWAY_API_TOKEN: ${GATEWAY_API_TOKEN:-}
+      GATEWAY_DICOM_ENABLED: ${GATEWAY_DICOM_ENABLED:-false}
+      GATEWAY_DICOM_AET: ${GATEWAY_DICOM_AET:-KAOSPACS_GW_TEST}
+      GATEWAY_DICOM_PORT: ${GATEWAY_DICOM_PORT:-11104}
+      GATEWAY_DICOM_BIND: ${GATEWAY_DICOM_BIND:-127.0.0.1}
+      GATEWAY_DICOM_STORAGE_DIR: /app/data/dicom-inbox
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ${GATEWAY_DATA:-/srv/docker/kaospacs/gateway}:/app/data

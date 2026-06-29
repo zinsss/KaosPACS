@@ -22,6 +22,28 @@ docker compose logs orthanc
 
 Also check whether another DICOM service is already bound to port `104`.
 
+## Gateway DICOM Skeleton Unexpectedly Listening
+
+Gateway's C-STORE skeleton is disabled by default and must not own production
+storage traffic. Its test defaults are:
+
+```text
+AET:  KAOSPACS_GW_TEST
+Bind: 127.0.0.1
+Port: 11104
+```
+
+Check:
+
+```bash
+docker compose logs gateway
+sudo ss -ltnp | grep -E ':(104|11104)\b' || true
+```
+
+If `11104` is listening unexpectedly, verify `GATEWAY_DICOM_ENABLED=false` in
+the runtime environment and restart only the Gateway service. Do not change
+Orthanc ownership of `VIEWREX:104` during this skeleton phase.
+
 ## Orthanc Cannot Connect To PostgreSQL
 
 Check PostgreSQL health and credentials:
@@ -160,6 +182,10 @@ If a dependency reports `reachable=false`, check the corresponding service:
 The `orthanc_http` check uses Gateway's internal Orthanc HTTP client against
 `ORTHANC_URL`. It checks reachability only and does not expose studies, patient
 data, DICOM instances, or Orthanc response bodies through `/status`.
+
+The `gateway_dicom` block reports only whether the disabled C-STORE skeleton is
+enabled and its configured test bind/AET/port/storage directory. It must not
+include patient data, accession numbers, or stored DICOM content.
 
 ## Runtime Worklist Accumulates Old Entries
 
