@@ -11,6 +11,7 @@ DEFAULT_LOG_LEVEL = "INFO"
 DEFAULT_TZ = "Asia/Seoul"
 DEFAULT_HTTP_HOST = "0.0.0.0"
 DEFAULT_HTTP_PORT = 8060
+DEFAULT_MWL_API_TIMEOUT_SECONDS = 3.0
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class GatewayConfig:
     tz: str = DEFAULT_TZ
     http_host: str = DEFAULT_HTTP_HOST
     http_port: int = DEFAULT_HTTP_PORT
+    mwl_api_timeout_seconds: float = DEFAULT_MWL_API_TIMEOUT_SECONDS
 
     def safe_log_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -32,6 +34,12 @@ def _int_from_env(raw: str | None, default: int) -> int:
     return int(raw)
 
 
+def _float_from_env(raw: str | None, default: float) -> float:
+    if raw is None or raw.strip() == "":
+        return default
+    return float(raw)
+
+
 def load_config(env: Mapping[str, str] | None = None) -> GatewayConfig:
     source = environ if env is None else env
     return GatewayConfig(
@@ -41,4 +49,8 @@ def load_config(env: Mapping[str, str] | None = None) -> GatewayConfig:
         tz=source.get("TZ", DEFAULT_TZ),
         http_host=source.get("GATEWAY_HTTP_HOST", DEFAULT_HTTP_HOST),
         http_port=_int_from_env(source.get("GATEWAY_HTTP_PORT"), DEFAULT_HTTP_PORT),
+        mwl_api_timeout_seconds=_float_from_env(
+            source.get("MWL_API_TIMEOUT_SECONDS"),
+            DEFAULT_MWL_API_TIMEOUT_SECONDS,
+        ),
     )

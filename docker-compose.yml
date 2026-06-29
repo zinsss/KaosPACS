@@ -93,6 +93,7 @@ services:
       GATEWAY_HTTP_PORT: "8060"
       ORTHANC_URL: http://orthanc:8042
       MWL_API_URL: http://mwl:8055
+      MWL_API_TIMEOUT_SECONDS: "3"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8060/health', timeout=2).read()"]

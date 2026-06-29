@@ -1,5 +1,6 @@
 from app.config import (
     DEFAULT_LOG_LEVEL,
+    DEFAULT_MWL_API_TIMEOUT_SECONDS,
     DEFAULT_MWL_API_URL,
     DEFAULT_ORTHANC_URL,
     DEFAULT_TZ,
@@ -15,6 +16,7 @@ def test_config_defaults() -> None:
     assert config.log_level == DEFAULT_LOG_LEVEL
     assert config.tz == DEFAULT_TZ
     assert config.http_port == 8060
+    assert config.mwl_api_timeout_seconds == DEFAULT_MWL_API_TIMEOUT_SECONDS
 
 
 def test_config_env_overrides() -> None:
@@ -25,6 +27,7 @@ def test_config_env_overrides() -> None:
             "LOG_LEVEL": "debug",
             "TZ": "UTC",
             "GATEWAY_HTTP_PORT": "18060",
+            "MWL_API_TIMEOUT_SECONDS": "7.5",
         }
     )
 
@@ -33,3 +36,4 @@ def test_config_env_overrides() -> None:
     assert config.log_level == "DEBUG"
     assert config.tz == "UTC"
     assert config.http_port == 18060
+    assert config.mwl_api_timeout_seconds == 7.5

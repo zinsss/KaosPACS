@@ -46,15 +46,17 @@ and the cutover is planned. `VIEWREX_WL:105` remains owned by the MWL service
 in both the current and final architectures; Gateway does not proxy the DICOM
 MWL SCP.
 
-Gateway Phase 0 is present as an inert localhost-only HTTP service. It exposes
-only:
+Gateway is present as a localhost-only workflow HTTP service in front of MWL.
+Useful endpoints:
 
 ```text
 http://127.0.0.1:8060/health
+http://127.0.0.1:8060/worklist
 ```
 
-It does not bind port `104`, receive DICOM studies, forward to Orthanc, call
-MWL, poll eGHIS, or change current PACS runtime behavior.
+It does not bind port `104`, receive DICOM studies, forward to Orthanc, poll
+eGHIS, or change current PACS runtime behavior. Production order integrations
+should call Gateway, and Gateway calls the internal MWL API.
 
 MWL runtime paths:
 
@@ -81,6 +83,7 @@ Useful checks:
 curl http://127.0.0.1:8055/health
 curl http://127.0.0.1:8055/worklist
 curl http://127.0.0.1:8060/health
+curl http://127.0.0.1:8060/worklist
 docker compose logs mwl
 ```
 
