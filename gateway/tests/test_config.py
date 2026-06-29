@@ -1,3 +1,5 @@
+import pytest
+
 from app.config import (
     DEFAULT_GATEWAY_AUDIT_DB,
     DEFAULT_GATEWAY_QUEUE_DB,
@@ -5,6 +7,7 @@ from app.config import (
     DEFAULT_GATEWAY_DICOM_BIND,
     DEFAULT_GATEWAY_DICOM_ENABLED,
     DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED,
+    DEFAULT_GATEWAY_DICOM_FORWARD_MODE,
     DEFAULT_GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS,
     DEFAULT_GATEWAY_DICOM_QUEUE_ENABLED,
     DEFAULT_GATEWAY_DICOM_PORT,
@@ -51,6 +54,7 @@ def test_config_defaults() -> None:
         == DEFAULT_GATEWAY_QUEUE_POLL_INTERVAL_SECONDS
     )
     assert config.gateway_queue_max_attempts == DEFAULT_GATEWAY_QUEUE_MAX_ATTEMPTS
+    assert config.gateway_dicom_forward_mode == DEFAULT_GATEWAY_DICOM_FORWARD_MODE
     assert config.gateway_dicom_forward_enabled == DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED
     assert config.orthanc_dicom_host == DEFAULT_ORTHANC_DICOM_HOST
     assert config.orthanc_dicom_port == DEFAULT_ORTHANC_DICOM_PORT
@@ -86,6 +90,7 @@ def test_config_env_overrides() -> None:
             "GATEWAY_QUEUE_WORKER_ENABLED": "true",
             "GATEWAY_QUEUE_POLL_INTERVAL_SECONDS": "1.5",
             "GATEWAY_QUEUE_MAX_ATTEMPTS": "3",
+            "GATEWAY_DICOM_FORWARD_MODE": "queue",
             "GATEWAY_DICOM_FORWARD_ENABLED": "true",
             "ORTHANC_DICOM_HOST": "orthanc.local",
             "ORTHANC_DICOM_PORT": "4242",
@@ -114,6 +119,7 @@ def test_config_env_overrides() -> None:
     assert config.gateway_queue_worker_enabled is True
     assert config.gateway_queue_poll_interval_seconds == 1.5
     assert config.gateway_queue_max_attempts == 3
+    assert config.gateway_dicom_forward_mode == "queue"
     assert config.gateway_dicom_forward_enabled is True
     assert config.orthanc_dicom_host == "orthanc.local"
     assert config.orthanc_dicom_port == 4242
@@ -129,3 +135,30 @@ def test_empty_gateway_api_token_disables_auth() -> None:
 
     assert config.gateway_api_token is None
     assert config.safe_log_dict()["gateway_api_token_configured"] is False
+
+
+def test_unknown_forward_mode_fails_config_validation() -> None:
+    with pytest.raises(ValueError, match="GATEWAY_DICOM_FORWARD_MODE"):
+        load_config({"GATEWAY_DICOM_FORWARD_MODE": "mystery"})
+
+
+def test_queue_forward_mode_requires_queue_enabled() -> None:
+    with pytest.raises(ValueError, match="GATEWAY_DICOM_QUEUE_ENABLED"):
+        load_config(
+            {
+                "GATEWAY_DICOM_FORWARD_MODE": "queue",
+                "GATEWAY_DICOM_QUEUE_ENABLED": "false",
+                "GATEWAY_QUEUE_WORKER_ENABLED": "true",
+            }
+        )
+
+
+def test_queue_forward_mode_requires_worker_enabled() -> None:
+    with pytest.raises(ValueError, match="GATEWAY_QUEUE_WORKER_ENABLED"):
+        load_config(
+            {
+                "GATEWAY_DICOM_FORWARD_MODE": "queue",
+                "GATEWAY_DICOM_QUEUE_ENABLED": "true",
+                "GATEWAY_QUEUE_WORKER_ENABLED": "false",
+            }
+        )

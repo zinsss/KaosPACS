@@ -68,17 +68,19 @@ does not send DICOM to Orthanc, inspect studies, expose studies, or return PHI.
 The disabled Gateway C-STORE skeleton stores explicitly tested datasets in
 `/app/data/dicom-inbox` only when `GATEWAY_DICOM_ENABLED=true`. Test-mode
 forwarding from the local inbox to Orthanc is available only when
-`GATEWAY_DICOM_FORWARD_ENABLED=true`. A persistent DICOM forwarding queue
+`GATEWAY_DICOM_FORWARD_ENABLED=true` and
+`GATEWAY_DICOM_FORWARD_MODE=direct`. A persistent DICOM forwarding queue
 foundation exists at `/app/data/gateway_queue.sqlite3`, but it is disabled by
 default with `GATEWAY_DICOM_QUEUE_ENABLED=false`. A background retry worker can
 be separately enabled with `GATEWAY_QUEUE_WORKER_ENABLED=true`; it forwards
-queued files to Orthanc and updates queue state, but it does not match studies
-or call MWL completion. When queueing is enabled, successful local stores
-enqueue pending rows while the current direct-forwarding path remains active.
-After successful local storage and optional direct forwarding, Gateway fetches
-the active MWL worklist and attempts a deterministic match by
-`AccessionNumber`, `RequestedProcedureID`, then `ScheduledProcedureStepID`. If
-the match succeeds and has an accession number, Gateway calls MWL completion.
+queued files to Orthanc and updates queue state. `direct` mode is the default
+and preserves the existing test flow: after successful local storage and
+optional direct forwarding, Gateway fetches the active MWL worklist and
+attempts a deterministic match by `AccessionNumber`, `RequestedProcedureID`,
+then `ScheduledProcedureStepID`. If the match succeeds and has an accession
+number, Gateway calls MWL completion. `queue` mode is test-mode only: C-STORE
+stores locally, enqueues, returns success after enqueue, and the worker
+forwards later. Queue mode does not match studies or call MWL completion yet.
 It does not modify datasets, inspect or fix Korean charset issues, or expose
 stored files over HTTP.
 
@@ -155,9 +157,9 @@ Business logic belongs outside Orthanc:
   scaffolding. Current Gateway DICOM C-STORE usage is disabled test scaffolding
   only; optional forwarding is test-mode only and is not the production
   `VIEWREX:104` ingress. The forwarding queue and retry worker are operational
-  infrastructure only and do not replace the active direct-forwarding or
-  completion flow. Current MWL completion is limited to matched test-mode DICOM
-  receives.
+  infrastructure only. Queue mode is explicit test scaffolding and does not
+  call MWL completion. Current MWL completion is limited to matched test-mode
+  direct DICOM receives.
 - KaosEghis-PACS: eGHIS order discovery with read-only access, polling or event
   handling, normalization, and sending normalized order events to Gateway. It
   should not call MWL directly in production, call Orthanc directly, or infer
