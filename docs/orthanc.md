@@ -22,6 +22,11 @@ Gateway is the workflow and storage integration boundary in the final
 architecture. Orthanc should not receive directly from modalities, from
 KaosEghis-PACS, or from MWL.
 
+The current Gateway DICOM C-STORE skeleton is disabled by default and uses only
+the loopback test identity `KAOSPACS_GW_TEST:11104` when explicitly enabled. It
+does not replace Orthanc as the current `VIEWREX:104` receiver and does not
+forward studies to Orthanc.
+
 Orthanc HTTP is available for initial local testing at:
 
 ```text

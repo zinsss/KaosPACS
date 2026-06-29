@@ -63,6 +63,20 @@ eGHIS, or change current PACS runtime behavior. Production order integrations
 should send normalized order events to Gateway, and Gateway calls the internal
 MWL API. Raw Gateway `/worklist` endpoints remain internal/development helpers.
 
+Gateway also includes a disabled DICOM C-STORE skeleton for local testing only:
+
+```text
+GATEWAY_DICOM_ENABLED=false
+GATEWAY_DICOM_AET=KAOSPACS_GW_TEST
+GATEWAY_DICOM_BIND=127.0.0.1
+GATEWAY_DICOM_PORT=11104
+GATEWAY_DICOM_STORAGE_DIR=/app/data/dicom-inbox
+```
+
+There is no Gateway DICOM port published in `docker-compose.yml` by default.
+Do not use AET `VIEWREX` or port `104` for this skeleton. Orthanc remains the
+current transitional owner of `VIEWREX:104`.
+
 Gateway also has an internal Orthanc HTTP client configured by:
 
 ```text

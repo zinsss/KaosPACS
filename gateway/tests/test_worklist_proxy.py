@@ -431,6 +431,14 @@ def test_status_with_token_returns_operational_metadata(tmp_path) -> None:
             "path": str(audit_db),
             "reachable": True,
         }
+        assert body["gateway_dicom"] == {
+            "enabled": False,
+            "aet": "KAOSPACS_GW_TEST",
+            "bind": "127.0.0.1",
+            "port": 11104,
+            "storage_dir": "/app/data/dicom-inbox",
+            "mode": "skeleton-test-only",
+        }
         assert body["ownership"]["storage_scp"] == {
             "aet": "VIEWREX",
             "port": 104,

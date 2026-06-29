@@ -20,15 +20,17 @@ Current transitional runtime:
   minimal audit database.
 - Gateway provides localhost-only workflow API endpoints in front of the MWL
   API, including normalized order event endpoints for future KaosEghis-PACS
-  integration. It does not own DICOM ports, receive studies, or forward to
-  Orthanc yet.
+  integration.
+- Gateway includes a disabled DICOM C-STORE skeleton for loopback testing only.
+  It does not bind port `104`, does not use AET `VIEWREX`, does not receive
+  production studies, and does not forward to Orthanc yet.
 - Gateway can protect workflow endpoints with `GATEWAY_API_TOKEN` bearer-token
   authentication. `/health` remains unauthenticated.
 - Gateway writes a minimal workflow audit DB at
   `/app/data/gateway_audit.sqlite3`, persisted under
   `/srv/docker/kaospacs/gateway`.
 - This keeps the verified Orthanc + MWL storage path stable while Gateway DICOM
-  behavior is still unimplemented.
+  behavior remains non-production test scaffolding.
 
 Final Gateway-centered runtime:
 
@@ -114,6 +116,10 @@ docker compose ps
   - `POST http://127.0.0.1:8060/orders/cancel`
 - Gateway protected admin API:
   - `POST http://127.0.0.1:8060/admin/worklist/prune`
+- Gateway DICOM skeleton: disabled by default. If explicitly enabled for local
+  tests, it uses `127.0.0.1:11104`, AET `KAOSPACS_GW_TEST`, and stores files
+  under `/app/data/dicom-inbox`. It is not the production `VIEWREX:104`
+  receiver.
 
 If `GATEWAY_API_TOKEN` is set, Gateway workflow requests must include:
 
@@ -131,6 +137,7 @@ security.
 `GATEWAY_API_TOKEN` is set. It reports dependency reachability and ownership
 state only. It must not expose worklist entries, patient demographics, chart
 numbers, accession numbers, diagnosis, EMR notes, tokens, or request payloads.
+It also reports whether the disabled Gateway DICOM skeleton is enabled.
 
 `POST /admin/worklist/prune` removes old inactive completed, cancelled, or
 expired entries from the runtime MWL worklist only. It defaults to

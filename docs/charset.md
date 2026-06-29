@@ -25,6 +25,10 @@ Do not put charset normalization inside MWL or KaosEghis-PACS. Do not rely on
 Orthanc as the long-term place for modality-facing charset fixes; Orthanc
 should remain the internal storage/index/viewer backend.
 
+The current Gateway C-STORE skeleton is disabled test scaffolding only. It
+stores explicitly tested datasets when enabled but does not inspect, normalize,
+or rewrite Korean character sets.
+
 Future charset work should document:
 
 - Source modality behavior.
