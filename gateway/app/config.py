@@ -15,11 +15,13 @@ DEFAULT_HTTP_PORT = 8060
 DEFAULT_MWL_API_TIMEOUT_SECONDS = 3.0
 DEFAULT_ORTHANC_TIMEOUT_SECONDS = 3.0
 DEFAULT_GATEWAY_AUDIT_DB = Path("/app/data/gateway_audit.sqlite3")
+DEFAULT_GATEWAY_QUEUE_DB = Path("/app/data/gateway_queue.sqlite3")
 DEFAULT_GATEWAY_DICOM_ENABLED = False
 DEFAULT_GATEWAY_DICOM_AET = "KAOSPACS_GW_TEST"
 DEFAULT_GATEWAY_DICOM_PORT = 11104
 DEFAULT_GATEWAY_DICOM_BIND = "127.0.0.1"
 DEFAULT_GATEWAY_DICOM_STORAGE_DIR = Path("/app/data/dicom-inbox")
+DEFAULT_GATEWAY_DICOM_QUEUE_ENABLED = False
 DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED = False
 DEFAULT_ORTHANC_DICOM_HOST = "orthanc"
 DEFAULT_ORTHANC_DICOM_PORT = 104
@@ -39,12 +41,14 @@ class GatewayConfig:
     mwl_api_timeout_seconds: float = DEFAULT_MWL_API_TIMEOUT_SECONDS
     orthanc_timeout_seconds: float = DEFAULT_ORTHANC_TIMEOUT_SECONDS
     gateway_audit_db: Path = DEFAULT_GATEWAY_AUDIT_DB
+    gateway_queue_db: Path = DEFAULT_GATEWAY_QUEUE_DB
     gateway_api_token: str | None = None
     gateway_dicom_enabled: bool = DEFAULT_GATEWAY_DICOM_ENABLED
     gateway_dicom_aet: str = DEFAULT_GATEWAY_DICOM_AET
     gateway_dicom_port: int = DEFAULT_GATEWAY_DICOM_PORT
     gateway_dicom_bind: str = DEFAULT_GATEWAY_DICOM_BIND
     gateway_dicom_storage_dir: Path = DEFAULT_GATEWAY_DICOM_STORAGE_DIR
+    gateway_dicom_queue_enabled: bool = DEFAULT_GATEWAY_DICOM_QUEUE_ENABLED
     gateway_dicom_forward_enabled: bool = DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED
     orthanc_dicom_host: str = DEFAULT_ORTHANC_DICOM_HOST
     orthanc_dicom_port: int = DEFAULT_ORTHANC_DICOM_PORT
@@ -104,6 +108,7 @@ def load_config(env: Mapping[str, str] | None = None) -> GatewayConfig:
             DEFAULT_ORTHANC_TIMEOUT_SECONDS,
         ),
         gateway_audit_db=Path(source.get("GATEWAY_AUDIT_DB", str(DEFAULT_GATEWAY_AUDIT_DB))),
+        gateway_queue_db=Path(source.get("GATEWAY_QUEUE_DB", str(DEFAULT_GATEWAY_QUEUE_DB))),
         gateway_api_token=gateway_api_token,
         gateway_dicom_enabled=_bool_from_env(
             source.get("GATEWAY_DICOM_ENABLED"),
@@ -117,6 +122,10 @@ def load_config(env: Mapping[str, str] | None = None) -> GatewayConfig:
         gateway_dicom_bind=source.get("GATEWAY_DICOM_BIND", DEFAULT_GATEWAY_DICOM_BIND),
         gateway_dicom_storage_dir=Path(
             source.get("GATEWAY_DICOM_STORAGE_DIR", str(DEFAULT_GATEWAY_DICOM_STORAGE_DIR))
+        ),
+        gateway_dicom_queue_enabled=_bool_from_env(
+            source.get("GATEWAY_DICOM_QUEUE_ENABLED"),
+            DEFAULT_GATEWAY_DICOM_QUEUE_ENABLED,
         ),
         gateway_dicom_forward_enabled=_bool_from_env(
             source.get("GATEWAY_DICOM_FORWARD_ENABLED"),

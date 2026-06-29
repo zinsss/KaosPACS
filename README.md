@@ -32,6 +32,9 @@ Current transitional runtime:
 - Gateway writes a minimal workflow audit DB at
   `/app/data/gateway_audit.sqlite3`, persisted under
   `/srv/docker/kaospacs/gateway`.
+- Gateway includes a disabled DICOM forwarding queue foundation at
+  `/app/data/gateway_queue.sqlite3`. The queue is disabled by default and has
+  no retry worker yet; current test-mode direct forwarding remains unchanged.
 - This keeps the verified Orthanc + MWL storage path stable while Gateway DICOM
   behavior remains non-production test scaffolding.
 
@@ -123,9 +126,13 @@ docker compose ps
   tests, it uses `127.0.0.1:11104`, AET `KAOSPACS_GW_TEST`, and stores files
   under `/app/data/dicom-inbox`. It is not the production `VIEWREX:104`
   receiver. Test-mode forwarding to Orthanc is also disabled by default with
-  `GATEWAY_DICOM_FORWARD_ENABLED=false`. When a received test study is stored,
-  optionally forwarded, and matched to an active MWL entry with an accession
-  number, Gateway calls MWL completion. It does not perform charset fixes.
+  `GATEWAY_DICOM_FORWARD_ENABLED=false`. The persistent queue foundation is
+  also disabled by default with `GATEWAY_DICOM_QUEUE_ENABLED=false`; when
+  enabled, successful local stores insert pending queue rows, but no background
+  retry worker exists yet and the current direct-forwarding path remains
+  active. When a received test study is stored, optionally forwarded, and
+  matched to an active MWL entry with an accession number, Gateway calls MWL
+  completion. It does not perform charset fixes.
   Matching uses `AccessionNumber`, then `RequestedProcedureID`, then
   `ScheduledProcedureStepID`; it never uses patient name, DOB, or fuzzy matching.
 
@@ -146,6 +153,8 @@ security.
 state only. It must not expose worklist entries, patient demographics, chart
 numbers, accession numbers, diagnosis, EMR notes, tokens, or request payloads.
 It also reports whether the disabled Gateway DICOM skeleton is enabled.
+Gateway DICOM queue status is operational only and reports counts by queue
+state; it does not expose patient demographics or dataset contents.
 
 `POST /admin/worklist/prune` removes old inactive completed, cancelled, or
 expired entries from the runtime MWL worklist only. It defaults to

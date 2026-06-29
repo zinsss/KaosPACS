@@ -13,6 +13,7 @@ from app.config import GatewayConfig
 from app.dicom.completion import CompletionResult, complete_matched_worklist
 from app.dicom.forwarder import DicomForwarder
 from app.dicom.matcher import MatchResult, match_dataset_to_worklist
+from app.dicom.queue import enqueue_stored_dataset
 from app.dicom.storage import store_dataset
 from app.services.audit import record_gateway_event
 
@@ -67,6 +68,8 @@ def handle_store(
     forwarder: DicomForwarder | None = None,
     mwl_client: MwlApiClient | None = None,
     audit_db: Path | None = None,
+    queue_db: Path | None = None,
+    queue_enabled: bool = False,
 ) -> int:
     dataset = event.dataset
     dataset.file_meta = event.file_meta
@@ -107,6 +110,8 @@ def handle_store(
         status_code=SUCCESS_STATUS,
         success=True,
     )
+    if queue_enabled and queue_db is not None:
+        _enqueue_after_store(queue_db, dataset, path)
 
     if forwarder is None:
         _match_after_success(dataset, mwl_client, audit_db)
@@ -208,6 +213,30 @@ def _match_after_success(
         )
 
 
+def _enqueue_after_store(queue_db: Path, dataset: Any, path: Path) -> None:
+    try:
+        queue_id = enqueue_stored_dataset(queue_db, dataset, path)
+        LOGGER.info(
+            "DICOM forward queue enqueue queue_id=%s sop_instance_uid=%s "
+            "study_instance_uid=%s accession_number=%s modality=%s",
+            queue_id,
+            _text(getattr(dataset, "SOPInstanceUID", "")),
+            _text(getattr(dataset, "StudyInstanceUID", "")),
+            _text(getattr(dataset, "AccessionNumber", "")),
+            _text(getattr(dataset, "Modality", "")),
+        )
+    except Exception as error:
+        LOGGER.warning(
+            "DICOM forward queue enqueue failed sop_instance_uid=%s "
+            "study_instance_uid=%s accession_number=%s modality=%s exception=%s",
+            _text(getattr(dataset, "SOPInstanceUID", "")),
+            _text(getattr(dataset, "StudyInstanceUID", "")),
+            _text(getattr(dataset, "AccessionNumber", "")),
+            _text(getattr(dataset, "Modality", "")),
+            error.__class__.__name__,
+        )
+
+
 def _audit_dicom_completion(
     audit_db: Path | None,
     match_result: MatchResult,
@@ -287,6 +316,8 @@ class GatewayDicomServer:
         forwarder: DicomForwarder | None = None,
         mwl_client: MwlApiClient | None = None,
         audit_db: Path | None = None,
+        queue_db: Path | None = None,
+        queue_enabled: bool = False,
     ) -> None:
         self.bind = bind
         self.port = port
@@ -295,6 +326,8 @@ class GatewayDicomServer:
         self.forwarder = forwarder
         self.mwl_client = mwl_client
         self.audit_db = audit_db
+        self.queue_db = queue_db
+        self.queue_enabled = queue_enabled
         self._server: Any | None = None
 
     def start(self) -> "GatewayDicomServer":
@@ -308,12 +341,13 @@ class GatewayDicomServer:
         )
         LOGGER.info(
             "Gateway DICOM C-STORE skeleton listening bind=%s port=%s aet=%s storage_dir=%s "
-            "forward_enabled=%s",
+            "forward_enabled=%s queue_enabled=%s",
             self.bind,
             self.port,
             self.aet,
             self.storage_dir,
             self.forwarder is not None,
+            self.queue_enabled,
         )
         return self
 
@@ -329,6 +363,8 @@ class GatewayDicomServer:
             forwarder=self.forwarder,
             mwl_client=self.mwl_client,
             audit_db=self.audit_db,
+            queue_db=self.queue_db,
+            queue_enabled=self.queue_enabled,
         )
 
 
@@ -364,4 +400,6 @@ def start_dicom_listener(config: GatewayConfig) -> GatewayDicomServer | None:
         forwarder=forwarder,
         mwl_client=mwl_client,
         audit_db=config.gateway_audit_db,
+        queue_db=config.gateway_queue_db,
+        queue_enabled=config.gateway_dicom_queue_enabled,
     ).start()
