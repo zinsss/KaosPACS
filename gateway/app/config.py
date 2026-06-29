@@ -26,9 +26,13 @@ class GatewayConfig:
     http_port: int = DEFAULT_HTTP_PORT
     mwl_api_timeout_seconds: float = DEFAULT_MWL_API_TIMEOUT_SECONDS
     gateway_audit_db: Path = DEFAULT_GATEWAY_AUDIT_DB
+    gateway_api_token: str | None = None
 
     def safe_log_dict(self) -> dict[str, object]:
-        return asdict(self)
+        values = asdict(self)
+        values.pop("gateway_api_token", None)
+        values["gateway_api_token_configured"] = self.gateway_api_token is not None
+        return values
 
 
 def _int_from_env(raw: str | None, default: int) -> int:
@@ -45,6 +49,8 @@ def _float_from_env(raw: str | None, default: float) -> float:
 
 def load_config(env: Mapping[str, str] | None = None) -> GatewayConfig:
     source = environ if env is None else env
+    raw_gateway_api_token = source.get("GATEWAY_API_TOKEN")
+    gateway_api_token = raw_gateway_api_token if raw_gateway_api_token else None
     return GatewayConfig(
         orthanc_url=source.get("ORTHANC_URL", DEFAULT_ORTHANC_URL),
         mwl_api_url=source.get("MWL_API_URL", DEFAULT_MWL_API_URL),
@@ -57,4 +63,5 @@ def load_config(env: Mapping[str, str] | None = None) -> GatewayConfig:
             DEFAULT_MWL_API_TIMEOUT_SECONDS,
         ),
         gateway_audit_db=Path(source.get("GATEWAY_AUDIT_DB", str(DEFAULT_GATEWAY_AUDIT_DB))),
+        gateway_api_token=gateway_api_token,
     )

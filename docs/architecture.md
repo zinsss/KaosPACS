@@ -32,6 +32,8 @@ Orthanc + MWL runtime stable. It contains:
 - Gateway localhost-only workflow API on `127.0.0.1:8060`, accepting
   normalized order events and proxying validated worklist requests to the
   internal MWL API.
+- Optional Gateway shared bearer-token authentication through
+  `GATEWAY_API_TOKEN` for workflow endpoints. `GET /health` stays public.
 - Gateway workflow audit SQLite DB at `/app/data/gateway_audit.sqlite3`,
   persisted under `/srv/docker/kaospacs/gateway`.
 
@@ -102,6 +104,11 @@ query MWL directly using DICOM C-FIND. Gateway accepts normalized order events
 from KaosEghis-PACS at `POST /orders/upsert` and `POST /orders/cancel`, then
 converts those events into internal MWL API updates. Raw `/worklist` Gateway
 endpoints remain internal/development helpers for now.
+
+KaosEghis-PACS authenticates to Gateway with `Authorization: Bearer <token>`
+when `GATEWAY_API_TOKEN` is configured. This shared token is a simple
+localhost/clinic LAN control, not internet-grade security. Leaving the token
+unset disables Gateway authentication for development only.
 
 ## Boundaries
 
