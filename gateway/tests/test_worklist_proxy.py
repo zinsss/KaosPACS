@@ -458,6 +458,12 @@ def test_status_with_token_returns_operational_metadata(tmp_path) -> None:
                 "failed": 0,
                 "dead_letter": 0,
             },
+            "worker": {
+                "enabled": False,
+                "running": False,
+                "poll_interval_seconds": 5.0,
+                "max_attempts": 10,
+            },
             "forward_enabled": False,
             "forward_target": {
                 "host": "orthanc",

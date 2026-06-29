@@ -16,8 +16,9 @@ from app.api.worklist import (
     handle_worklist_state_post,
 )
 from app.config import GatewayConfig, load_config
-from app.dicom.server import start_dicom_listener
 from app.dicom.queue import init_queue_db
+from app.dicom.retry_worker import start_queue_retry_worker
+from app.dicom.server import start_dicom_listener
 from app.health import health_payload
 from app.services.audit import init_audit_db
 from app.services.auth import is_auth_enabled, is_authorized
@@ -142,14 +143,17 @@ def main() -> None:
         )
     init_audit_db(config.gateway_audit_db)
     init_queue_db(config.gateway_queue_db)
-    dicom_server = start_dicom_listener(config)
+    retry_worker = start_queue_retry_worker(config)
     server = create_server(config)
+    dicom_server = start_dicom_listener(config)
     LOGGER.info("Gateway listening host=%s port=%s", config.http_host, config.http_port)
     try:
         server.serve_forever()
     finally:
         if dicom_server is not None:
             dicom_server.stop()
+        if retry_worker is not None:
+            retry_worker.stop()
 
 
 if __name__ == "__main__":

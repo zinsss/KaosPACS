@@ -10,6 +10,9 @@ from app.config import (
     DEFAULT_GATEWAY_DICOM_PORT,
     DEFAULT_GATEWAY_DICOM_STORAGE_DIR,
     DEFAULT_GATEWAY_FORWARDING_AET,
+    DEFAULT_GATEWAY_QUEUE_MAX_ATTEMPTS,
+    DEFAULT_GATEWAY_QUEUE_POLL_INTERVAL_SECONDS,
+    DEFAULT_GATEWAY_QUEUE_WORKER_ENABLED,
     DEFAULT_LOG_LEVEL,
     DEFAULT_MWL_API_TIMEOUT_SECONDS,
     DEFAULT_MWL_API_URL,
@@ -42,6 +45,12 @@ def test_config_defaults() -> None:
     assert config.gateway_dicom_bind == DEFAULT_GATEWAY_DICOM_BIND
     assert config.gateway_dicom_storage_dir == DEFAULT_GATEWAY_DICOM_STORAGE_DIR
     assert config.gateway_dicom_queue_enabled == DEFAULT_GATEWAY_DICOM_QUEUE_ENABLED
+    assert config.gateway_queue_worker_enabled == DEFAULT_GATEWAY_QUEUE_WORKER_ENABLED
+    assert (
+        config.gateway_queue_poll_interval_seconds
+        == DEFAULT_GATEWAY_QUEUE_POLL_INTERVAL_SECONDS
+    )
+    assert config.gateway_queue_max_attempts == DEFAULT_GATEWAY_QUEUE_MAX_ATTEMPTS
     assert config.gateway_dicom_forward_enabled == DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED
     assert config.orthanc_dicom_host == DEFAULT_ORTHANC_DICOM_HOST
     assert config.orthanc_dicom_port == DEFAULT_ORTHANC_DICOM_PORT
@@ -74,6 +83,9 @@ def test_config_env_overrides() -> None:
             "GATEWAY_DICOM_BIND": "127.0.0.2",
             "GATEWAY_DICOM_STORAGE_DIR": "/tmp/dicom-inbox",
             "GATEWAY_DICOM_QUEUE_ENABLED": "true",
+            "GATEWAY_QUEUE_WORKER_ENABLED": "true",
+            "GATEWAY_QUEUE_POLL_INTERVAL_SECONDS": "1.5",
+            "GATEWAY_QUEUE_MAX_ATTEMPTS": "3",
             "GATEWAY_DICOM_FORWARD_ENABLED": "true",
             "ORTHANC_DICOM_HOST": "orthanc.local",
             "ORTHANC_DICOM_PORT": "4242",
@@ -99,6 +111,9 @@ def test_config_env_overrides() -> None:
     assert config.gateway_dicom_bind == "127.0.0.2"
     assert str(config.gateway_dicom_storage_dir) == "/tmp/dicom-inbox"
     assert config.gateway_dicom_queue_enabled is True
+    assert config.gateway_queue_worker_enabled is True
+    assert config.gateway_queue_poll_interval_seconds == 1.5
+    assert config.gateway_queue_max_attempts == 3
     assert config.gateway_dicom_forward_enabled is True
     assert config.orthanc_dicom_host == "orthanc.local"
     assert config.orthanc_dicom_port == 4242
