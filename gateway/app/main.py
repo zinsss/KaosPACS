@@ -19,6 +19,7 @@ from .orders import (
     validate_order_cancel,
     validate_order_upsert,
 )
+from .prune import normalize_prune_request, prune_worklist, validate_prune_request
 from .status import status_payload
 
 
@@ -31,6 +32,7 @@ PROTECTED_ENDPOINTS = {
     ("POST", "/worklist/cancel"),
     ("POST", "/orders/upsert"),
     ("POST", "/orders/cancel"),
+    ("POST", "/admin/worklist/prune"),
 }
 
 
@@ -303,6 +305,9 @@ def make_handler(config: GatewayConfig):
             path = urlparse(self.path).path
             if not self._require_auth("POST", path):
                 return
+            if path == "/admin/worklist/prune":
+                self._handle_admin_worklist_prune(path)
+                return
             if path in {"/orders/upsert", "/orders/cancel"}:
                 self._handle_order_post(path)
                 return
@@ -387,6 +392,100 @@ def make_handler(config: GatewayConfig):
                 success=response.status_code < 400,
             )
             _proxy_mwl_response(self, response.status_code, response.payload)
+
+        def _handle_admin_worklist_prune(self, path: str) -> None:
+            try:
+                payload = _read_json_request(self)
+            except json.JSONDecodeError as error:
+                _audit_event(
+                    self,
+                    event_type="admin_worklist_prune",
+                    request_path=path,
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    success=False,
+                    error_code="invalid_json",
+                )
+                _json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "invalid JSON", "details": [str(error)]},
+                )
+                return
+
+            errors = validate_prune_request(payload)
+            if errors:
+                _audit_event(
+                    self,
+                    event_type="admin_worklist_prune",
+                    request_path=path,
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    success=False,
+                    error_code="invalid_request",
+                )
+                _json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "invalid prune request", "details": errors},
+                )
+                return
+
+            options = normalize_prune_request(payload)
+            try:
+                current_worklist = self._mwl_client().get_worklist()
+                current_worklist_errors = _validate_worklist_payload(current_worklist.payload)
+                if current_worklist_errors:
+                    _audit_event(
+                        self,
+                        event_type="admin_worklist_prune",
+                        request_path=path,
+                        status_code=HTTPStatus.BAD_GATEWAY,
+                        success=False,
+                        error_code="invalid_mwl_worklist",
+                    )
+                    _json_response(
+                        self,
+                        HTTPStatus.BAD_GATEWAY,
+                        {
+                            "error": "bad_gateway",
+                            "message": "MWL API returned an invalid worklist",
+                        },
+                    )
+                    return
+
+                prune_result = prune_worklist(current_worklist.payload, **options)
+                if not options["dry_run"]:
+                    self._mwl_client().put_worklist(prune_result["worklist"])
+            except MwlHttpError as error:
+                _audit_event(
+                    self,
+                    event_type="admin_worklist_prune",
+                    request_path=path,
+                    status_code=error.status_code,
+                    success=False,
+                    error_code="mwl_error",
+                )
+                _proxy_mwl_response(self, error.status_code, error.payload)
+                return
+            except MwlUnavailableError:
+                _audit_event(
+                    self,
+                    event_type="admin_worklist_prune",
+                    request_path=path,
+                    status_code=HTTPStatus.BAD_GATEWAY,
+                    success=False,
+                    error_code="mwl_unavailable",
+                )
+                _gateway_bad_gateway(self)
+                return
+
+            _audit_event(
+                self,
+                event_type="admin_worklist_prune",
+                request_path=path,
+                status_code=HTTPStatus.OK,
+                success=True,
+            )
+            _json_response(self, HTTPStatus.OK, prune_result["summary"])
 
         def _handle_order_post(self, path: str) -> None:
             try:

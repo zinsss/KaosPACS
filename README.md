@@ -112,6 +112,8 @@ docker compose ps
 - Gateway normalized order API:
   - `POST http://127.0.0.1:8060/orders/upsert`
   - `POST http://127.0.0.1:8060/orders/cancel`
+- Gateway protected admin API:
+  - `POST http://127.0.0.1:8060/admin/worklist/prune`
 
 If `GATEWAY_API_TOKEN` is set, Gateway workflow requests must include:
 
@@ -129,6 +131,11 @@ security.
 `GATEWAY_API_TOKEN` is set. It reports dependency reachability and ownership
 state only. It must not expose worklist entries, patient demographics, chart
 numbers, accession numbers, diagnosis, EMR notes, tokens, or request payloads.
+
+`POST /admin/worklist/prune` removes old inactive completed, cancelled, or
+expired entries from the runtime MWL worklist only. It defaults to
+`dry_run=true`, never removes `Active=true` entries, and returns a summary with
+accession numbers only. It does not prune the MWL audit DB or Gateway audit DB.
 
 Port `104` is a privileged low port. Binding it may require a rootful Docker
 daemon, host networking, or adjusted capabilities depending on the environment.

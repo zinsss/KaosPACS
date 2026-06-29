@@ -55,6 +55,7 @@ GET http://127.0.0.1:8060/status
 http://127.0.0.1:8060/worklist
 POST http://127.0.0.1:8060/orders/upsert
 POST http://127.0.0.1:8060/orders/cancel
+POST http://127.0.0.1:8060/admin/worklist/prune
 ```
 
 It does not bind port `104`, receive DICOM studies, forward to Orthanc, poll
@@ -91,6 +92,13 @@ enabled. It is for operational visibility only and reports dependency
 reachability plus current ownership state. It must not include worklist entries,
 patient names, chart numbers, accession numbers, DOB, sex, diagnosis, EMR
 notes, tokens, Authorization headers, or full payloads.
+
+`POST /admin/worklist/prune` is a protected runtime worklist cleanup endpoint.
+It defaults to `dry_run=true`, removes only inactive entries matching requested
+statuses, and never removes `Active=true` entries. The response is a summary
+only and may include removed accession numbers, but not patient names, chart
+numbers, DOB, sex, diagnosis, EMR notes, or full worklist entries. This endpoint
+does not prune the MWL audit DB or Gateway audit DB.
 
 Gateway writes a minimal workflow audit database at:
 
@@ -150,6 +158,10 @@ curl -X POST http://127.0.0.1:8060/orders/cancel \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
   --data '{"AccessionNumber":"TEST-ORDER-1","CancelReason":"test cleanup"}'
+curl -X POST http://127.0.0.1:8060/admin/worklist/prune \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
+  --data '{"dry_run":true,"older_than_days":7,"statuses":["completed","cancelled"]}'
 docker compose logs mwl
 ```
 
