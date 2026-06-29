@@ -199,6 +199,37 @@ def test_handle_store_queue_enabled_enqueues_after_local_write(tmp_path) -> None
     assert "PatientID" not in columns
 
 
+def test_handle_store_direct_mode_duplicate_sop_keeps_single_queue_row(tmp_path) -> None:
+    dataset = _minimal_dataset()
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    queue_db = tmp_path / "gateway_queue.sqlite3"
+
+    first_status = handle_store(
+        event,
+        tmp_path / "inbox",
+        queue_db=queue_db,
+        queue_enabled=True,
+        forward_mode="direct",
+    )
+    second_status = handle_store(
+        event,
+        tmp_path / "inbox",
+        queue_db=queue_db,
+        queue_enabled=True,
+        forward_mode="direct",
+    )
+
+    assert first_status == 0x0000
+    assert second_status == 0x0000
+    assert get_queue_counts(queue_db) == {
+        "pending": 1,
+        "forwarding": 0,
+        "completed": 0,
+        "failed": 0,
+        "dead_letter": 0,
+    }
+
+
 def test_handle_store_queue_mode_enqueues_without_direct_forward_match_or_completion(
     tmp_path,
 ) -> None:
@@ -238,6 +269,47 @@ def test_handle_store_queue_mode_enqueues_without_direct_forward_match_or_comple
     }
     assert _dicom_match_events(audit_db) == []
     assert _dicom_completion_events(audit_db) == []
+
+
+def test_handle_store_queue_mode_duplicate_sop_does_not_create_duplicate_rows(
+    tmp_path,
+) -> None:
+    dataset = _minimal_dataset()
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    queue_db = tmp_path / "gateway_queue.sqlite3"
+
+    first_status = handle_store(
+        event,
+        tmp_path / "inbox",
+        queue_db=queue_db,
+        queue_enabled=True,
+        forward_mode="queue",
+    )
+    second_status = handle_store(
+        event,
+        tmp_path / "inbox",
+        queue_db=queue_db,
+        queue_enabled=True,
+        forward_mode="queue",
+    )
+
+    assert first_status == 0x0000
+    assert second_status == 0x0000
+    assert get_queue_counts(queue_db) == {
+        "pending": 1,
+        "forwarding": 0,
+        "completed": 0,
+        "failed": 0,
+        "dead_letter": 0,
+    }
+    with sqlite3.connect(queue_db) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT sop_instance_uid, status
+            FROM {QUEUE_TABLE}
+            """
+        ).fetchall()
+    assert rows == [(str(dataset.SOPInstanceUID), "pending")]
 
 
 def test_handle_store_queue_mode_requires_queue_enabled(tmp_path) -> None:

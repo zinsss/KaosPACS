@@ -138,9 +138,11 @@ docker compose ps
   the current direct-forwarding path. `GATEWAY_DICOM_FORWARD_MODE=queue` is
   test-mode only: C-STORE stores locally, enqueues, returns success after
   enqueue, and the worker forwards later. Queue mode does not match or complete
-  MWL worklists yet. In direct mode, when a received test study is stored,
-  optionally forwarded, and matched to an active MWL entry with an accession
-  number, Gateway calls MWL completion. It does not perform charset fixes.
+  MWL worklists yet. Queue enqueueing is idempotent by `SOPInstanceUID`, so
+  repeated modality sends do not create duplicate queue rows. In direct mode,
+  when a received test study is stored, optionally forwarded, and matched to an
+  active MWL entry with an accession number, Gateway calls MWL completion. It
+  does not perform charset fixes.
   Matching uses `AccessionNumber`, then `RequestedProcedureID`, then
   `ScheduledProcedureStepID`; it never uses patient name, DOB, or fuzzy matching.
 

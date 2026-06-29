@@ -253,18 +253,21 @@ def _enqueue_after_store(
         )
         return None
     try:
-        queue_id = enqueue_stored_dataset(queue_db, dataset, path)
+        enqueue_result = enqueue_stored_dataset(queue_db, dataset, path)
         LOGGER.info(
             "DICOM forward queue enqueue queue_id=%s sop_instance_uid=%s "
-            "study_instance_uid=%s accession_number=%s modality=%s mode=%s status=pending",
-            queue_id,
+            "study_instance_uid=%s accession_number=%s modality=%s mode=%s "
+            "inserted=%s status=%s",
+            enqueue_result.queue_id,
             _text(getattr(dataset, "SOPInstanceUID", "")),
             _text(getattr(dataset, "StudyInstanceUID", "")),
             _text(getattr(dataset, "AccessionNumber", "")),
             _text(getattr(dataset, "Modality", "")),
             mode,
+            enqueue_result.inserted,
+            enqueue_result.status,
         )
-        return queue_id
+        return enqueue_result.queue_id
     except Exception as error:
         LOGGER.warning(
             "DICOM forward queue enqueue failed sop_instance_uid=%s "

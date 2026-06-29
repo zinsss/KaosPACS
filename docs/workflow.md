@@ -188,7 +188,9 @@ Gateway test C-STORE KAOSPACS_GW_TEST:11104
 
 Queue mode is not active by default and does not replace the current
 direct-forwarding test path. Queue-mode worker forwarding does not match MWL
-entries or call completion yet.
+entries or call completion yet. Queue enqueueing is idempotent by
+`SOPInstanceUID`, so repeated sends of the same instance reuse the existing
+queue row instead of creating duplicate pending rows.
 
 Do not add eGHIS DB polling to KaosPACS itself. eGHIS integration belongs in
 KaosEghis-PACS. In production, KaosEghis-PACS sends worklist events to Gateway

@@ -88,6 +88,11 @@ GATEWAY_QUEUE_WORKER_ENABLED=true
 Queue mode does not replace production DICOM ingress, and it does not call MWL
 completion yet.
 
+Repeated C-STORE sends with the same `SOPInstanceUID` should not create
+duplicate queue rows. The queue uses a partial unique index on `SOPInstanceUID`
+and duplicate enqueue attempts return the existing row. A duplicate of a
+completed row is not reset to pending.
+
 ## Orthanc Cannot Connect To PostgreSQL
 
 Check PostgreSQL health and credentials:
