@@ -37,7 +37,11 @@ def match_dataset_to_worklist(dataset: Any, worklist: Any) -> MatchResult:
                 return MatchResult(
                     matched=True,
                     matched_by=field,
-                    accession_number=_text(entry.get("AccessionNumber")) or dataset_value,
+                    accession_number=(
+                        _text(entry.get("AccessionNumber"))
+                        or _text(getattr(dataset, "AccessionNumber", ""))
+                        or None
+                    ),
                     reason=None,
                     worklist_entry=entry,
                 )

@@ -83,8 +83,9 @@ There is no Gateway DICOM port published in `docker-compose.yml` by default.
 Do not use AET `VIEWREX` or port `104` for this skeleton. Orthanc remains the
 current transitional owner of `VIEWREX:104`. Test-mode forwarding to Orthanc
 requires both `GATEWAY_DICOM_ENABLED=true` and
-`GATEWAY_DICOM_FORWARD_ENABLED=true`; it still does not call MWL completion or
-perform charset fixes.
+`GATEWAY_DICOM_FORWARD_ENABLED=true`. Matched test-mode DICOM receives can call
+MWL completion after successful storage and optional forwarding, but they still
+do not perform charset fixes.
 
 Gateway also has an internal Orthanc HTTP client configured by:
 

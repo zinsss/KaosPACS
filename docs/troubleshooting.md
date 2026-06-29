@@ -52,8 +52,9 @@ GATEWAY_DICOM_FORWARD_ENABLED=false
 
 Forwarding requires both `GATEWAY_DICOM_ENABLED=true` and
 `GATEWAY_DICOM_FORWARD_ENABLED=true`. It is local test scaffolding only; it
-does not imply Gateway owns `VIEWREX:104`, does not call MWL completion, and
-does not apply charset fixes.
+does not imply Gateway owns `VIEWREX:104`. Matched test-mode DICOM receives can
+call MWL completion after successful storage and optional forwarding, but they
+do not apply charset fixes.
 
 ## Orthanc Cannot Connect To PostgreSQL
 

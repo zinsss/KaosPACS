@@ -10,6 +10,7 @@ from pynetdicom.presentation import AllStoragePresentationContexts
 
 from app.clients.mwl import MwlApiClient, MwlHttpError, MwlUnavailableError
 from app.config import GatewayConfig
+from app.dicom.completion import CompletionResult, complete_matched_worklist
 from app.dicom.forwarder import DicomForwarder
 from app.dicom.matcher import MatchResult, match_dataset_to_worklist
 from app.dicom.storage import store_dataset
@@ -197,6 +198,32 @@ def _match_after_success(
         match_result,
         success=match_result.matched,
         error_code=None if match_result.matched else match_result.reason,
+    )
+    if match_result.matched and match_result.accession_number:
+        completion_result = complete_matched_worklist(mwl_client, dataset, match_result)
+        _audit_dicom_completion(
+            audit_db,
+            match_result,
+            completion_result,
+        )
+
+
+def _audit_dicom_completion(
+    audit_db: Path | None,
+    match_result: MatchResult,
+    completion_result: CompletionResult,
+) -> None:
+    if audit_db is None:
+        return
+    record_gateway_event(
+        audit_db,
+        event_type="dicom_worklist_complete",
+        request_path="/dicom/c-store",
+        accession_number=match_result.accession_number,
+        matched_by=match_result.matched_by,
+        status_code=completion_result.status_code,
+        success=completion_result.success,
+        error_code=completion_result.error,
     )
 
 
