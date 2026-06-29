@@ -76,6 +76,7 @@ GATEWAY_DICOM_QUEUE_ENABLED=false
 GATEWAY_QUEUE_WORKER_ENABLED=false
 GATEWAY_QUEUE_POLL_INTERVAL_SECONDS=5
 GATEWAY_QUEUE_MAX_ATTEMPTS=10
+GATEWAY_DICOM_FORWARD_MODE=direct
 GATEWAY_DICOM_FORWARD_ENABLED=false
 ORTHANC_DICOM_HOST=orthanc
 ORTHANC_DICOM_PORT=104
@@ -86,11 +87,12 @@ GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS=10
 
 There is no Gateway DICOM port published in `docker-compose.yml` by default.
 Do not use AET `VIEWREX` or port `104` for this skeleton. Orthanc remains the
-current transitional owner of `VIEWREX:104`. Test-mode forwarding to Orthanc
-requires both `GATEWAY_DICOM_ENABLED=true` and
-`GATEWAY_DICOM_FORWARD_ENABLED=true`. Matched test-mode DICOM receives can call
-MWL completion after successful storage and optional forwarding, but they still
-do not perform charset fixes.
+current transitional owner of `VIEWREX:104`. Direct test-mode forwarding to
+Orthanc requires `GATEWAY_DICOM_ENABLED=true`,
+`GATEWAY_DICOM_FORWARD_MODE=direct`, and
+`GATEWAY_DICOM_FORWARD_ENABLED=true`. Matched direct-mode test receives can
+call MWL completion after successful storage and optional forwarding, but they
+still do not perform charset fixes.
 
 The Gateway DICOM forwarding queue foundation is persisted under the same
 Gateway data mount as `/app/data/gateway_queue.sqlite3`. It is disabled by
@@ -100,6 +102,14 @@ disabled by default with `GATEWAY_QUEUE_WORKER_ENABLED=false`. When explicitly
 enabled, it processes queued files in the background and forwards them to
 Orthanc, but it does not match worklist entries, call completion, delete local
 files, or replace the current direct-forwarding test path.
+
+`GATEWAY_DICOM_FORWARD_MODE=direct` is the default and preserves current
+behavior. `GATEWAY_DICOM_FORWARD_MODE=queue` is test-mode only and requires
+both `GATEWAY_DICOM_QUEUE_ENABLED=true` and
+`GATEWAY_QUEUE_WORKER_ENABLED=true`. In queue mode, C-STORE stores locally,
+enqueues a pending row, and returns success after enqueue; the retry worker
+forwards later and updates queue state only. Queue mode does not call MWL
+completion yet.
 
 Retry scheduling is intentionally simple:
 

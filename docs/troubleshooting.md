@@ -71,8 +71,22 @@ GATEWAY_QUEUE_WORKER_ENABLED=false
 ```
 
 When enabled, queueing records pending rows after successful local stores and
-the worker can forward queued files to Orthanc. It does not replace the current
-direct-forwarding test path, and it does not call MWL completion.
+the worker can forward queued files to Orthanc. Direct mode remains the default:
+
+```text
+GATEWAY_DICOM_FORWARD_MODE=direct
+```
+
+Queue mode is test-only and requires both queueing and the worker:
+
+```text
+GATEWAY_DICOM_FORWARD_MODE=queue
+GATEWAY_DICOM_QUEUE_ENABLED=true
+GATEWAY_QUEUE_WORKER_ENABLED=true
+```
+
+Queue mode does not replace production DICOM ingress, and it does not call MWL
+completion yet.
 
 ## Orthanc Cannot Connect To PostgreSQL
 
@@ -319,9 +333,9 @@ ID, phone, address, diagnosis, or EMR notes.
 In the current transitional stage, worklist completion is an explicit API call.
 The MWL service does not infer completion from Orthanc studies.
 
-Gateway test-mode completion currently runs after local store, optional direct
-forwarding, and MWL matching. The queue worker does not change that active flow
-yet and does not call completion.
+Gateway test-mode completion currently runs only in direct mode after local
+store, optional direct forwarding, and MWL matching. Queue-mode worker
+forwarding does not call completion yet.
 
 In the final Gateway-centered stage, Gateway is responsible for calling:
 

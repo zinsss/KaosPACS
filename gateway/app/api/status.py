@@ -52,6 +52,7 @@ def status_payload(config: GatewayConfig) -> dict[str, Any]:
                 "poll_interval_seconds": config.gateway_queue_poll_interval_seconds,
                 "max_attempts": config.gateway_queue_max_attempts,
             },
+            "forward_mode": config.gateway_dicom_forward_mode,
             "forward_enabled": config.gateway_dicom_forward_enabled,
             "forward_target": {
                 "host": config.orthanc_dicom_host,

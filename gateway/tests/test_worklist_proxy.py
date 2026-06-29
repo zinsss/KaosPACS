@@ -464,6 +464,7 @@ def test_status_with_token_returns_operational_metadata(tmp_path) -> None:
                 "poll_interval_seconds": 5.0,
                 "max_attempts": 10,
             },
+            "forward_mode": "direct",
             "forward_enabled": False,
             "forward_target": {
                 "host": "orthanc",

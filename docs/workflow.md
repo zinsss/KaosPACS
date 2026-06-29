@@ -30,17 +30,19 @@ participate in production image ingestion yet. Orthanc still owns
 Gateway has a disabled C-STORE skeleton for loopback test datasets only. When
 explicitly enabled, it uses `KAOSPACS_GW_TEST:11104` on `127.0.0.1`, stores
 files in `/app/data/dicom-inbox`, and can forward to Orthanc only when
+`GATEWAY_DICOM_FORWARD_MODE=direct` and
 `GATEWAY_DICOM_FORWARD_ENABLED=true`. A persistent queue foundation can be
 enabled with `GATEWAY_DICOM_QUEUE_ENABLED=true`, which records pending queue
 rows after successful local stores. A retry worker can be separately enabled
 with `GATEWAY_QUEUE_WORKER_ENABLED=true`; it forwards queued files to Orthanc
-and updates queue state, but it does not match worklist entries or call
-completion. Current test-mode direct forwarding remains the active path. After
+and updates queue state. `direct` mode remains the default active path. After
 successful local storage and optional direct forwarding, Gateway reads the
 active MWL worklist and attempts a deterministic match. If the match succeeds
-and has an accession number, Gateway calls `POST /worklist/complete`. It does
-not perform charset fixes. It must not be used as the production `VIEWREX:104`
-receiver.
+and has an accession number, Gateway calls `POST /worklist/complete`. `queue`
+mode is test-mode only: C-STORE stores locally, enqueues, returns success after
+enqueue, and the worker forwards later. Queue mode does not match or complete
+worklists yet. It does not perform charset fixes. It must not be used as the
+production `VIEWREX:104` receiver.
 
 Gateway records minimal workflow audit events for worklist API calls in its own
 SQLite database. This audit is separate from the MWL audit DB and stores only
@@ -155,7 +157,7 @@ Legacy modality
   -> future KaosPACS Web / Weasis opens study
 ```
 
-Current test-mode Gateway DICOM flow:
+Current default direct-mode Gateway DICOM flow:
 
 ```text
 Gateway test C-STORE KAOSPACS_GW_TEST:11104
@@ -172,19 +174,21 @@ Completion is now implemented only for this matched test-mode Gateway DICOM
 path. Completion failure is logged and audited but does not reject a DICOM
 object that was already stored and, if enabled, forwarded successfully.
 
-Future queued Gateway DICOM flow:
+Optional queue-mode Gateway DICOM flow:
 
 ```text
-Gateway C-STORE
-  -> store locally
-  -> enqueue
+Gateway test C-STORE KAOSPACS_GW_TEST:11104
+  -> store locally in /app/data/dicom-inbox
+  -> enqueue pending forwarding row
+  -> C-STORE returns success after enqueue
   -> retry worker forwards to Orthanc
-  -> match
-  -> complete
+  -> queue row becomes completed, failed, or dead_letter
+  -> STOP
 ```
 
-The retry worker foundation exists, but this future queued flow is not active
-by default and does not replace the current direct-forwarding test path.
+Queue mode is not active by default and does not replace the current
+direct-forwarding test path. Queue-mode worker forwarding does not match MWL
+entries or call completion yet.
 
 Do not add eGHIS DB polling to KaosPACS itself. eGHIS integration belongs in
 KaosEghis-PACS. In production, KaosEghis-PACS sends worklist events to Gateway

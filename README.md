@@ -24,9 +24,11 @@ Current transitional runtime:
 - Gateway includes a disabled DICOM C-STORE skeleton for loopback testing only.
   It does not bind port `104`, does not use AET `VIEWREX`, does not receive
   production studies, and does not forward to Orthanc unless explicit
-  test-mode forwarding is enabled. After successful local receipt and optional
-  forwarding, Gateway can match the received study to the active MWL worklist,
-  then complete the matched worklist item.
+  test-mode forwarding is enabled. The default forwarding mode is `direct`,
+  where Gateway can match the received study to the active MWL worklist after
+  successful local receipt and optional direct forwarding, then complete the
+  matched worklist item. Optional `queue` mode is test-mode only and does not
+  match or complete worklists yet.
 - Gateway can protect workflow endpoints with `GATEWAY_API_TOKEN` bearer-token
   authentication. `/health` remains unauthenticated.
 - Gateway writes a minimal workflow audit DB at
@@ -132,8 +134,11 @@ docker compose ps
   enabled, successful local stores insert pending queue rows. The retry worker
   is separately disabled by default with `GATEWAY_QUEUE_WORKER_ENABLED=false`;
   when explicitly enabled, it forwards queued files to Orthanc and updates
-  queue state, but it does not call MWL completion. The current
-  direct-forwarding path remains active. When a received test study is stored,
+  queue state. `GATEWAY_DICOM_FORWARD_MODE=direct` is the default and preserves
+  the current direct-forwarding path. `GATEWAY_DICOM_FORWARD_MODE=queue` is
+  test-mode only: C-STORE stores locally, enqueues, returns success after
+  enqueue, and the worker forwards later. Queue mode does not match or complete
+  MWL worklists yet. In direct mode, when a received test study is stored,
   optionally forwarded, and matched to an active MWL entry with an accession
   number, Gateway calls MWL completion. It does not perform charset fixes.
   Matching uses `AccessionNumber`, then `RequestedProcedureID`, then

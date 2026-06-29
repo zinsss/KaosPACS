@@ -25,6 +25,7 @@ DEFAULT_GATEWAY_DICOM_QUEUE_ENABLED = False
 DEFAULT_GATEWAY_QUEUE_WORKER_ENABLED = False
 DEFAULT_GATEWAY_QUEUE_POLL_INTERVAL_SECONDS = 5.0
 DEFAULT_GATEWAY_QUEUE_MAX_ATTEMPTS = 10
+DEFAULT_GATEWAY_DICOM_FORWARD_MODE = "direct"
 DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED = False
 DEFAULT_ORTHANC_DICOM_HOST = "orthanc"
 DEFAULT_ORTHANC_DICOM_PORT = 104
@@ -57,6 +58,7 @@ class GatewayConfig:
         DEFAULT_GATEWAY_QUEUE_POLL_INTERVAL_SECONDS
     )
     gateway_queue_max_attempts: int = DEFAULT_GATEWAY_QUEUE_MAX_ATTEMPTS
+    gateway_dicom_forward_mode: str = DEFAULT_GATEWAY_DICOM_FORWARD_MODE
     gateway_dicom_forward_enabled: bool = DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED
     orthanc_dicom_host: str = DEFAULT_ORTHANC_DICOM_HOST
     orthanc_dicom_port: int = DEFAULT_ORTHANC_DICOM_PORT
@@ -96,11 +98,35 @@ def _bool_from_env(raw: str | None, default: bool) -> bool:
     raise ValueError(f"invalid boolean value: {raw!r}")
 
 
+def _forward_mode_from_env(raw: str | None) -> str:
+    mode = (raw or DEFAULT_GATEWAY_DICOM_FORWARD_MODE).strip().lower()
+    if mode not in {"direct", "queue"}:
+        raise ValueError(
+            "GATEWAY_DICOM_FORWARD_MODE must be one of: direct, queue"
+        )
+    return mode
+
+
+def _validate_config(config: GatewayConfig) -> GatewayConfig:
+    if config.gateway_dicom_forward_mode == "queue":
+        if not config.gateway_dicom_queue_enabled:
+            raise ValueError(
+                "GATEWAY_DICOM_FORWARD_MODE=queue requires "
+                "GATEWAY_DICOM_QUEUE_ENABLED=true"
+            )
+        if not config.gateway_queue_worker_enabled:
+            raise ValueError(
+                "GATEWAY_DICOM_FORWARD_MODE=queue requires "
+                "GATEWAY_QUEUE_WORKER_ENABLED=true"
+            )
+    return config
+
+
 def load_config(env: Mapping[str, str] | None = None) -> GatewayConfig:
     source = environ if env is None else env
     raw_gateway_api_token = source.get("GATEWAY_API_TOKEN")
     gateway_api_token = raw_gateway_api_token if raw_gateway_api_token else None
-    return GatewayConfig(
+    config = GatewayConfig(
         orthanc_url=source.get("ORTHANC_URL", DEFAULT_ORTHANC_URL),
         mwl_api_url=source.get("MWL_API_URL", DEFAULT_MWL_API_URL),
         log_level=source.get("LOG_LEVEL", DEFAULT_LOG_LEVEL).upper(),
@@ -147,6 +173,9 @@ def load_config(env: Mapping[str, str] | None = None) -> GatewayConfig:
             source.get("GATEWAY_QUEUE_MAX_ATTEMPTS"),
             DEFAULT_GATEWAY_QUEUE_MAX_ATTEMPTS,
         ),
+        gateway_dicom_forward_mode=_forward_mode_from_env(
+            source.get("GATEWAY_DICOM_FORWARD_MODE")
+        ),
         gateway_dicom_forward_enabled=_bool_from_env(
             source.get("GATEWAY_DICOM_FORWARD_ENABLED"),
             DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED,
@@ -166,3 +195,4 @@ def load_config(env: Mapping[str, str] | None = None) -> GatewayConfig:
             DEFAULT_GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS,
         ),
     )
+    return _validate_config(config)

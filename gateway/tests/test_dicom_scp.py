@@ -199,6 +199,94 @@ def test_handle_store_queue_enabled_enqueues_after_local_write(tmp_path) -> None
     assert "PatientID" not in columns
 
 
+def test_handle_store_queue_mode_enqueues_without_direct_forward_match_or_completion(
+    tmp_path,
+) -> None:
+    dataset = _minimal_dataset()
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    queue_db = tmp_path / "gateway_queue.sqlite3"
+    forwarder = RecordingForwarder(ForwardResult(True, 0x0000))
+    mwl_client = RecordingMwlClient(
+        {"entries": [{"Active": True, "AccessionNumber": "ACC-TEST"}]}
+    )
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    init_audit_db(audit_db)
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        forwarder=forwarder,
+        mwl_client=mwl_client,
+        audit_db=audit_db,
+        queue_db=queue_db,
+        queue_enabled=True,
+        forward_mode="queue",
+    )
+
+    stored_path = tmp_path / "inbox" / f"{dataset.SOPInstanceUID}.dcm"
+    assert status == 0x0000
+    assert stored_path.exists()
+    assert forwarder.paths == []
+    assert mwl_client.get_calls == 0
+    assert mwl_client.complete_calls == 0
+    assert get_queue_counts(queue_db) == {
+        "pending": 1,
+        "forwarding": 0,
+        "completed": 0,
+        "failed": 0,
+        "dead_letter": 0,
+    }
+    assert _dicom_match_events(audit_db) == []
+    assert _dicom_completion_events(audit_db) == []
+
+
+def test_handle_store_queue_mode_requires_queue_enabled(tmp_path) -> None:
+    dataset = _minimal_dataset()
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        queue_db=tmp_path / "gateway_queue.sqlite3",
+        queue_enabled=False,
+        forward_mode="queue",
+    )
+
+    assert status == WRITE_FAILURE_STATUS
+
+
+def test_handle_store_queue_mode_enqueue_failure_returns_write_failure(
+    tmp_path,
+    monkeypatch,
+    caplog,
+) -> None:
+    caplog.set_level(logging.INFO)
+    dataset = _minimal_dataset()
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+
+    def fail_enqueue(_queue_db, _dataset, _path):
+        raise RuntimeError("synthetic enqueue failure SHOULD^NOTLOG SECRETID")
+
+    monkeypatch.setattr(dicom_server, "enqueue_stored_dataset", fail_enqueue)
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        queue_db=tmp_path / "gateway_queue.sqlite3",
+        queue_enabled=True,
+        forward_mode="queue",
+    )
+
+    assert status == WRITE_FAILURE_STATUS
+    assert (tmp_path / "inbox" / f"{dataset.SOPInstanceUID}.dcm").exists()
+    assert "RuntimeError" in caplog.text
+    assert "synthetic enqueue failure" not in caplog.text
+    assert "SHOULD^NOTLOG" not in caplog.text
+    assert "SECRETID" not in caplog.text
+    assert "PatientName" not in caplog.text
+    assert "PatientID" not in caplog.text
+
+
 def test_handle_store_forwarding_enabled_calls_forwarder_after_local_write(tmp_path) -> None:
     dataset = _minimal_dataset()
     event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
