@@ -3,11 +3,17 @@ from app.config import (
     DEFAULT_GATEWAY_DICOM_AET,
     DEFAULT_GATEWAY_DICOM_BIND,
     DEFAULT_GATEWAY_DICOM_ENABLED,
+    DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED,
+    DEFAULT_GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS,
     DEFAULT_GATEWAY_DICOM_PORT,
     DEFAULT_GATEWAY_DICOM_STORAGE_DIR,
+    DEFAULT_GATEWAY_FORWARDING_AET,
     DEFAULT_LOG_LEVEL,
     DEFAULT_MWL_API_TIMEOUT_SECONDS,
     DEFAULT_MWL_API_URL,
+    DEFAULT_ORTHANC_DICOM_AET,
+    DEFAULT_ORTHANC_DICOM_HOST,
+    DEFAULT_ORTHANC_DICOM_PORT,
     DEFAULT_ORTHANC_TIMEOUT_SECONDS,
     DEFAULT_ORTHANC_URL,
     DEFAULT_TZ,
@@ -32,6 +38,15 @@ def test_config_defaults() -> None:
     assert config.gateway_dicom_port == DEFAULT_GATEWAY_DICOM_PORT
     assert config.gateway_dicom_bind == DEFAULT_GATEWAY_DICOM_BIND
     assert config.gateway_dicom_storage_dir == DEFAULT_GATEWAY_DICOM_STORAGE_DIR
+    assert config.gateway_dicom_forward_enabled == DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED
+    assert config.orthanc_dicom_host == DEFAULT_ORTHANC_DICOM_HOST
+    assert config.orthanc_dicom_port == DEFAULT_ORTHANC_DICOM_PORT
+    assert config.orthanc_dicom_aet == DEFAULT_ORTHANC_DICOM_AET
+    assert config.gateway_forwarding_aet == DEFAULT_GATEWAY_FORWARDING_AET
+    assert (
+        config.gateway_dicom_forward_timeout_seconds
+        == DEFAULT_GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS
+    )
     assert "gateway_api_token" not in config.safe_log_dict()
     assert config.safe_log_dict()["gateway_api_token_configured"] is False
 
@@ -53,6 +68,12 @@ def test_config_env_overrides() -> None:
             "GATEWAY_DICOM_PORT": "11105",
             "GATEWAY_DICOM_BIND": "127.0.0.2",
             "GATEWAY_DICOM_STORAGE_DIR": "/tmp/dicom-inbox",
+            "GATEWAY_DICOM_FORWARD_ENABLED": "true",
+            "ORTHANC_DICOM_HOST": "orthanc.local",
+            "ORTHANC_DICOM_PORT": "4242",
+            "ORTHANC_DICOM_AET": "ORTHANC_TEST",
+            "GATEWAY_FORWARDING_AET": "GW_FORWARD",
+            "GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS": "12.5",
         }
     )
 
@@ -70,6 +91,12 @@ def test_config_env_overrides() -> None:
     assert config.gateway_dicom_port == 11105
     assert config.gateway_dicom_bind == "127.0.0.2"
     assert str(config.gateway_dicom_storage_dir) == "/tmp/dicom-inbox"
+    assert config.gateway_dicom_forward_enabled is True
+    assert config.orthanc_dicom_host == "orthanc.local"
+    assert config.orthanc_dicom_port == 4242
+    assert config.orthanc_dicom_aet == "ORTHANC_TEST"
+    assert config.gateway_forwarding_aet == "GW_FORWARD"
+    assert config.gateway_dicom_forward_timeout_seconds == 12.5
     assert "secret-token" not in str(config.safe_log_dict())
     assert config.safe_log_dict()["gateway_api_token_configured"] is True
 

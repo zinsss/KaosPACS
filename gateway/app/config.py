@@ -20,6 +20,12 @@ DEFAULT_GATEWAY_DICOM_AET = "KAOSPACS_GW_TEST"
 DEFAULT_GATEWAY_DICOM_PORT = 11104
 DEFAULT_GATEWAY_DICOM_BIND = "127.0.0.1"
 DEFAULT_GATEWAY_DICOM_STORAGE_DIR = Path("/app/data/dicom-inbox")
+DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED = False
+DEFAULT_ORTHANC_DICOM_HOST = "orthanc"
+DEFAULT_ORTHANC_DICOM_PORT = 104
+DEFAULT_ORTHANC_DICOM_AET = "VIEWREX"
+DEFAULT_GATEWAY_FORWARDING_AET = "KAOSPACS_GW"
+DEFAULT_GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS = 10.0
 
 
 @dataclass(frozen=True)
@@ -39,6 +45,14 @@ class GatewayConfig:
     gateway_dicom_port: int = DEFAULT_GATEWAY_DICOM_PORT
     gateway_dicom_bind: str = DEFAULT_GATEWAY_DICOM_BIND
     gateway_dicom_storage_dir: Path = DEFAULT_GATEWAY_DICOM_STORAGE_DIR
+    gateway_dicom_forward_enabled: bool = DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED
+    orthanc_dicom_host: str = DEFAULT_ORTHANC_DICOM_HOST
+    orthanc_dicom_port: int = DEFAULT_ORTHANC_DICOM_PORT
+    orthanc_dicom_aet: str = DEFAULT_ORTHANC_DICOM_AET
+    gateway_forwarding_aet: str = DEFAULT_GATEWAY_FORWARDING_AET
+    gateway_dicom_forward_timeout_seconds: float = (
+        DEFAULT_GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS
+    )
 
     def safe_log_dict(self) -> dict[str, object]:
         values = asdict(self)
@@ -103,5 +117,23 @@ def load_config(env: Mapping[str, str] | None = None) -> GatewayConfig:
         gateway_dicom_bind=source.get("GATEWAY_DICOM_BIND", DEFAULT_GATEWAY_DICOM_BIND),
         gateway_dicom_storage_dir=Path(
             source.get("GATEWAY_DICOM_STORAGE_DIR", str(DEFAULT_GATEWAY_DICOM_STORAGE_DIR))
+        ),
+        gateway_dicom_forward_enabled=_bool_from_env(
+            source.get("GATEWAY_DICOM_FORWARD_ENABLED"),
+            DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED,
+        ),
+        orthanc_dicom_host=source.get("ORTHANC_DICOM_HOST", DEFAULT_ORTHANC_DICOM_HOST),
+        orthanc_dicom_port=_int_from_env(
+            source.get("ORTHANC_DICOM_PORT"),
+            DEFAULT_ORTHANC_DICOM_PORT,
+        ),
+        orthanc_dicom_aet=source.get("ORTHANC_DICOM_AET", DEFAULT_ORTHANC_DICOM_AET),
+        gateway_forwarding_aet=source.get(
+            "GATEWAY_FORWARDING_AET",
+            DEFAULT_GATEWAY_FORWARDING_AET,
+        ),
+        gateway_dicom_forward_timeout_seconds=_float_from_env(
+            source.get("GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS"),
+            DEFAULT_GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS,
         ),
     )

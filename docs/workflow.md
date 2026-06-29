@@ -28,8 +28,10 @@ image ingestion yet. Orthanc still owns `VIEWREX:104` transitionally.
 
 Gateway has a disabled C-STORE skeleton for loopback test datasets only. When
 explicitly enabled, it uses `KAOSPACS_GW_TEST:11104` on `127.0.0.1`, stores
-files in `/app/data/dicom-inbox`, and does not call `POST /worklist/complete`.
-It must not be used as the production `VIEWREX:104` receiver.
+files in `/app/data/dicom-inbox`, and can forward to Orthanc only when
+`GATEWAY_DICOM_FORWARD_ENABLED=true`. It does not call
+`POST /worklist/complete` and does not perform charset fixes. It must not be
+used as the production `VIEWREX:104` receiver.
 
 Gateway records minimal workflow audit events for worklist API calls in its own
 SQLite database. This audit is separate from the MWL audit DB and stores only
