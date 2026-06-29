@@ -13,6 +13,7 @@ DEFAULT_TZ = "Asia/Seoul"
 DEFAULT_HTTP_HOST = "0.0.0.0"
 DEFAULT_HTTP_PORT = 8060
 DEFAULT_MWL_API_TIMEOUT_SECONDS = 3.0
+DEFAULT_ORTHANC_TIMEOUT_SECONDS = 3.0
 DEFAULT_GATEWAY_AUDIT_DB = Path("/app/data/gateway_audit.sqlite3")
 
 
@@ -25,6 +26,7 @@ class GatewayConfig:
     http_host: str = DEFAULT_HTTP_HOST
     http_port: int = DEFAULT_HTTP_PORT
     mwl_api_timeout_seconds: float = DEFAULT_MWL_API_TIMEOUT_SECONDS
+    orthanc_timeout_seconds: float = DEFAULT_ORTHANC_TIMEOUT_SECONDS
     gateway_audit_db: Path = DEFAULT_GATEWAY_AUDIT_DB
     gateway_api_token: str | None = None
 
@@ -61,6 +63,10 @@ def load_config(env: Mapping[str, str] | None = None) -> GatewayConfig:
         mwl_api_timeout_seconds=_float_from_env(
             source.get("MWL_API_TIMEOUT_SECONDS"),
             DEFAULT_MWL_API_TIMEOUT_SECONDS,
+        ),
+        orthanc_timeout_seconds=_float_from_env(
+            source.get("ORTHANC_TIMEOUT_SECONDS"),
+            DEFAULT_ORTHANC_TIMEOUT_SECONDS,
         ),
         gateway_audit_db=Path(source.get("GATEWAY_AUDIT_DB", str(DEFAULT_GATEWAY_AUDIT_DB))),
         gateway_api_token=gateway_api_token,
