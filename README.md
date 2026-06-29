@@ -24,7 +24,9 @@ Current transitional runtime:
 - Gateway includes a disabled DICOM C-STORE skeleton for loopback testing only.
   It does not bind port `104`, does not use AET `VIEWREX`, does not receive
   production studies, and does not forward to Orthanc unless explicit
-  test-mode forwarding is enabled.
+  test-mode forwarding is enabled. After successful local receipt and optional
+  forwarding, Gateway can match the received study to the active MWL worklist,
+  then stops. It does not complete worklists yet.
 - Gateway can protect workflow endpoints with `GATEWAY_API_TOKEN` bearer-token
   authentication. `/health` remains unauthenticated.
 - Gateway writes a minimal workflow audit DB at
@@ -122,7 +124,10 @@ docker compose ps
   under `/app/data/dicom-inbox`. It is not the production `VIEWREX:104`
   receiver. Test-mode forwarding to Orthanc is also disabled by default with
   `GATEWAY_DICOM_FORWARD_ENABLED=false`; enabling it does not call MWL
-  completion and does not perform charset fixes.
+  completion and does not perform charset fixes. Matching uses
+  `AccessionNumber`, then `RequestedProcedureID`, then
+  `ScheduledProcedureStepID`; it never uses patient name, DOB, or fuzzy
+  matching.
 
 If `GATEWAY_API_TOKEN` is set, Gateway workflow requests must include:
 

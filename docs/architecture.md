@@ -68,9 +68,11 @@ does not send DICOM to Orthanc, inspect studies, expose studies, or return PHI.
 The disabled Gateway C-STORE skeleton stores explicitly tested datasets in
 `/app/data/dicom-inbox` only when `GATEWAY_DICOM_ENABLED=true`. Test-mode
 forwarding from the local inbox to Orthanc is available only when
-`GATEWAY_DICOM_FORWARD_ENABLED=true`. It does not modify datasets, inspect or
-fix Korean charset issues, call MWL completion, or expose stored files over
-HTTP.
+`GATEWAY_DICOM_FORWARD_ENABLED=true`. After successful local storage and
+optional forwarding, Gateway fetches the active MWL worklist and attempts a
+deterministic match by `AccessionNumber`, `RequestedProcedureID`, then
+`ScheduledProcedureStepID`. It does not modify datasets, inspect or fix Korean
+charset issues, call MWL completion, or expose stored files over HTTP.
 
 ## Final Gateway-Centered Boundary
 
@@ -144,7 +146,8 @@ Business logic belongs outside Orthanc:
   client usage is limited to non-PHI reachability/future-integration
   scaffolding. Current Gateway DICOM C-STORE usage is disabled test scaffolding
   only; optional forwarding is test-mode only and is not the production
-  `VIEWREX:104` ingress.
+  `VIEWREX:104` ingress. Current MWL matching is lookup-only and does not
+  complete worklists.
 - KaosEghis-PACS: eGHIS order discovery with read-only access, polling or event
   handling, normalization, and sending normalized order events to Gateway. It
   should not call MWL directly in production, call Orthanc directly, or infer

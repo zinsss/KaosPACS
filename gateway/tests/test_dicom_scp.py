@@ -105,6 +105,21 @@ class RecordingForwarder:
         return self.result
 
 
+class RecordingMwlClient:
+    def __init__(self, payload):
+        self.payload = payload
+        self.get_calls = 0
+        self.complete_calls = 0
+
+    def get_worklist(self):
+        self.get_calls += 1
+        return type("MwlResponse", (), {"status_code": 200, "payload": self.payload})()
+
+    def complete_worklist(self, _payload):
+        self.complete_calls += 1
+        raise AssertionError("DICOM matching must not complete worklists")
+
+
 def test_handle_store_forwarding_disabled_stores_locally_only(tmp_path) -> None:
     dataset = _minimal_dataset()
     event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
@@ -150,6 +165,90 @@ def test_handle_store_forwarding_failure_returns_failure_status(tmp_path, caplog
         ("dicom_store_received", "ACC-TEST", 0, 1, None),
         ("dicom_forward_failed", "ACC-TEST", None, 0, "association_failed"),
     ]
+    assert "SHOULD^NOTLOG" not in caplog.text
+    assert "SECRETID" not in caplog.text
+    assert "PatientName" not in caplog.text
+    assert "PatientID" not in caplog.text
+
+
+def test_handle_store_success_gets_worklist_and_audits_match_without_completion(
+    tmp_path,
+    caplog,
+) -> None:
+    caplog.set_level(logging.INFO)
+    dataset = _minimal_dataset()
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    forwarder = RecordingForwarder(ForwardResult(True, 0x0000))
+    mwl_client = RecordingMwlClient(
+        {
+            "entries": [
+                {
+                    "Active": True,
+                    "AccessionNumber": "ACC-TEST",
+                    "PatientName": "SHOULD^NOTLOG",
+                    "PatientID": "SECRETID",
+                }
+            ]
+        }
+    )
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    init_audit_db(audit_db)
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        forwarder=forwarder,
+        mwl_client=mwl_client,
+        audit_db=audit_db,
+    )
+
+    assert status == 0x0000
+    assert mwl_client.get_calls == 1
+    assert mwl_client.complete_calls == 0
+    assert _dicom_match_events(audit_db) == [
+        ("dicom_match", "ACC-TEST", "AccessionNumber", 1, None),
+    ]
+    assert "matched=True" in caplog.text
+    assert "AccessionNumber" in caplog.text
+    assert "SHOULD^NOTLOG" not in caplog.text
+    assert "SECRETID" not in caplog.text
+    assert "PatientName" not in caplog.text
+    assert "PatientID" not in caplog.text
+
+
+def test_handle_store_no_match_audits_accession_only_without_demographics(tmp_path, caplog) -> None:
+    caplog.set_level(logging.INFO)
+    dataset = _minimal_dataset()
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    mwl_client = RecordingMwlClient(
+        {
+            "entries": [
+                {
+                    "Active": True,
+                    "AccessionNumber": "OTHER",
+                    "PatientName": "SHOULD^NOTLOG",
+                    "PatientID": "SECRETID",
+                }
+            ]
+        }
+    )
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    init_audit_db(audit_db)
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        mwl_client=mwl_client,
+        audit_db=audit_db,
+    )
+
+    assert status == 0x0000
+    assert mwl_client.get_calls == 1
+    assert mwl_client.complete_calls == 0
+    assert _dicom_match_events(audit_db) == [
+        ("dicom_match", "ACC-TEST", None, 0, "no_active_match"),
+    ]
+    assert "matched=False" in caplog.text
     assert "SHOULD^NOTLOG" not in caplog.text
     assert "SECRETID" not in caplog.text
     assert "PatientName" not in caplog.text
@@ -253,6 +352,18 @@ def _dicom_audit_events(db_path: Path):
             """
             SELECT event_type, accession_number, status_code, success, error_code
             FROM gateway_events
+            ORDER BY id
+            """
+        ).fetchall()
+
+
+def _dicom_match_events(db_path: Path):
+    with sqlite3.connect(db_path) as connection:
+        return connection.execute(
+            """
+            SELECT event_type, accession_number, matched_by, success, error_code
+            FROM gateway_events
+            WHERE event_type = 'dicom_match'
             ORDER BY id
             """
         ).fetchall()
