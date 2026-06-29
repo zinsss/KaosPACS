@@ -29,8 +29,9 @@ Orthanc + MWL runtime stable. It contains:
 - Active MWL JSON state at `/app/data/worklist.json`, initialized from the
   read-only seed `/app/config/worklist.json`.
 - Minimal MWL SQLite audit database at `/app/data/mwl_audit.sqlite3`.
-- Gateway localhost-only workflow API on `127.0.0.1:8060`, proxying validated
-  worklist requests to the internal MWL API.
+- Gateway localhost-only workflow API on `127.0.0.1:8060`, accepting
+  normalized order events and proxying validated worklist requests to the
+  internal MWL API.
 - Gateway workflow audit SQLite DB at `/app/data/gateway_audit.sqlite3`,
   persisted under `/srv/docker/kaospacs/gateway`.
 
@@ -97,8 +98,10 @@ viewer backend. Orthanc should not remain the final modality-facing owner of
 
 Gateway is the single workflow and storage integration boundary. It is not the
 MWL DICOM SCP and does not own `VIEWREX_WL:105`. Legacy modalities continue to
-query MWL directly using DICOM C-FIND. Gateway updates MWL through the local
-MWL API for create, update, cancel, and completion state.
+query MWL directly using DICOM C-FIND. Gateway accepts normalized order events
+from KaosEghis-PACS at `POST /orders/upsert` and `POST /orders/cancel`, then
+converts those events into internal MWL API updates. Raw `/worklist` Gateway
+endpoints remain internal/development helpers for now.
 
 ## Boundaries
 
@@ -109,14 +112,15 @@ Gateway, not directly exposed as the legacy modality endpoint.
 Business logic belongs outside Orthanc:
 
 - Gateway: modality-facing DICOM Storage SCP, safe DICOM ingress inspection,
-  optional charset/tag fixes after validation, forwarding to Orthanc, worklist
-  create/update/cancel through the MWL API, and MWL completion calls after
-  successful storage/forwarding. Current Gateway audit stores only workflow
-  event metadata and accession numbers, not demographics or full payloads.
+  optional charset/tag fixes after validation, forwarding to Orthanc,
+  normalized order event validation, worklist create/update/cancel through the
+  MWL API, and MWL completion calls after successful storage/forwarding.
+  Current Gateway audit stores only workflow event metadata and accession
+  numbers, not demographics or full payloads.
 - KaosEghis-PACS: eGHIS order discovery with read-only access, polling or event
-  handling, normalization, and sending worklist events to Gateway. It should
-  not call MWL directly in production, call Orthanc directly, or infer DICOM
-  completion.
+  handling, normalization, and sending normalized order events to Gateway. It
+  should not call MWL directly in production, call Orthanc directly, or infer
+  DICOM completion.
 - MWL: modality worklist responses, local worklist state, local MWL API, and
   minimal audit tracking. It is not a workflow engine, must not connect
   directly to eGHIS, must not infer study completion, and must not communicate
