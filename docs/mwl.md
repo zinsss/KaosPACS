@@ -148,6 +148,22 @@ entries.
 The MWL API only manages explicit worklist state: active, completed, cancelled,
 and expired. It does not infer clinical workflow from Orthanc studies.
 
+Gateway also provides a protected admin cleanup endpoint for the runtime
+worklist:
+
+```text
+POST /admin/worklist/prune
+```
+
+This endpoint calls the MWL API through Gateway. It defaults to `dry_run=true`
+and never removes `Active=true` entries. It can remove only inactive completed,
+cancelled, or expired entries matching the requested statuses and age threshold.
+The response is summary-only and may include `AccessionNumber`, but not patient
+name, chart number, DOB, sex, diagnosis, EMR notes, or full worklist entries.
+
+This is runtime JSON cleanup only. It does not delete rows from the MWL audit
+database or Gateway audit database.
+
 Completion ownership:
 
 - KaosEghis-PACS sends normalized order events to Gateway.

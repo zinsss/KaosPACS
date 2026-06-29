@@ -157,6 +157,33 @@ If a dependency reports `reachable=false`, check the corresponding service:
 - `orthanc_http`: `docker compose ps orthanc` and `docker compose logs orthanc`
 - `gateway_audit_db`: host permissions for `/srv/docker/kaospacs/gateway`
 
+## Runtime Worklist Accumulates Old Entries
+
+Completed and cancelled entries are preserved in the runtime MWL worklist for
+traceability, but test entries can accumulate. Gateway provides a protected
+admin cleanup endpoint:
+
+```bash
+curl -X POST http://127.0.0.1:8060/admin/worklist/prune \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
+  --data '{"dry_run":true,"older_than_days":7,"statuses":["completed","cancelled"]}'
+```
+
+The default is `dry_run=true`. Review the summary before running with
+`dry_run=false`.
+
+Safety rules:
+
+- Active entries are never removed.
+- Only inactive completed, cancelled, or expired entries matching the request
+  are eligible.
+- Entries with unparseable timestamps are preserved.
+- The response contains accession numbers only, not full worklist entries or
+  patient demographics.
+- This prunes only `/app/data/worklist.json`; it does not delete MWL audit DB
+  rows or Gateway audit DB rows.
+
 ## MWL Worklist Is Empty
 
 The checked-in seed is mounted read-only:

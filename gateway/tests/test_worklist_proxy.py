@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import threading
+from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -239,6 +240,7 @@ def test_protected_endpoint_without_token_returns_401(tmp_path) -> None:
         ("POST", "/worklist/cancel", {"AccessionNumber": "A1"}),
         ("POST", "/orders/upsert", valid_order_payload(AccessionNumber="A1")),
         ("POST", "/orders/cancel", {"AccessionNumber": "A1"}),
+        ("POST", "/admin/worklist/prune", {}),
     ],
 )
 def test_all_workflow_endpoints_require_token(tmp_path, method, path, payload) -> None:
@@ -586,6 +588,245 @@ def test_status_reports_audit_db_unavailable(tmp_path) -> None:
         stop_server(gateway_server, gateway_thread)
         stop_server(mwl_server, mwl_thread)
         stop_server(orthanc_server, orthanc_thread)
+
+
+def prune_worklist_payload():
+    return {
+        "entries": [
+            {
+                "Active": True,
+                "AccessionNumber": "ACTIVE-1",
+                "PatientName": "ACTIVE^PATIENT",
+                "PatientID": "ACTIVE-CHART",
+                "CompletedAt": "2026-06-01T09:00:00+09:00",
+            },
+            {
+                "Active": False,
+                "AccessionNumber": "COMPLETE-OLD",
+                "PatientName": "COMPLETE^PATIENT",
+                "PatientID": "COMPLETE-CHART",
+                "CompletedAt": "2026-06-01T09:00:00+09:00",
+            },
+            {
+                "Active": False,
+                "AccessionNumber": "CANCEL-OLD",
+                "PatientName": "CANCEL^PATIENT",
+                "PatientID": "CANCEL-CHART",
+                "CancelledAt": "2026-06-01T09:00:00+09:00",
+            },
+            {
+                "Active": False,
+                "AccessionNumber": "EXPIRED-OLD",
+                "PatientName": "EXPIRED^PATIENT",
+                "PatientID": "EXPIRED-CHART",
+                "ExpiresAt": "2026-06-01T09:00:00+09:00",
+            },
+            {
+                "Active": False,
+                "AccessionNumber": "COMPLETE-NEW",
+                "PatientName": "NEW^PATIENT",
+                "PatientID": "NEW-CHART",
+                "CompletedAt": datetime.now().astimezone().isoformat(),
+            },
+            {
+                "Active": False,
+                "AccessionNumber": "BAD-TIME",
+                "PatientName": "BAD^PATIENT",
+                "PatientID": "BAD-CHART",
+                "CompletedAt": "not-a-date",
+            },
+        ]
+    }
+
+
+def test_admin_worklist_prune_default_dry_run_does_not_put(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl(prune_worklist_payload())
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_api_token="secret-token",
+    )
+
+    try:
+        status, body = request_json(
+            "POST",
+            f"{gateway_url}/admin/worklist/prune",
+            {},
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        assert status == 200
+        assert body["dry_run"] is True
+        assert body["older_than_days"] == 7
+        assert body["statuses"] == ["completed", "cancelled"]
+        assert body["before_count"] == 6
+        assert body["after_count"] == 4
+        assert body["removed_count"] == 2
+        assert body["removed"] == [
+            {
+                "AccessionNumber": "COMPLETE-OLD",
+                "reason": "completed",
+                "timestamp": "2026-06-01T09:00:00+09:00",
+            },
+            {
+                "AccessionNumber": "CANCEL-OLD",
+                "reason": "cancelled",
+                "timestamp": "2026-06-01T09:00:00+09:00",
+            },
+        ]
+        assert RecordingMwlHandler.calls == [
+            {"method": "GET", "path": "/worklist", "payload": None}
+        ]
+        serialized = json.dumps(body)
+        assert "PatientName" not in serialized
+        assert "PatientID" not in serialized
+        assert audit_rows(audit_db) == [
+            ("admin_worklist_prune", "/admin/worklist/prune", None, 200, 1, None)
+        ]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_admin_worklist_prune_false_puts_pruned_entries(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl(prune_worklist_payload())
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_api_token="secret-token",
+    )
+
+    try:
+        status, body = request_json(
+            "POST",
+            f"{gateway_url}/admin/worklist/prune",
+            {"dry_run": False, "older_than_days": 7, "statuses": ["completed", "cancelled"]},
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        assert status == 200
+        assert body["dry_run"] is False
+        assert body["removed_count"] == 2
+        assert [call["method"] for call in RecordingMwlHandler.calls] == ["GET", "PUT"]
+        put_payload = RecordingMwlHandler.calls[1]["payload"]
+        remaining_accessions = [
+            entry["AccessionNumber"]
+            for entry in put_payload["entries"]
+        ]
+        assert remaining_accessions == [
+            "ACTIVE-1",
+            "EXPIRED-OLD",
+            "COMPLETE-NEW",
+            "BAD-TIME",
+        ]
+        assert put_payload["entries"][0]["Active"] is True
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_admin_worklist_prune_expired_only_when_requested(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl(prune_worklist_payload())
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_api_token="secret-token",
+    )
+
+    try:
+        status, body = request_json(
+            "POST",
+            f"{gateway_url}/admin/worklist/prune",
+            {"statuses": ["expired"], "older_than_days": 0},
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        assert status == 200
+        assert body["removed"] == [
+            {
+                "AccessionNumber": "EXPIRED-OLD",
+                "reason": "expired",
+                "timestamp": "2026-06-01T09:00:00+09:00",
+            }
+        ]
+        assert RecordingMwlHandler.calls == [
+            {"method": "GET", "path": "/worklist", "payload": None}
+        ]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_detail"),
+    [
+        ({"statuses": ["unknown"]}, "statuses must only contain: completed, cancelled, expired"),
+        ({"older_than_days": -1}, "older_than_days must be an integer >= 0"),
+        ({"older_than_days": True}, "older_than_days must be an integer >= 0"),
+        ({"dry_run": "yes"}, "dry_run must be a boolean"),
+    ],
+)
+def test_admin_worklist_prune_invalid_request_does_not_call_mwl(tmp_path, payload, expected_detail) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl(prune_worklist_payload())
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_api_token="secret-token",
+    )
+
+    try:
+        status, body = request_json(
+            "POST",
+            f"{gateway_url}/admin/worklist/prune",
+            payload,
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        assert status == 400
+        assert expected_detail in body["details"]
+        assert RecordingMwlHandler.calls == []
+        assert audit_rows(audit_db) == [
+            ("admin_worklist_prune", "/admin/worklist/prune", None, 400, 0, "invalid_request")
+        ]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_admin_worklist_prune_mwl_unavailable_returns_502(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        "http://127.0.0.1:1",
+        audit_db,
+        gateway_api_token="secret-token",
+    )
+
+    try:
+        status, body = request_json(
+            "POST",
+            f"{gateway_url}/admin/worklist/prune",
+            {},
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        assert status == 502
+        assert body == {
+            "error": "bad_gateway",
+            "message": "MWL API is unavailable",
+        }
+        assert audit_rows(audit_db) == [
+            ("admin_worklist_prune", "/admin/worklist/prune", None, 502, 0, "mwl_unavailable")
+        ]
+    finally:
+        stop_server(gateway_server, gateway_thread)
 
 
 def test_put_worklist_sends_valid_payload_to_mwl(tmp_path) -> None:
