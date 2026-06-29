@@ -157,6 +157,10 @@ If a dependency reports `reachable=false`, check the corresponding service:
 - `orthanc_http`: `docker compose ps orthanc` and `docker compose logs orthanc`
 - `gateway_audit_db`: host permissions for `/srv/docker/kaospacs/gateway`
 
+The `orthanc_http` check uses Gateway's internal Orthanc HTTP client against
+`ORTHANC_URL`. It checks reachability only and does not expose studies, patient
+data, DICOM instances, or Orthanc response bodies through `/status`.
+
 ## Runtime Worklist Accumulates Old Entries
 
 Completed and cancelled entries are preserved in the runtime MWL worklist for

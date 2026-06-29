@@ -3,6 +3,7 @@ from app.config import (
     DEFAULT_LOG_LEVEL,
     DEFAULT_MWL_API_TIMEOUT_SECONDS,
     DEFAULT_MWL_API_URL,
+    DEFAULT_ORTHANC_TIMEOUT_SECONDS,
     DEFAULT_ORTHANC_URL,
     DEFAULT_TZ,
     load_config,
@@ -18,6 +19,7 @@ def test_config_defaults() -> None:
     assert config.tz == DEFAULT_TZ
     assert config.http_port == 8060
     assert config.mwl_api_timeout_seconds == DEFAULT_MWL_API_TIMEOUT_SECONDS
+    assert config.orthanc_timeout_seconds == DEFAULT_ORTHANC_TIMEOUT_SECONDS
     assert config.gateway_audit_db == DEFAULT_GATEWAY_AUDIT_DB
     assert config.gateway_api_token is None
     assert "gateway_api_token" not in config.safe_log_dict()
@@ -33,6 +35,7 @@ def test_config_env_overrides() -> None:
             "TZ": "UTC",
             "GATEWAY_HTTP_PORT": "18060",
             "MWL_API_TIMEOUT_SECONDS": "7.5",
+            "ORTHANC_TIMEOUT_SECONDS": "4.5",
             "GATEWAY_AUDIT_DB": "/tmp/gateway-audit.sqlite3",
             "GATEWAY_API_TOKEN": "secret-token",
         }
@@ -44,6 +47,7 @@ def test_config_env_overrides() -> None:
     assert config.tz == "UTC"
     assert config.http_port == 18060
     assert config.mwl_api_timeout_seconds == 7.5
+    assert config.orthanc_timeout_seconds == 4.5
     assert str(config.gateway_audit_db) == "/tmp/gateway-audit.sqlite3"
     assert config.gateway_api_token == "secret-token"
     assert "secret-token" not in str(config.safe_log_dict())

@@ -36,6 +36,8 @@ Orthanc + MWL runtime stable. It contains:
   `GATEWAY_API_TOKEN` for workflow endpoints. `GET /health` stays public.
 - Gateway workflow audit SQLite DB at `/app/data/gateway_audit.sqlite3`,
   persisted under `/srv/docker/kaospacs/gateway`.
+- Gateway internal Orthanc HTTP client using `ORTHANC_URL` for operational
+  reachability checks and future Gateway-to-Orthanc integration.
 
 ## Current Transitional Boundary
 
@@ -54,6 +56,10 @@ Orthanc studies.
 Orthanc owning `VIEWREX:104` is a temporary runtime stage, not the final
 architecture. Gateway does not bind DICOM ports, receive C-STORE, or forward
 to Orthanc yet.
+
+The current Gateway Orthanc client calls Orthanc HTTP only. It is used for
+operational reachability in `/status` and as a future integration skeleton. It
+does not send DICOM to Orthanc, inspect studies, expose studies, or return PHI.
 
 ## Final Gateway-Centered Boundary
 
@@ -123,7 +129,8 @@ Business logic belongs outside Orthanc:
   normalized order event validation, worklist create/update/cancel through the
   MWL API, and MWL completion calls after successful storage/forwarding.
   Current Gateway audit stores only workflow event metadata and accession
-  numbers, not demographics or full payloads.
+  numbers, not demographics or full payloads. Current Gateway Orthanc HTTP
+  client usage is limited to non-PHI reachability/future-integration scaffolding.
 - KaosEghis-PACS: eGHIS order discovery with read-only access, polling or event
   handling, normalization, and sending normalized order events to Gateway. It
   should not call MWL directly in production, call Orthanc directly, or infer

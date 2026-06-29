@@ -8,6 +8,7 @@ from urllib.request import Request, urlopen
 
 from .auth import is_auth_enabled
 from .config import GatewayConfig
+from .orthanc_client import OrthancHttpClient
 
 
 STATUS_VERSION = "0.1"
@@ -28,11 +29,10 @@ def status_payload(config: GatewayConfig) -> dict[str, Any]:
                 "/health",
                 config.mwl_api_timeout_seconds,
             ),
-            "orthanc_http": _check_http_dependency(
+            "orthanc_http": OrthancHttpClient(
                 config.orthanc_url,
-                "/system",
-                config.mwl_api_timeout_seconds,
-            ),
+                min(config.orthanc_timeout_seconds, HTTP_STATUS_TIMEOUT_SECONDS),
+            ).is_reachable(),
             "gateway_audit_db": _check_audit_db(config.gateway_audit_db),
         },
         "ownership": {

@@ -63,6 +63,17 @@ eGHIS, or change current PACS runtime behavior. Production order integrations
 should send normalized order events to Gateway, and Gateway calls the internal
 MWL API. Raw Gateway `/worklist` endpoints remain internal/development helpers.
 
+Gateway also has an internal Orthanc HTTP client configured by:
+
+```text
+ORTHANC_URL
+ORTHANC_TIMEOUT_SECONDS
+```
+
+The client is currently used for `/status` reachability and future
+Gateway-to-Orthanc integration only. It does not send DICOM, inspect studies,
+expose studies, or return PHI.
+
 Gateway workflow endpoints support shared bearer-token authentication through:
 
 ```text
