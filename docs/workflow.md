@@ -24,6 +24,12 @@ Gateway exposes localhost-only workflow API endpoints in front of MWL. It does
 not receive DICOM, forward to Orthanc, or participate in image ingestion yet.
 Orthanc still owns `VIEWREX:104` transitionally.
 
+Gateway records minimal workflow audit events for worklist API calls in its own
+SQLite database. This audit is separate from the MWL audit DB and stores only
+metadata such as event type, request path, accession number, status, success,
+error code, and timestamp. It does not store patient demographics or full
+worklist payloads.
+
 ## BMD Path
 
 OsteoPro BMD can send images to Orthanc storage, and normal scheduled workflow

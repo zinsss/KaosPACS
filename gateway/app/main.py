@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlparse
 
+from .audit import init_audit_db, record_gateway_event
 from .config import GatewayConfig, load_config
 from .health import health_payload
 from .mwl_client import MwlApiClient, MwlHttpError, MwlUnavailableError
@@ -82,6 +83,37 @@ def _proxy_mwl_response(handler: BaseHTTPRequestHandler, status_code: int, paylo
     _json_response(handler, status, payload)
 
 
+def _audit_event(
+    handler: BaseHTTPRequestHandler,
+    *,
+    event_type: str,
+    request_path: str,
+    status_code: int | None,
+    success: bool,
+    error_code: str | None = None,
+    accession_number: str | None = None,
+) -> None:
+    record_gateway_event(
+        handler.config.gateway_audit_db,
+        event_type=event_type,
+        request_path=request_path,
+        accession_number=accession_number,
+        status_code=status_code,
+        success=success,
+        error_code=error_code,
+    )
+
+
+def _workflow_event_type(path: str) -> str:
+    if path == "/worklist":
+        return "worklist_get"
+    if path == "/worklist/cancel":
+        return "worklist_cancel"
+    if path == "/worklist/complete":
+        return "worklist_complete"
+    return "worklist_put"
+
+
 def make_handler(config: GatewayConfig):
     class GatewayHandler(BaseHTTPRequestHandler):
         server_version = "KaosPACSGateway/0.1"
@@ -104,11 +136,34 @@ def make_handler(config: GatewayConfig):
                 try:
                     response = self._mwl_client().get_worklist()
                 except MwlHttpError as error:
+                    _audit_event(
+                        self,
+                        event_type="worklist_get",
+                        request_path=path,
+                        status_code=error.status_code,
+                        success=False,
+                        error_code="mwl_error",
+                    )
                     _proxy_mwl_response(self, error.status_code, error.payload)
                     return
                 except MwlUnavailableError:
+                    _audit_event(
+                        self,
+                        event_type="mwl_unavailable",
+                        request_path=path,
+                        status_code=HTTPStatus.BAD_GATEWAY,
+                        success=False,
+                        error_code="mwl_unavailable",
+                    )
                     _gateway_bad_gateway(self)
                     return
+                _audit_event(
+                    self,
+                    event_type="worklist_get",
+                    request_path=path,
+                    status_code=response.status_code,
+                    success=response.status_code < 400,
+                )
                 _proxy_mwl_response(self, response.status_code, response.payload)
                 return
             _json_response(self, HTTPStatus.NOT_FOUND, {"error": "not found"})
@@ -122,6 +177,14 @@ def make_handler(config: GatewayConfig):
             try:
                 payload = _read_json_request(self)
             except json.JSONDecodeError as error:
+                _audit_event(
+                    self,
+                    event_type="validation_error",
+                    request_path=path,
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    success=False,
+                    error_code="invalid_json",
+                )
                 _json_response(
                     self,
                     HTTPStatus.BAD_REQUEST,
@@ -131,6 +194,14 @@ def make_handler(config: GatewayConfig):
 
             errors = _validate_worklist_payload(payload)
             if errors:
+                _audit_event(
+                    self,
+                    event_type="validation_error",
+                    request_path=path,
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    success=False,
+                    error_code="invalid_worklist",
+                )
                 _json_response(
                     self,
                     HTTPStatus.BAD_REQUEST,
@@ -141,11 +212,34 @@ def make_handler(config: GatewayConfig):
             try:
                 response = self._mwl_client().put_worklist(payload)
             except MwlHttpError as error:
+                _audit_event(
+                    self,
+                    event_type="worklist_put",
+                    request_path=path,
+                    status_code=error.status_code,
+                    success=False,
+                    error_code="mwl_error",
+                )
                 _proxy_mwl_response(self, error.status_code, error.payload)
                 return
             except MwlUnavailableError:
+                _audit_event(
+                    self,
+                    event_type="mwl_unavailable",
+                    request_path=path,
+                    status_code=HTTPStatus.BAD_GATEWAY,
+                    success=False,
+                    error_code="mwl_unavailable",
+                )
                 _gateway_bad_gateway(self)
                 return
+            _audit_event(
+                self,
+                event_type="worklist_put",
+                request_path=path,
+                status_code=response.status_code,
+                success=response.status_code < 400,
+            )
             _proxy_mwl_response(self, response.status_code, response.payload)
 
         def do_POST(self) -> None:
@@ -157,6 +251,14 @@ def make_handler(config: GatewayConfig):
             try:
                 payload = _read_json_request(self)
             except json.JSONDecodeError as error:
+                _audit_event(
+                    self,
+                    event_type="validation_error",
+                    request_path=path,
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    success=False,
+                    error_code="invalid_json",
+                )
                 _json_response(
                     self,
                     HTTPStatus.BAD_REQUEST,
@@ -166,7 +268,17 @@ def make_handler(config: GatewayConfig):
 
             allow_cancel_reason = path == "/worklist/cancel"
             errors = _validate_state_request(payload, allow_cancel_reason)
+            accession_number = _text(payload.get("AccessionNumber")) if isinstance(payload, dict) else ""
             if errors:
+                _audit_event(
+                    self,
+                    event_type="validation_error",
+                    request_path=path,
+                    accession_number=accession_number or None,
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    success=False,
+                    error_code="invalid_request",
+                )
                 _json_response(
                     self,
                     HTTPStatus.BAD_REQUEST,
@@ -180,11 +292,37 @@ def make_handler(config: GatewayConfig):
                 else:
                     response = self._mwl_client().cancel_worklist(payload)
             except MwlHttpError as error:
+                _audit_event(
+                    self,
+                    event_type=_workflow_event_type(path),
+                    request_path=path,
+                    accession_number=accession_number,
+                    status_code=error.status_code,
+                    success=False,
+                    error_code="mwl_error",
+                )
                 _proxy_mwl_response(self, error.status_code, error.payload)
                 return
             except MwlUnavailableError:
+                _audit_event(
+                    self,
+                    event_type="mwl_unavailable",
+                    request_path=path,
+                    accession_number=accession_number,
+                    status_code=HTTPStatus.BAD_GATEWAY,
+                    success=False,
+                    error_code="mwl_unavailable",
+                )
                 _gateway_bad_gateway(self)
                 return
+            _audit_event(
+                self,
+                event_type=_workflow_event_type(path),
+                request_path=path,
+                accession_number=accession_number,
+                status_code=response.status_code,
+                success=response.status_code < 400,
+            )
             _proxy_mwl_response(self, response.status_code, response.payload)
 
     GatewayHandler.config = config
@@ -202,6 +340,7 @@ def main() -> None:
     config = load_config()
     configure_logging(config.log_level)
     LOGGER.info("Starting KaosPACS Gateway config=%s", config.safe_log_dict())
+    init_audit_db(config.gateway_audit_db)
     server = create_server(config)
     LOGGER.info("Gateway listening host=%s port=%s", config.http_host, config.http_port)
     server.serve_forever()

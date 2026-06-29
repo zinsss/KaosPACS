@@ -20,6 +20,9 @@ Current transitional runtime:
   minimal audit database.
 - Gateway provides localhost-only workflow API endpoints in front of the MWL
   API. It does not own DICOM ports, receive studies, or forward to Orthanc yet.
+- Gateway writes a minimal workflow audit DB at
+  `/app/data/gateway_audit.sqlite3`, persisted under
+  `/srv/docker/kaospacs/gateway`.
 - This keeps the verified Orthanc + MWL storage path stable while Gateway DICOM
   behavior is still unimplemented.
 
