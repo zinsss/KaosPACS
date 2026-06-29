@@ -19,10 +19,12 @@ from .orders import (
     validate_order_cancel,
     validate_order_upsert,
 )
+from .status import status_payload
 
 
 LOGGER = logging.getLogger("kaospacs.gateway")
 PROTECTED_ENDPOINTS = {
+    ("GET", "/status"),
     ("GET", "/worklist"),
     ("PUT", "/worklist"),
     ("POST", "/worklist/complete"),
@@ -181,6 +183,9 @@ def make_handler(config: GatewayConfig):
                 _json_response(self, HTTPStatus.OK, health_payload())
                 return
             if not self._require_auth("GET", path):
+                return
+            if path == "/status":
+                _json_response(self, HTTPStatus.OK, status_payload(self.config))
                 return
             if path == "/worklist":
                 try:

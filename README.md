@@ -107,6 +107,7 @@ docker compose ps
 - MWL SCP: `192.168.0.200:105`, AET `VIEWREX_WL`
 - MWL local API: `http://127.0.0.1:8055/health`
 - Gateway health: `http://127.0.0.1:8060/health`
+- Gateway protected status: `http://127.0.0.1:8060/status`
 - Gateway worklist API: `http://127.0.0.1:8060/worklist`
 - Gateway normalized order API:
   - `POST http://127.0.0.1:8060/orders/upsert`
@@ -123,6 +124,11 @@ commit the production token. Leaving `GATEWAY_API_TOKEN` empty disables Gateway
 authentication for development only. This shared token is a simple clinic
 LAN/localhost boundary for KaosEghis-PACS integration, not internet-grade
 security.
+
+`GET /status` is an operational endpoint and is protected when
+`GATEWAY_API_TOKEN` is set. It reports dependency reachability and ownership
+state only. It must not expose worklist entries, patient demographics, chart
+numbers, accession numbers, diagnosis, EMR notes, tokens, or request payloads.
 
 Port `104` is a privileged low port. Binding it may require a rootful Docker
 daemon, host networking, or adjusted capabilities depending on the environment.

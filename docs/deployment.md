@@ -51,6 +51,7 @@ Useful endpoints:
 
 ```text
 http://127.0.0.1:8060/health
+GET http://127.0.0.1:8060/status
 http://127.0.0.1:8060/worklist
 POST http://127.0.0.1:8060/orders/upsert
 POST http://127.0.0.1:8060/orders/cancel
@@ -84,6 +85,12 @@ Authorization: Bearer <token>
 Only `GET /health` remains unauthenticated. This is a simple shared-token
 control for a localhost or clinic LAN deployment. It is not intended as
 internet-grade security, and future authentication may evolve independently.
+
+`GET /status` is protected by the same bearer token when authentication is
+enabled. It is for operational visibility only and reports dependency
+reachability plus current ownership state. It must not include worklist entries,
+patient names, chart numbers, accession numbers, DOB, sex, diagnosis, EMR
+notes, tokens, Authorization headers, or full payloads.
 
 Gateway writes a minimal workflow audit database at:
 
@@ -128,8 +135,11 @@ curl http://127.0.0.1:8055/health
 curl http://127.0.0.1:8055/worklist
 curl http://127.0.0.1:8060/health
 # Development only when GATEWAY_API_TOKEN is unset:
+curl http://127.0.0.1:8060/status
 curl http://127.0.0.1:8060/worklist
 # When GATEWAY_API_TOKEN is set:
+curl -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
+  http://127.0.0.1:8060/status
 curl -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
   http://127.0.0.1:8060/worklist
 curl -X POST http://127.0.0.1:8060/orders/upsert \

@@ -127,6 +127,36 @@ events to Gateway rather than calling MWL directly. Gateway creates, updates,
 or cancels worklist entries through the MWL API, and calls completion after
 successful receive/forward.
 
+## Gateway Status Endpoint
+
+Gateway exposes an operational status endpoint:
+
+```text
+GET http://127.0.0.1:8060/status
+```
+
+`GET /health` remains open for basic container health checks. `GET /status` is
+protected when `GATEWAY_API_TOKEN` is configured:
+
+```bash
+curl -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
+  http://127.0.0.1:8060/status
+```
+
+If `/status` returns `401`, check that the `Authorization: Bearer <token>`
+header matches `GATEWAY_API_TOKEN`.
+
+The status response is operational only. It should contain dependency
+reachability and ownership state, but no worklist entries, patient names, chart
+numbers, accession numbers, DOB, sex, diagnosis, EMR notes, tokens, headers, or
+payloads.
+
+If a dependency reports `reachable=false`, check the corresponding service:
+
+- `mwl_api`: `docker compose ps mwl` and `docker compose logs mwl`
+- `orthanc_http`: `docker compose ps orthanc` and `docker compose logs orthanc`
+- `gateway_audit_db`: host permissions for `/srv/docker/kaospacs/gateway`
+
 ## MWL Worklist Is Empty
 
 The checked-in seed is mounted read-only:
