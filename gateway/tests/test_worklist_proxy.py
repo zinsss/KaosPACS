@@ -437,6 +437,12 @@ def test_status_with_token_returns_operational_metadata(tmp_path) -> None:
             "bind": "127.0.0.1",
             "port": 11104,
             "storage_dir": "/app/data/dicom-inbox",
+            "forward_enabled": False,
+            "forward_target": {
+                "host": "orthanc",
+                "port": 104,
+                "aet": "VIEWREX",
+            },
             "mode": "skeleton-test-only",
         }
         assert body["ownership"]["storage_scp"] == {

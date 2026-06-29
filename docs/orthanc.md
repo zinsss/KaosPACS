@@ -24,8 +24,9 @@ KaosEghis-PACS, or from MWL.
 
 The current Gateway DICOM C-STORE skeleton is disabled by default and uses only
 the loopback test identity `KAOSPACS_GW_TEST:11104` when explicitly enabled. It
-does not replace Orthanc as the current `VIEWREX:104` receiver and does not
-forward studies to Orthanc.
+does not replace Orthanc as the current `VIEWREX:104` receiver. Test-mode
+forwarding to Orthanc is also disabled by default and requires
+`GATEWAY_DICOM_FORWARD_ENABLED=true`.
 
 Orthanc HTTP is available for initial local testing at:
 

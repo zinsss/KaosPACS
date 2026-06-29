@@ -44,6 +44,17 @@ If `11104` is listening unexpectedly, verify `GATEWAY_DICOM_ENABLED=false` in
 the runtime environment and restart only the Gateway service. Do not change
 Orthanc ownership of `VIEWREX:104` during this skeleton phase.
 
+If test-mode forwarding unexpectedly sends studies to Orthanc, verify:
+
+```text
+GATEWAY_DICOM_FORWARD_ENABLED=false
+```
+
+Forwarding requires both `GATEWAY_DICOM_ENABLED=true` and
+`GATEWAY_DICOM_FORWARD_ENABLED=true`. It is local test scaffolding only; it
+does not imply Gateway owns `VIEWREX:104`, does not call MWL completion, and
+does not apply charset fixes.
+
 ## Orthanc Cannot Connect To PostgreSQL
 
 Check PostgreSQL health and credentials:

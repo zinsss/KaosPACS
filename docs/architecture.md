@@ -57,18 +57,20 @@ Orthanc studies.
 
 Orthanc owning `VIEWREX:104` is a temporary runtime stage, not the final
 architecture. Gateway does not bind port `104`, does not use AET `VIEWREX`,
-does not receive production C-STORE traffic, and does not forward to Orthanc
-yet. The current Gateway DICOM listener is disabled by default and is only a
-loopback skeleton for test datasets when explicitly enabled.
+and does not receive production C-STORE traffic. The current Gateway DICOM
+listener is disabled by default and is only a loopback skeleton for test
+datasets when explicitly enabled.
 
 The current Gateway Orthanc client calls Orthanc HTTP only. It is used for
 operational reachability in `/status` and as a future integration skeleton. It
 does not send DICOM to Orthanc, inspect studies, expose studies, or return PHI.
 
 The disabled Gateway C-STORE skeleton stores explicitly tested datasets in
-`/app/data/dicom-inbox` only when `GATEWAY_DICOM_ENABLED=true`. It does not
-modify datasets, inspect or fix Korean charset issues, call MWL completion, or
-expose stored files over HTTP.
+`/app/data/dicom-inbox` only when `GATEWAY_DICOM_ENABLED=true`. Test-mode
+forwarding from the local inbox to Orthanc is available only when
+`GATEWAY_DICOM_FORWARD_ENABLED=true`. It does not modify datasets, inspect or
+fix Korean charset issues, call MWL completion, or expose stored files over
+HTTP.
 
 ## Final Gateway-Centered Boundary
 
@@ -141,7 +143,8 @@ Business logic belongs outside Orthanc:
   numbers, not demographics or full payloads. Current Gateway Orthanc HTTP
   client usage is limited to non-PHI reachability/future-integration
   scaffolding. Current Gateway DICOM C-STORE usage is disabled test scaffolding
-  only; it is not the production `VIEWREX:104` ingress.
+  only; optional forwarding is test-mode only and is not the production
+  `VIEWREX:104` ingress.
 - KaosEghis-PACS: eGHIS order discovery with read-only access, polling or event
   handling, normalization, and sending normalized order events to Gateway. It
   should not call MWL directly in production, call Orthanc directly, or infer

@@ -58,8 +58,8 @@ POST http://127.0.0.1:8060/orders/cancel
 POST http://127.0.0.1:8060/admin/worklist/prune
 ```
 
-It does not bind port `104`, receive DICOM studies, forward to Orthanc, poll
-eGHIS, or change current PACS runtime behavior. Production order integrations
+It does not bind port `104`, receive production DICOM studies, poll eGHIS, or
+change current PACS runtime behavior. Production order integrations
 should send normalized order events to Gateway, and Gateway calls the internal
 MWL API. Raw Gateway `/worklist` endpoints remain internal/development helpers.
 
@@ -71,11 +71,20 @@ GATEWAY_DICOM_AET=KAOSPACS_GW_TEST
 GATEWAY_DICOM_BIND=127.0.0.1
 GATEWAY_DICOM_PORT=11104
 GATEWAY_DICOM_STORAGE_DIR=/app/data/dicom-inbox
+GATEWAY_DICOM_FORWARD_ENABLED=false
+ORTHANC_DICOM_HOST=orthanc
+ORTHANC_DICOM_PORT=104
+ORTHANC_DICOM_AET=VIEWREX
+GATEWAY_FORWARDING_AET=KAOSPACS_GW
+GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS=10
 ```
 
 There is no Gateway DICOM port published in `docker-compose.yml` by default.
 Do not use AET `VIEWREX` or port `104` for this skeleton. Orthanc remains the
-current transitional owner of `VIEWREX:104`.
+current transitional owner of `VIEWREX:104`. Test-mode forwarding to Orthanc
+requires both `GATEWAY_DICOM_ENABLED=true` and
+`GATEWAY_DICOM_FORWARD_ENABLED=true`; it still does not call MWL completion or
+perform charset fixes.
 
 Gateway also has an internal Orthanc HTTP client configured by:
 

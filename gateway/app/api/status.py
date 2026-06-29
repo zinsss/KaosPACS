@@ -41,6 +41,12 @@ def status_payload(config: GatewayConfig) -> dict[str, Any]:
             "bind": config.gateway_dicom_bind,
             "port": config.gateway_dicom_port,
             "storage_dir": str(config.gateway_dicom_storage_dir),
+            "forward_enabled": config.gateway_dicom_forward_enabled,
+            "forward_target": {
+                "host": config.orthanc_dicom_host,
+                "port": config.orthanc_dicom_port,
+                "aet": config.orthanc_dicom_aet,
+            },
             "mode": "skeleton-test-only",
         },
         "ownership": {
