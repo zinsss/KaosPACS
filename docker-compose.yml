@@ -95,6 +95,7 @@ services:
       MWL_API_URL: http://mwl:8055
       MWL_API_TIMEOUT_SECONDS: "3"
       GATEWAY_AUDIT_DB: /app/data/gateway_audit.sqlite3
+      GATEWAY_API_TOKEN: ${GATEWAY_API_TOKEN:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ${GATEWAY_DATA:-/srv/docker/kaospacs/gateway}:/app/data

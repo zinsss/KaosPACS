@@ -7,6 +7,8 @@ from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+import pytest
+
 from app.config import GatewayConfig
 from app.main import create_server
 
@@ -67,13 +69,20 @@ def stop_server(server: ThreadingHTTPServer, thread: threading.Thread) -> None:
     thread.join(timeout=2)
 
 
-def request_json(method: str, url: str, payload: Any | None = None) -> tuple[int, Any]:
+def request_json(
+    method: str,
+    url: str,
+    payload: Any | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, Any]:
     data = None
-    headers = {"Accept": "application/json"}
+    request_headers = {"Accept": "application/json"}
+    if headers:
+        request_headers.update(headers)
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    request = Request(url, data=data, headers=headers, method=method)
+        request_headers["Content-Type"] = "application/json"
+    request = Request(url, data=data, headers=request_headers, method=method)
     try:
         with urlopen(request, timeout=2) as response:
             return response.status, json.loads(response.read().decode("utf-8"))
@@ -84,6 +93,7 @@ def request_json(method: str, url: str, payload: Any | None = None) -> tuple[int
 def gateway_base_url(
     mwl_base_url: str,
     audit_db=None,
+    gateway_api_token: str | None = None,
 ) -> tuple[str, ThreadingHTTPServer, threading.Thread]:
     config = GatewayConfig(
         http_host="127.0.0.1",
@@ -91,6 +101,7 @@ def gateway_base_url(
         mwl_api_url=mwl_base_url,
         mwl_api_timeout_seconds=0.5,
         gateway_audit_db=audit_db,
+        gateway_api_token=gateway_api_token,
     )
     server = create_server(config)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -153,6 +164,181 @@ def test_get_worklist_proxies_mwl_response(tmp_path) -> None:
         assert audit_rows(audit_db) == [
             ("worklist_get", "/worklist", None, 200, 1, None)
         ]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_health_works_without_token_when_auth_enabled(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl()
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_api_token="secret-token",
+    )
+
+    try:
+        status, body = request_json("GET", f"{gateway_url}/health")
+
+        assert status == 200
+        assert body == {"status": "ok", "service": "gateway", "version": "0.1"}
+        assert RecordingMwlHandler.calls == []
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_protected_endpoint_without_token_returns_401(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl()
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_api_token="secret-token",
+    )
+
+    try:
+        status, body = request_json("GET", f"{gateway_url}/worklist")
+
+        assert status == 401
+        assert body == {"error": "unauthorized"}
+        assert RecordingMwlHandler.calls == []
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        ("GET", "/worklist", None),
+        ("PUT", "/worklist", {"entries": []}),
+        ("POST", "/worklist/complete", {"AccessionNumber": "A1"}),
+        ("POST", "/worklist/cancel", {"AccessionNumber": "A1"}),
+        ("POST", "/orders/upsert", valid_order_payload(AccessionNumber="A1")),
+        ("POST", "/orders/cancel", {"AccessionNumber": "A1"}),
+    ],
+)
+def test_all_workflow_endpoints_require_token(tmp_path, method, path, payload) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl()
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_api_token="secret-token",
+    )
+
+    try:
+        status, body = request_json(method, f"{gateway_url}{path}", payload)
+
+        assert status == 401
+        assert body == {"error": "unauthorized"}
+        assert RecordingMwlHandler.calls == []
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_protected_endpoint_wrong_token_returns_401(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl()
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_api_token="secret-token",
+    )
+
+    try:
+        status, body = request_json(
+            "GET",
+            f"{gateway_url}/worklist",
+            headers={"Authorization": "Bearer wrong-token"},
+        )
+
+        assert status == 401
+        assert body == {"error": "unauthorized"}
+        assert RecordingMwlHandler.calls == []
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_protected_endpoint_correct_token_succeeds(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl({"entries": []})
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_api_token="secret-token",
+    )
+
+    try:
+        status, body = request_json(
+            "GET",
+            f"{gateway_url}/worklist",
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        assert status == 200
+        assert body == {"entries": []}
+        assert RecordingMwlHandler.calls == [{"method": "GET", "path": "/worklist", "payload": None}]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_authentication_disabled_when_token_unset(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl({"entries": []})
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_api_token=None,
+    )
+
+    try:
+        status, body = request_json("GET", f"{gateway_url}/worklist")
+
+        assert status == 200
+        assert body == {"entries": []}
+        assert RecordingMwlHandler.calls == [{"method": "GET", "path": "/worklist", "payload": None}]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_token_not_present_in_logs(tmp_path, caplog) -> None:
+    caplog.set_level("INFO")
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl()
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_api_token="super-secret-token",
+    )
+
+    try:
+        status, body = request_json(
+            "GET",
+            f"{gateway_url}/worklist",
+            headers={"Authorization": "Bearer wrong-super-secret-token"},
+        )
+
+        assert status == 401
+        assert body == {"error": "unauthorized"}
+        assert "authentication failed" in caplog.text
+        assert "/worklist" in caplog.text
+        assert "super-secret-token" not in caplog.text
+        assert "wrong-super-secret-token" not in caplog.text
+        assert "Authorization" not in caplog.text
     finally:
         stop_server(gateway_server, gateway_thread)
         stop_server(mwl_server, mwl_thread)

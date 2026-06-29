@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .audit import init_audit_db, record_gateway_event
+from .auth import is_auth_enabled, is_authorized
 from .config import GatewayConfig, load_config
 from .health import health_payload
 from .mwl_client import MwlApiClient, MwlHttpError, MwlUnavailableError
@@ -21,6 +22,14 @@ from .orders import (
 
 
 LOGGER = logging.getLogger("kaospacs.gateway")
+PROTECTED_ENDPOINTS = {
+    ("GET", "/worklist"),
+    ("PUT", "/worklist"),
+    ("POST", "/worklist/complete"),
+    ("POST", "/worklist/cancel"),
+    ("POST", "/orders/upsert"),
+    ("POST", "/orders/cancel"),
+}
 
 
 def configure_logging(level: str) -> None:
@@ -90,6 +99,17 @@ def _proxy_mwl_response(handler: BaseHTTPRequestHandler, status_code: int, paylo
     _json_response(handler, status, payload)
 
 
+def _remote_ip(handler: BaseHTTPRequestHandler) -> str:
+    try:
+        return str(handler.client_address[0])
+    except (AttributeError, IndexError, TypeError):
+        return ""
+
+
+def _unauthorized_response(handler: BaseHTTPRequestHandler) -> None:
+    _json_response(handler, HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+
+
 def _audit_event(
     handler: BaseHTTPRequestHandler,
     *,
@@ -134,10 +154,33 @@ def make_handler(config: GatewayConfig):
                 self.config.mwl_api_timeout_seconds,
             )
 
+        def _require_auth(self, method: str, path: str) -> bool:
+            if (method, path) not in PROTECTED_ENDPOINTS:
+                return True
+
+            if is_authorized(self.headers, self.config.gateway_api_token):
+                if is_auth_enabled(self.config.gateway_api_token):
+                    LOGGER.info(
+                        "authentication success endpoint=%s remote_ip=%s",
+                        path,
+                        _remote_ip(self),
+                    )
+                return True
+
+            LOGGER.warning(
+                "authentication failed endpoint=%s remote_ip=%s",
+                path,
+                _remote_ip(self),
+            )
+            _unauthorized_response(self)
+            return False
+
         def do_GET(self) -> None:
             path = urlparse(self.path).path
             if path == "/health":
                 _json_response(self, HTTPStatus.OK, health_payload())
+                return
+            if not self._require_auth("GET", path):
                 return
             if path == "/worklist":
                 try:
@@ -179,6 +222,8 @@ def make_handler(config: GatewayConfig):
             path = urlparse(self.path).path
             if path != "/worklist":
                 _json_response(self, HTTPStatus.NOT_FOUND, {"error": "not found"})
+                return
+            if not self._require_auth("PUT", path):
                 return
 
             try:
@@ -251,6 +296,8 @@ def make_handler(config: GatewayConfig):
 
         def do_POST(self) -> None:
             path = urlparse(self.path).path
+            if not self._require_auth("POST", path):
+                return
             if path in {"/orders/upsert", "/orders/cancel"}:
                 self._handle_order_post(path)
                 return
@@ -525,6 +572,10 @@ def main() -> None:
     config = load_config()
     configure_logging(config.log_level)
     LOGGER.info("Starting KaosPACS Gateway config=%s", config.safe_log_dict())
+    if not is_auth_enabled(config.gateway_api_token):
+        LOGGER.warning(
+            "GATEWAY_API_TOKEN is not configured; Gateway authentication is disabled for development"
+        )
     init_audit_db(config.gateway_audit_db)
     server = create_server(config)
     LOGGER.info("Gateway listening host=%s port=%s", config.http_host, config.http_port)

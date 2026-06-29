@@ -22,6 +22,8 @@ Current transitional runtime:
   API, including normalized order event endpoints for future KaosEghis-PACS
   integration. It does not own DICOM ports, receive studies, or forward to
   Orthanc yet.
+- Gateway can protect workflow endpoints with `GATEWAY_API_TOKEN` bearer-token
+  authentication. `/health` remains unauthenticated.
 - Gateway writes a minimal workflow audit DB at
   `/app/data/gateway_audit.sqlite3`, persisted under
   `/srv/docker/kaospacs/gateway`.
@@ -109,6 +111,18 @@ docker compose ps
 - Gateway normalized order API:
   - `POST http://127.0.0.1:8060/orders/upsert`
   - `POST http://127.0.0.1:8060/orders/cancel`
+
+If `GATEWAY_API_TOKEN` is set, Gateway workflow requests must include:
+
+```text
+Authorization: Bearer <token>
+```
+
+Generate a random value, for example with `openssl rand -hex 32`, and do not
+commit the production token. Leaving `GATEWAY_API_TOKEN` empty disables Gateway
+authentication for development only. This shared token is a simple clinic
+LAN/localhost boundary for KaosEghis-PACS integration, not internet-grade
+security.
 
 Port `104` is a privileged low port. Binding it may require a rootful Docker
 daemon, host networking, or adjusted capabilities depending on the environment.
