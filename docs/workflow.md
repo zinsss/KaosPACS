@@ -20,9 +20,9 @@ The current stack keeps that storage path working through Orthanc.
 Orthanc owning `VIEWREX:104` is transitional only. It keeps the working
 Orthanc + MWL stack stable until Gateway is implemented.
 
-Gateway Phase 0 is inert. It exposes `GET /health` on localhost only and does
-not receive DICOM, forward to Orthanc, update MWL, or participate in clinical
-workflow.
+Gateway exposes localhost-only workflow API endpoints in front of MWL. It does
+not receive DICOM, forward to Orthanc, or participate in image ingestion yet.
+Orthanc still owns `VIEWREX:104` transitionally.
 
 ## BMD Path
 
@@ -57,7 +57,8 @@ POST /worklist/cancel
 ```
 
 The API is bound to `127.0.0.1:8055` by default and should not be exposed
-directly to external systems.
+directly to external systems. Production workflow requests should go through
+Gateway on `127.0.0.1:8060`.
 
 Completed or cancelled entries are kept in JSON and marked `Active=false`; they
 are not physically deleted and are not returned in DICOM MWL C-FIND responses.

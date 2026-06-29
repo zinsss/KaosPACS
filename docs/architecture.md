@@ -29,7 +29,8 @@ Orthanc + MWL runtime stable. It contains:
 - Active MWL JSON state at `/app/data/worklist.json`, initialized from the
   read-only seed `/app/config/worklist.json`.
 - Minimal MWL SQLite audit database at `/app/data/mwl_audit.sqlite3`.
-- Gateway Phase 0 service with only `GET /health` on `127.0.0.1:8060`.
+- Gateway localhost-only workflow API on `127.0.0.1:8060`, proxying validated
+  worklist requests to the internal MWL API.
 
 ## Current Transitional Boundary
 
@@ -46,8 +47,8 @@ active, completed, cancelled, and expired. It does not infer workflow from
 Orthanc studies.
 
 Orthanc owning `VIEWREX:104` is a temporary runtime stage, not the final
-architecture. Gateway Phase 0 does not bind DICOM ports, receive C-STORE,
-forward to Orthanc, call MWL, or participate in workflow yet.
+architecture. Gateway does not bind DICOM ports, receive C-STORE, or forward
+to Orthanc yet.
 
 ## Final Gateway-Centered Boundary
 

@@ -102,8 +102,8 @@ By default Docker publishes this API only on host loopback:
 127.0.0.1:8055
 ```
 
-Do not expose this API publicly. External access should go through a controlled
-KaosPACS Gateway path. KaosEghis-PACS should not call MWL directly in
+Do not expose this API publicly. External access should go through the
+KaosPACS Gateway workflow API. KaosEghis-PACS should not call MWL directly in
 production.
 
 Examples:

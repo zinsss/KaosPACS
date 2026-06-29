@@ -1,0 +1,255 @@
+import json
+import threading
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+from app.config import GatewayConfig
+from app.main import create_server
+
+
+class RecordingMwlHandler(BaseHTTPRequestHandler):
+    response_status = HTTPStatus.OK
+    response_payload: dict[str, Any] = {"status": "ok"}
+    calls: list[dict[str, Any]] = []
+
+    def log_message(self, format: str, *args: Any) -> None:
+        return
+
+    def _read_json(self) -> Any:
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        raw = self.rfile.read(length) if length else b"{}"
+        return json.loads(raw.decode("utf-8")) if raw else {}
+
+    def _record(self, payload: Any = None) -> None:
+        self.calls.append(
+            {
+                "method": self.command,
+                "path": self.path,
+                "payload": payload,
+            }
+        )
+
+    def _respond(self) -> None:
+        body = json.dumps(self.response_payload).encode("utf-8")
+        self.send_response(self.response_status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        self._record()
+        self._respond()
+
+    def do_PUT(self) -> None:
+        self._record(self._read_json())
+        self._respond()
+
+    def do_POST(self) -> None:
+        self._record(self._read_json())
+        self._respond()
+
+
+def start_server(handler_class):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler_class)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+def stop_server(server: ThreadingHTTPServer, thread: threading.Thread) -> None:
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=2)
+
+
+def request_json(method: str, url: str, payload: Any | None = None) -> tuple[int, Any]:
+    data = None
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = Request(url, data=data, headers=headers, method=method)
+    try:
+        with urlopen(request, timeout=2) as response:
+            return response.status, json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        return error.code, json.loads(error.read().decode("utf-8"))
+
+
+def gateway_base_url(mwl_base_url: str) -> tuple[str, ThreadingHTTPServer, threading.Thread]:
+    config = GatewayConfig(
+        http_host="127.0.0.1",
+        http_port=0,
+        mwl_api_url=mwl_base_url,
+        mwl_api_timeout_seconds=0.5,
+    )
+    server = create_server(config)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    return f"http://{host}:{port}", server, thread
+
+
+def setup_recording_mwl(response_payload: dict[str, Any] | None = None):
+    RecordingMwlHandler.calls = []
+    RecordingMwlHandler.response_status = HTTPStatus.OK
+    RecordingMwlHandler.response_payload = response_payload or {"entries": []}
+    return start_server(RecordingMwlHandler)
+
+
+def test_get_worklist_proxies_mwl_response() -> None:
+    mwl_server, mwl_thread = setup_recording_mwl({"entries": [{"PatientID": "P1"}]})
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}"
+    )
+
+    try:
+        status, body = request_json("GET", f"{gateway_url}/worklist")
+
+        assert status == 200
+        assert body == {"entries": [{"PatientID": "P1"}]}
+        assert RecordingMwlHandler.calls == [{"method": "GET", "path": "/worklist", "payload": None}]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_put_worklist_sends_valid_payload_to_mwl() -> None:
+    mwl_server, mwl_thread = setup_recording_mwl({"entries": []})
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}"
+    )
+    payload = {"entries": [{"PatientID": "P1", "AccessionNumber": "A1"}]}
+
+    try:
+        status, body = request_json("PUT", f"{gateway_url}/worklist", payload)
+
+        assert status == 200
+        assert body == {"entries": []}
+        assert RecordingMwlHandler.calls == [
+            {"method": "PUT", "path": "/worklist", "payload": payload}
+        ]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_invalid_put_returns_400_without_calling_mwl() -> None:
+    mwl_server, mwl_thread = setup_recording_mwl()
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}"
+    )
+
+    try:
+        status, body = request_json("PUT", f"{gateway_url}/worklist", {"entries": "bad"})
+
+        assert status == 400
+        assert body["error"] == "invalid worklist"
+        assert RecordingMwlHandler.calls == []
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_complete_requires_accession_number() -> None:
+    mwl_server, mwl_thread = setup_recording_mwl()
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}"
+    )
+
+    try:
+        status, body = request_json("POST", f"{gateway_url}/worklist/complete", {})
+
+        assert status == 400
+        assert body["details"] == ["AccessionNumber is required"]
+        assert RecordingMwlHandler.calls == []
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_complete_forwards_accession_number_to_mwl() -> None:
+    mwl_server, mwl_thread = setup_recording_mwl({"status": "completed"})
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}"
+    )
+    payload = {"AccessionNumber": "A1"}
+
+    try:
+        status, body = request_json("POST", f"{gateway_url}/worklist/complete", payload)
+
+        assert status == 200
+        assert body == {"status": "completed"}
+        assert RecordingMwlHandler.calls == [
+            {"method": "POST", "path": "/worklist/complete", "payload": payload}
+        ]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_cancel_requires_accession_number() -> None:
+    mwl_server, mwl_thread = setup_recording_mwl()
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}"
+    )
+
+    try:
+        status, body = request_json(
+            "POST",
+            f"{gateway_url}/worklist/cancel",
+            {"CancelReason": "patient no-show"},
+        )
+
+        assert status == 400
+        assert body["details"] == ["AccessionNumber is required"]
+        assert RecordingMwlHandler.calls == []
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_cancel_forwards_accession_number_and_reason_to_mwl() -> None:
+    mwl_server, mwl_thread = setup_recording_mwl({"status": "cancelled"})
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}"
+    )
+    payload = {"AccessionNumber": "A1", "CancelReason": "patient no-show"}
+
+    try:
+        status, body = request_json("POST", f"{gateway_url}/worklist/cancel", payload)
+
+        assert status == 200
+        assert body == {"status": "cancelled"}
+        assert RecordingMwlHandler.calls == [
+            {"method": "POST", "path": "/worklist/cancel", "payload": payload}
+        ]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_mwl_unavailable_returns_502() -> None:
+    gateway_url, gateway_server, gateway_thread = gateway_base_url("http://127.0.0.1:1")
+
+    try:
+        status, body = request_json("GET", f"{gateway_url}/worklist")
+
+        assert status == 502
+        assert body == {
+            "error": "bad_gateway",
+            "message": "MWL API is unavailable",
+        }
+    finally:
+        stop_server(gateway_server, gateway_thread)
