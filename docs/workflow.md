@@ -20,6 +20,10 @@ The current stack keeps that storage path working through Orthanc.
 Orthanc owning `VIEWREX:104` is transitional only. It keeps the working
 Orthanc + MWL stack stable until Gateway is implemented.
 
+Gateway Phase 0 is inert. It exposes `GET /health` on localhost only and does
+not receive DICOM, forward to Orthanc, update MWL, or participate in clinical
+workflow.
+
 ## BMD Path
 
 OsteoPro BMD can send images to Orthanc storage, and normal scheduled workflow
