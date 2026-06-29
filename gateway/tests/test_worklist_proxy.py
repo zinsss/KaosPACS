@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+from app.audit import init_audit_db
 from app.config import GatewayConfig
 from app.main import create_server
 
@@ -94,10 +95,12 @@ def gateway_base_url(
     mwl_base_url: str,
     audit_db=None,
     gateway_api_token: str | None = None,
+    orthanc_url: str = "http://orthanc:8042",
 ) -> tuple[str, ThreadingHTTPServer, threading.Thread]:
     config = GatewayConfig(
         http_host="127.0.0.1",
         http_port=0,
+        orthanc_url=orthanc_url,
         mwl_api_url=mwl_base_url,
         mwl_api_timeout_seconds=0.5,
         gateway_audit_db=audit_db,
@@ -144,6 +147,21 @@ def valid_order_payload(**overrides):
     }
     payload.update(overrides)
     return payload
+
+
+FORBIDDEN_STATUS_TEXT = {
+    "PatientName",
+    "PatientBirthDate",
+    "PatientSex",
+    "ChartNo",
+    "PatientID",
+    "AccessionNumber",
+    "DOB",
+    "diagnosis",
+    "EMR",
+    "payload",
+    "secret-token",
+}
 
 
 def test_get_worklist_proxies_mwl_response(tmp_path) -> None:
@@ -215,6 +233,7 @@ def test_protected_endpoint_without_token_returns_401(tmp_path) -> None:
     ("method", "path", "payload"),
     [
         ("GET", "/worklist", None),
+        ("GET", "/status", None),
         ("PUT", "/worklist", {"entries": []}),
         ("POST", "/worklist/complete", {"AccessionNumber": "A1"}),
         ("POST", "/worklist/cancel", {"AccessionNumber": "A1"}),
@@ -342,6 +361,231 @@ def test_token_not_present_in_logs(tmp_path, caplog) -> None:
     finally:
         stop_server(gateway_server, gateway_thread)
         stop_server(mwl_server, mwl_thread)
+
+
+def test_status_without_token_returns_401_when_auth_enabled(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl({"status": "ok"})
+    orthanc_server, orthanc_thread = setup_recording_mwl({"Name": "Orthanc"})
+    mwl_host, mwl_port = mwl_server.server_address
+    orthanc_host, orthanc_port = orthanc_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_api_token="secret-token",
+        orthanc_url=f"http://{orthanc_host}:{orthanc_port}",
+    )
+
+    try:
+        status, body = request_json("GET", f"{gateway_url}/status")
+
+        assert status == 401
+        assert body == {"error": "unauthorized"}
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+        stop_server(orthanc_server, orthanc_thread)
+
+
+def test_status_with_token_returns_operational_metadata(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    init_audit_db(audit_db)
+    mwl_server, mwl_thread = setup_recording_mwl({"status": "ok"})
+    orthanc_server, orthanc_thread = setup_recording_mwl({"Name": "Orthanc"})
+    mwl_host, mwl_port = mwl_server.server_address
+    orthanc_host, orthanc_port = orthanc_server.server_address
+    mwl_url = f"http://{mwl_host}:{mwl_port}"
+    orthanc_url = f"http://{orthanc_host}:{orthanc_port}"
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        mwl_url,
+        audit_db,
+        gateway_api_token="secret-token",
+        orthanc_url=orthanc_url,
+    )
+
+    try:
+        status, body = request_json(
+            "GET",
+            f"{gateway_url}/status",
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        assert status == 200
+        assert body["status"] == "ok"
+        assert body["service"] == "gateway"
+        assert body["version"] == "0.1"
+        assert body["auth"] == {"enabled": True}
+        assert body["dependencies"]["mwl_api"] == {
+            "url": mwl_url,
+            "reachable": True,
+            "status_code": 200,
+        }
+        assert body["dependencies"]["orthanc_http"] == {
+            "url": orthanc_url,
+            "reachable": True,
+            "status_code": 200,
+        }
+        assert body["dependencies"]["gateway_audit_db"] == {
+            "path": str(audit_db),
+            "reachable": True,
+        }
+        assert body["ownership"]["storage_scp"] == {
+            "aet": "VIEWREX",
+            "port": 104,
+            "owner": "orthanc",
+            "stage": "transitional",
+        }
+        assert body["ownership"]["mwl_scp"] == {
+            "aet": "VIEWREX_WL",
+            "port": 105,
+            "owner": "mwl",
+            "stage": "current-final",
+        }
+        assert body["ownership"]["gateway_http"]["owner"] == "gateway"
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+        stop_server(orthanc_server, orthanc_thread)
+
+
+def test_status_without_token_works_when_auth_disabled(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    init_audit_db(audit_db)
+    mwl_server, mwl_thread = setup_recording_mwl({"status": "ok"})
+    orthanc_server, orthanc_thread = setup_recording_mwl({"Name": "Orthanc"})
+    mwl_host, mwl_port = mwl_server.server_address
+    orthanc_host, orthanc_port = orthanc_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_api_token=None,
+        orthanc_url=f"http://{orthanc_host}:{orthanc_port}",
+    )
+
+    try:
+        status, body = request_json("GET", f"{gateway_url}/status")
+
+        assert status == 200
+        assert body["auth"] == {"enabled": False}
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+        stop_server(orthanc_server, orthanc_thread)
+
+
+def test_status_does_not_include_phi_or_token(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    init_audit_db(audit_db)
+    mwl_server, mwl_thread = setup_recording_mwl({"status": "ok"})
+    orthanc_server, orthanc_thread = setup_recording_mwl({"Name": "Orthanc"})
+    mwl_host, mwl_port = mwl_server.server_address
+    orthanc_host, orthanc_port = orthanc_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_api_token="secret-token",
+        orthanc_url=f"http://{orthanc_host}:{orthanc_port}",
+    )
+
+    try:
+        status, body = request_json(
+            "GET",
+            f"{gateway_url}/status",
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        assert status == 200
+        serialized = json.dumps(body)
+        for forbidden in FORBIDDEN_STATUS_TEXT:
+            assert forbidden not in serialized
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+        stop_server(orthanc_server, orthanc_thread)
+
+
+def test_status_reports_mwl_unavailable_without_crashing(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    init_audit_db(audit_db)
+    orthanc_server, orthanc_thread = setup_recording_mwl({"Name": "Orthanc"})
+    orthanc_host, orthanc_port = orthanc_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        "http://127.0.0.1:1",
+        audit_db,
+        gateway_api_token="secret-token",
+        orthanc_url=f"http://{orthanc_host}:{orthanc_port}",
+    )
+
+    try:
+        status, body = request_json(
+            "GET",
+            f"{gateway_url}/status",
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        assert status == 200
+        assert body["dependencies"]["mwl_api"]["reachable"] is False
+        assert body["dependencies"]["mwl_api"]["status_code"] is None
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(orthanc_server, orthanc_thread)
+
+
+def test_status_reports_orthanc_unavailable_without_crashing(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    init_audit_db(audit_db)
+    mwl_server, mwl_thread = setup_recording_mwl({"status": "ok"})
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_api_token="secret-token",
+        orthanc_url="http://127.0.0.1:1",
+    )
+
+    try:
+        status, body = request_json(
+            "GET",
+            f"{gateway_url}/status",
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        assert status == 200
+        assert body["dependencies"]["orthanc_http"]["reachable"] is False
+        assert body["dependencies"]["orthanc_http"]["status_code"] is None
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_status_reports_audit_db_unavailable(tmp_path) -> None:
+    mwl_server, mwl_thread = setup_recording_mwl({"status": "ok"})
+    orthanc_server, orthanc_thread = setup_recording_mwl({"Name": "Orthanc"})
+    mwl_host, mwl_port = mwl_server.server_address
+    orthanc_host, orthanc_port = orthanc_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        tmp_path,
+        gateway_api_token="secret-token",
+        orthanc_url=f"http://{orthanc_host}:{orthanc_port}",
+    )
+
+    try:
+        status, body = request_json(
+            "GET",
+            f"{gateway_url}/status",
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        assert status == 200
+        assert body["dependencies"]["gateway_audit_db"] == {
+            "path": str(tmp_path),
+            "reachable": False,
+        }
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+        stop_server(orthanc_server, orthanc_thread)
 
 
 def test_put_worklist_sends_valid_payload_to_mwl(tmp_path) -> None:
