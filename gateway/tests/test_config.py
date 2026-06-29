@@ -1,4 +1,5 @@
 from app.config import (
+    DEFAULT_GATEWAY_AUDIT_DB,
     DEFAULT_LOG_LEVEL,
     DEFAULT_MWL_API_TIMEOUT_SECONDS,
     DEFAULT_MWL_API_URL,
@@ -17,6 +18,7 @@ def test_config_defaults() -> None:
     assert config.tz == DEFAULT_TZ
     assert config.http_port == 8060
     assert config.mwl_api_timeout_seconds == DEFAULT_MWL_API_TIMEOUT_SECONDS
+    assert config.gateway_audit_db == DEFAULT_GATEWAY_AUDIT_DB
 
 
 def test_config_env_overrides() -> None:
@@ -28,6 +30,7 @@ def test_config_env_overrides() -> None:
             "TZ": "UTC",
             "GATEWAY_HTTP_PORT": "18060",
             "MWL_API_TIMEOUT_SECONDS": "7.5",
+            "GATEWAY_AUDIT_DB": "/tmp/gateway-audit.sqlite3",
         }
     )
 
@@ -37,3 +40,4 @@ def test_config_env_overrides() -> None:
     assert config.tz == "UTC"
     assert config.http_port == 18060
     assert config.mwl_api_timeout_seconds == 7.5
+    assert str(config.gateway_audit_db) == "/tmp/gateway-audit.sqlite3"

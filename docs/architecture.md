@@ -31,6 +31,8 @@ Orthanc + MWL runtime stable. It contains:
 - Minimal MWL SQLite audit database at `/app/data/mwl_audit.sqlite3`.
 - Gateway localhost-only workflow API on `127.0.0.1:8060`, proxying validated
   worklist requests to the internal MWL API.
+- Gateway workflow audit SQLite DB at `/app/data/gateway_audit.sqlite3`,
+  persisted under `/srv/docker/kaospacs/gateway`.
 
 ## Current Transitional Boundary
 
@@ -109,7 +111,8 @@ Business logic belongs outside Orthanc:
 - Gateway: modality-facing DICOM Storage SCP, safe DICOM ingress inspection,
   optional charset/tag fixes after validation, forwarding to Orthanc, worklist
   create/update/cancel through the MWL API, and MWL completion calls after
-  successful storage/forwarding.
+  successful storage/forwarding. Current Gateway audit stores only workflow
+  event metadata and accession numbers, not demographics or full payloads.
 - KaosEghis-PACS: eGHIS order discovery with read-only access, polling or event
   handling, normalization, and sending worklist events to Gateway. It should
   not call MWL directly in production, call Orthanc directly, or infer DICOM

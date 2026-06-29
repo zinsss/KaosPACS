@@ -58,6 +58,23 @@ It does not bind port `104`, receive DICOM studies, forward to Orthanc, poll
 eGHIS, or change current PACS runtime behavior. Production order integrations
 should call Gateway, and Gateway calls the internal MWL API.
 
+Gateway writes a minimal workflow audit database at:
+
+```text
+/app/data/gateway_audit.sqlite3
+```
+
+Docker persists `/app/data` to:
+
+```text
+/srv/docker/kaospacs/gateway
+```
+
+This Gateway audit DB is separate from the MWL audit DB. It stores workflow
+event metadata only: event type, request path, accession number when present,
+status, success flag, error code, and timestamp. It must not store patient
+demographics, clinical notes, or full payload JSON.
+
 MWL runtime paths:
 
 - `WORKLIST_SEED_PATH=/app/config/worklist.json`
@@ -116,6 +133,8 @@ Future backup jobs should cover:
 - PostgreSQL database dumps from `POSTGRES_DB`.
 - MWL runtime data under `/srv/docker/kaospacs/mwl`, including
   `worklist.json` and `mwl_audit.sqlite3`.
-- Future Gateway runtime logs and any Gateway quarantine/staging directories
-  once Gateway is implemented.
+- Gateway runtime data under `/srv/docker/kaospacs/gateway`, including
+  `gateway_audit.sqlite3`.
+- Future Gateway DICOM quarantine/staging directories once DICOM ingress is
+  implemented.
 - KaosPACS configuration and operational logs.

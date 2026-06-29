@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -80,18 +81,33 @@ def request_json(method: str, url: str, payload: Any | None = None) -> tuple[int
         return error.code, json.loads(error.read().decode("utf-8"))
 
 
-def gateway_base_url(mwl_base_url: str) -> tuple[str, ThreadingHTTPServer, threading.Thread]:
+def gateway_base_url(
+    mwl_base_url: str,
+    audit_db=None,
+) -> tuple[str, ThreadingHTTPServer, threading.Thread]:
     config = GatewayConfig(
         http_host="127.0.0.1",
         http_port=0,
         mwl_api_url=mwl_base_url,
         mwl_api_timeout_seconds=0.5,
+        gateway_audit_db=audit_db,
     )
     server = create_server(config)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     host, port = server.server_address
     return f"http://{host}:{port}", server, thread
+
+
+def audit_rows(db_path):
+    with sqlite3.connect(db_path) as connection:
+        return connection.execute(
+            """
+            SELECT event_type, request_path, accession_number, status_code, success, error_code
+            FROM gateway_events
+            ORDER BY id
+            """
+        ).fetchall()
 
 
 def setup_recording_mwl(response_payload: dict[str, Any] | None = None):
@@ -101,11 +117,13 @@ def setup_recording_mwl(response_payload: dict[str, Any] | None = None):
     return start_server(RecordingMwlHandler)
 
 
-def test_get_worklist_proxies_mwl_response() -> None:
+def test_get_worklist_proxies_mwl_response(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
     mwl_server, mwl_thread = setup_recording_mwl({"entries": [{"PatientID": "P1"}]})
     mwl_host, mwl_port = mwl_server.server_address
     gateway_url, gateway_server, gateway_thread = gateway_base_url(
-        f"http://{mwl_host}:{mwl_port}"
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
     )
 
     try:
@@ -114,16 +132,21 @@ def test_get_worklist_proxies_mwl_response() -> None:
         assert status == 200
         assert body == {"entries": [{"PatientID": "P1"}]}
         assert RecordingMwlHandler.calls == [{"method": "GET", "path": "/worklist", "payload": None}]
+        assert audit_rows(audit_db) == [
+            ("worklist_get", "/worklist", None, 200, 1, None)
+        ]
     finally:
         stop_server(gateway_server, gateway_thread)
         stop_server(mwl_server, mwl_thread)
 
 
-def test_put_worklist_sends_valid_payload_to_mwl() -> None:
+def test_put_worklist_sends_valid_payload_to_mwl(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
     mwl_server, mwl_thread = setup_recording_mwl({"entries": []})
     mwl_host, mwl_port = mwl_server.server_address
     gateway_url, gateway_server, gateway_thread = gateway_base_url(
-        f"http://{mwl_host}:{mwl_port}"
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
     )
     payload = {"entries": [{"PatientID": "P1", "AccessionNumber": "A1"}]}
 
@@ -140,11 +163,13 @@ def test_put_worklist_sends_valid_payload_to_mwl() -> None:
         stop_server(mwl_server, mwl_thread)
 
 
-def test_invalid_put_returns_400_without_calling_mwl() -> None:
+def test_invalid_put_returns_400_without_calling_mwl(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
     mwl_server, mwl_thread = setup_recording_mwl()
     mwl_host, mwl_port = mwl_server.server_address
     gateway_url, gateway_server, gateway_thread = gateway_base_url(
-        f"http://{mwl_host}:{mwl_port}"
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
     )
 
     try:
@@ -153,16 +178,21 @@ def test_invalid_put_returns_400_without_calling_mwl() -> None:
         assert status == 400
         assert body["error"] == "invalid worklist"
         assert RecordingMwlHandler.calls == []
+        assert audit_rows(audit_db) == [
+            ("validation_error", "/worklist", None, 400, 0, "invalid_worklist")
+        ]
     finally:
         stop_server(gateway_server, gateway_thread)
         stop_server(mwl_server, mwl_thread)
 
 
-def test_complete_requires_accession_number() -> None:
+def test_complete_requires_accession_number(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
     mwl_server, mwl_thread = setup_recording_mwl()
     mwl_host, mwl_port = mwl_server.server_address
     gateway_url, gateway_server, gateway_thread = gateway_base_url(
-        f"http://{mwl_host}:{mwl_port}"
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
     )
 
     try:
@@ -171,16 +201,21 @@ def test_complete_requires_accession_number() -> None:
         assert status == 400
         assert body["details"] == ["AccessionNumber is required"]
         assert RecordingMwlHandler.calls == []
+        assert audit_rows(audit_db) == [
+            ("validation_error", "/worklist/complete", None, 400, 0, "invalid_request")
+        ]
     finally:
         stop_server(gateway_server, gateway_thread)
         stop_server(mwl_server, mwl_thread)
 
 
-def test_complete_forwards_accession_number_to_mwl() -> None:
+def test_complete_forwards_accession_number_to_mwl(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
     mwl_server, mwl_thread = setup_recording_mwl({"status": "completed"})
     mwl_host, mwl_port = mwl_server.server_address
     gateway_url, gateway_server, gateway_thread = gateway_base_url(
-        f"http://{mwl_host}:{mwl_port}"
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
     )
     payload = {"AccessionNumber": "A1"}
 
@@ -192,16 +227,21 @@ def test_complete_forwards_accession_number_to_mwl() -> None:
         assert RecordingMwlHandler.calls == [
             {"method": "POST", "path": "/worklist/complete", "payload": payload}
         ]
+        assert audit_rows(audit_db) == [
+            ("worklist_complete", "/worklist/complete", "A1", 200, 1, None)
+        ]
     finally:
         stop_server(gateway_server, gateway_thread)
         stop_server(mwl_server, mwl_thread)
 
 
-def test_cancel_requires_accession_number() -> None:
+def test_cancel_requires_accession_number(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
     mwl_server, mwl_thread = setup_recording_mwl()
     mwl_host, mwl_port = mwl_server.server_address
     gateway_url, gateway_server, gateway_thread = gateway_base_url(
-        f"http://{mwl_host}:{mwl_port}"
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
     )
 
     try:
@@ -214,16 +254,21 @@ def test_cancel_requires_accession_number() -> None:
         assert status == 400
         assert body["details"] == ["AccessionNumber is required"]
         assert RecordingMwlHandler.calls == []
+        assert audit_rows(audit_db) == [
+            ("validation_error", "/worklist/cancel", None, 400, 0, "invalid_request")
+        ]
     finally:
         stop_server(gateway_server, gateway_thread)
         stop_server(mwl_server, mwl_thread)
 
 
-def test_cancel_forwards_accession_number_and_reason_to_mwl() -> None:
+def test_cancel_forwards_accession_number_and_reason_to_mwl(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
     mwl_server, mwl_thread = setup_recording_mwl({"status": "cancelled"})
     mwl_host, mwl_port = mwl_server.server_address
     gateway_url, gateway_server, gateway_thread = gateway_base_url(
-        f"http://{mwl_host}:{mwl_port}"
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
     )
     payload = {"AccessionNumber": "A1", "CancelReason": "patient no-show"}
 
@@ -235,13 +280,20 @@ def test_cancel_forwards_accession_number_and_reason_to_mwl() -> None:
         assert RecordingMwlHandler.calls == [
             {"method": "POST", "path": "/worklist/cancel", "payload": payload}
         ]
+        assert audit_rows(audit_db) == [
+            ("worklist_cancel", "/worklist/cancel", "A1", 200, 1, None)
+        ]
     finally:
         stop_server(gateway_server, gateway_thread)
         stop_server(mwl_server, mwl_thread)
 
 
-def test_mwl_unavailable_returns_502() -> None:
-    gateway_url, gateway_server, gateway_thread = gateway_base_url("http://127.0.0.1:1")
+def test_mwl_unavailable_returns_502(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        "http://127.0.0.1:1",
+        audit_db,
+    )
 
     try:
         status, body = request_json("GET", f"{gateway_url}/worklist")
@@ -251,5 +303,27 @@ def test_mwl_unavailable_returns_502() -> None:
             "error": "bad_gateway",
             "message": "MWL API is unavailable",
         }
+        assert audit_rows(audit_db) == [
+            ("mwl_unavailable", "/worklist", None, 502, 0, "mwl_unavailable")
+        ]
     finally:
         stop_server(gateway_server, gateway_thread)
+
+
+def test_audit_failure_does_not_break_request(tmp_path) -> None:
+    mwl_server, mwl_thread = setup_recording_mwl({"entries": []})
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        tmp_path,
+    )
+
+    try:
+        status, body = request_json("GET", f"{gateway_url}/worklist")
+
+        assert status == 200
+        assert body == {"entries": []}
+        assert RecordingMwlHandler.calls == [{"method": "GET", "path": "/worklist", "payload": None}]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
