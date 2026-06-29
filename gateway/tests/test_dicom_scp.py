@@ -7,14 +7,14 @@ from pydicom.uid import ExplicitVRLittleEndian, SecondaryCaptureImageStorage, ge
 from pynetdicom import AE
 
 from app.config import GatewayConfig
-from app import dicom_scp
-from app.dicom_scp import (
+from app.dicom import server as dicom_server
+from app.dicom.server import (
     WRITE_FAILURE_STATUS,
     GatewayDicomServer,
     handle_store,
-    safe_dicom_filename,
     start_dicom_listener,
 )
+from app.dicom.storage import safe_dicom_filename
 
 
 def _free_loopback_port() -> int:
@@ -76,7 +76,7 @@ def test_handle_store_failure_returns_status_without_phi_logs(tmp_path, caplog, 
     def fail_store(_dataset, _storage_dir):
         raise RuntimeError("synthetic save failure with SHOULD^NOTLOG SECRETID")
 
-    monkeypatch.setattr(dicom_scp, "store_dataset", fail_store)
+    monkeypatch.setattr(dicom_server, "store_dataset", fail_store)
 
     status = handle_store(event, tmp_path)
 

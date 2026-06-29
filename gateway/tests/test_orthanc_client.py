@@ -3,7 +3,7 @@ import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from app.orthanc_client import OrthancHttpClient
+from app.clients.orthanc import OrthancHttpClient
 
 
 class OrthancHandler(BaseHTTPRequestHandler):

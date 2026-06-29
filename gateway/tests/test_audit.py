@@ -1,6 +1,6 @@
 import sqlite3
 
-from app.audit import AUDIT_TABLE, init_audit_db, record_gateway_event
+from app.services.audit import AUDIT_TABLE, init_audit_db, record_gateway_event
 
 
 FORBIDDEN_COLUMNS = {

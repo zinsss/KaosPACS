@@ -6,9 +6,9 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .auth import is_auth_enabled
-from .config import GatewayConfig
-from .orthanc_client import OrthancHttpClient
+from app.clients.orthanc import OrthancHttpClient
+from app.config import GatewayConfig
+from app.services.auth import is_auth_enabled
 
 
 STATUS_VERSION = "0.1"
