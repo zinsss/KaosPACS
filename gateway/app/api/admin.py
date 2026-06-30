@@ -21,7 +21,7 @@ from app.clients.mwl import MwlHttpError, MwlUnavailableError
 
 SEOUL_TZ = ZoneInfo("Asia/Seoul")
 ALLOWED_STATUSES = {"completed", "cancelled", "expired"}
-DEFAULT_STATUSES = ["completed", "cancelled"]
+DEFAULT_STATUSES = ["completed", "cancelled", "expired"]
 
 
 def validate_prune_request(payload: Any) -> list[str]:
@@ -118,7 +118,7 @@ def _prune_match(
     for status, timestamp_field in (
         ("completed", "CompletedAt"),
         ("cancelled", "CancelledAt"),
-        ("expired", "ExpiresAt"),
+        ("expired", "ExpiredAt"),
     ):
         if status not in statuses:
             continue

@@ -164,10 +164,12 @@ notes, tokens, Authorization headers, or full payloads.
 
 `POST /admin/worklist/prune` is a protected runtime worklist cleanup endpoint.
 It defaults to `dry_run=true`, removes only inactive entries matching requested
-statuses, and never removes `Active=true` entries. The response is a summary
-only and may include removed accession numbers, but not patient names, chart
-numbers, DOB, sex, diagnosis, EMR notes, or full worklist entries. This endpoint
-does not prune the MWL audit DB or Gateway audit DB.
+statuses, and never removes `Active=true` entries. The default statuses are
+completed, cancelled, and expired. Expired pruning uses `ExpiredAt`, which MWL
+sets when an active entry passes its imaging window without completion. The
+response is a summary only and may include removed accession numbers, but not
+patient names, chart numbers, DOB, sex, diagnosis, EMR notes, or full worklist
+entries. This endpoint does not prune the MWL audit DB or Gateway audit DB.
 
 Gateway writes a minimal workflow audit database at:
 
@@ -202,6 +204,13 @@ The checked-in seed file is mounted read-only into `/app/config`. Runtime MWL
 state and the audit database are stored under `/app/data`, persisted on the host
 under `/srv/docker/kaospacs/mwl`.
 
+MWL automatically marks stale active entries expired before serving
+`GET /worklist` or DICOM C-FIND. `ExpiresAt` is the primary imaging window. If
+it is missing, MWL uses the scheduled imaging date as the fallback window.
+Expired entries remain in `/app/data/worklist.json` as `Active=false` with
+`ExpiredAt` and `ExpireReason=expired_without_imaging`; they are not returned
+to modalities.
+
 ## Startup
 
 ```bash
@@ -235,7 +244,7 @@ curl -X POST http://127.0.0.1:8060/orders/cancel \
 curl -X POST http://127.0.0.1:8060/admin/worklist/prune \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
-  --data '{"dry_run":true,"older_than_days":7,"statuses":["completed","cancelled"]}'
+  --data '{"dry_run":true,"older_than_days":7,"statuses":["completed","cancelled","expired"]}'
 docker compose logs mwl
 ```
 

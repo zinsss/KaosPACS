@@ -697,7 +697,8 @@ def prune_worklist_payload():
                 "AccessionNumber": "EXPIRED-OLD",
                 "PatientName": "EXPIRED^PATIENT",
                 "PatientID": "EXPIRED-CHART",
-                "ExpiresAt": "2026-06-01T09:00:00+09:00",
+                "ExpiredAt": "2026-06-01T09:00:00+09:00",
+                "ExpireReason": "expired_without_imaging",
             },
             {
                 "Active": False,
@@ -738,10 +739,10 @@ def test_admin_worklist_prune_default_dry_run_does_not_put(tmp_path) -> None:
         assert status == 200
         assert body["dry_run"] is True
         assert body["older_than_days"] == 7
-        assert body["statuses"] == ["completed", "cancelled"]
+        assert body["statuses"] == ["completed", "cancelled", "expired"]
         assert body["before_count"] == 6
-        assert body["after_count"] == 4
-        assert body["removed_count"] == 2
+        assert body["after_count"] == 3
+        assert body["removed_count"] == 3
         assert body["removed"] == [
             {
                 "AccessionNumber": "COMPLETE-OLD",
@@ -751,6 +752,11 @@ def test_admin_worklist_prune_default_dry_run_does_not_put(tmp_path) -> None:
             {
                 "AccessionNumber": "CANCEL-OLD",
                 "reason": "cancelled",
+                "timestamp": "2026-06-01T09:00:00+09:00",
+            },
+            {
+                "AccessionNumber": "EXPIRED-OLD",
+                "reason": "expired",
                 "timestamp": "2026-06-01T09:00:00+09:00",
             },
         ]

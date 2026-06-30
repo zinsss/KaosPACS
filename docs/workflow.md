@@ -98,8 +98,27 @@ than raw MWL JSON. Gateway validates those events, converts them into MWL
 entries, and updates the internal MWL API. Raw Gateway `/worklist` endpoints
 remain internal/development helpers.
 
-Completed or cancelled entries are kept in JSON and marked `Active=false`; they
-are not physically deleted and are not returned in DICOM MWL C-FIND responses.
+Completed, expired, or cancelled entries are kept in JSON and marked
+`Active=false`; they are not physically deleted and are not returned in DICOM
+MWL C-FIND responses.
+
+KaosPACS owns imaging lifecycle state only:
+
+- `CompletedAt`: Gateway received/forwarded/matched a DICOM study and called
+  MWL completion.
+- `ExpiredAt`: MWL entry passed its imaging window without completion.
+
+KaosEghis-PACS owns source/business order state:
+
+- create
+- update
+- cancel
+- delete
+- restore/reactivate
+
+Cancelled means an explicit source/business cancellation or deletion arrived
+through Gateway or the internal MWL API. KaosPACS must not infer source
+cancellation or deletion by polling eGHIS or `public.mwl`.
 
 In the final architecture, Gateway is the expected caller of
 `POST /worklist/complete` after it has successfully received and forwarded a
@@ -114,6 +133,9 @@ The MWL audit database is:
 
 It stores minimal PACS-side metadata only. It does not store patient name, DOB,
 sex, resident ID, phone, address, diagnosis, or EMR notes.
+
+MWL expiry records a minimal `worklist_expired` event with accession number
+only. It does not store patient demographics or full worklist payloads.
 
 ## Current Transitional Clinical Flow
 
@@ -198,3 +220,8 @@ rather than calling MWL directly. MWL must not connect directly to eGHIS, must
 not communicate directly with Orthanc, and must not decide DICOM completion
 from image storage. Gateway is the only component that understands both
 workflow state and image state.
+
+MWL expiry is not source cancellation. It only means the local imaging worklist
+window passed without a matching DICOM completion. Source cancellation, source
+deletion, and restoration must arrive as explicit KaosEghis-PACS/Gateway
+events.

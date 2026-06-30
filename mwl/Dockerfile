@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY config ./config
 COPY tools ./tools
+COPY tests ./tests
 
 EXPOSE 105
 EXPOSE 8055
