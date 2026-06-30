@@ -64,6 +64,8 @@ The service supports:
 - Query matching by PatientID, AccessionNumber, Modality, and
   ScheduledStationAETitle; blank query fields are wildcards
 - C-FIND query, match, and completion logging
+- Internal expiry of active entries that pass their imaging window without
+  completion
 
 Required JSON fields for a returnable entry:
 
@@ -78,7 +80,10 @@ Optional safety fields:
 
 - `Active`: defaults to `true`; set to `false` to keep an entry in JSON without
   returning it in MWL responses
-- `ExpiresAt`: ISO datetime string; expired entries are skipped
+- `ExpiresAt`: ISO datetime string; if this passes before DICOM completion,
+  KaosPACS marks the entry expired
+- `ExpiredAt`: ISO datetime set by KaosPACS when an active entry expires
+- `ExpireReason`: currently `expired_without_imaging`
 
 Invalid entries are skipped with warning logs. One bad entry must not prevent
 the MWL SCP from serving other valid entries.
@@ -148,6 +153,36 @@ entries.
 The MWL API only manages explicit worklist state: active, completed, cancelled,
 and expired. It does not infer clinical workflow from Orthanc studies.
 
+## Imaging Lifecycle State
+
+KaosPACS and KaosEghis-PACS have separate ownership:
+
+- KaosEghis-PACS owns source/business order state: create, update, cancel,
+  delete, restore, and reactivate from eGHIS or `public.mwl`.
+- KaosPACS owns imaging lifecycle state: complete and expire.
+
+Expiry is internal to KaosPACS. Before serving `GET /worklist` or a DICOM
+C-FIND, MWL checks active entries. If `ExpiresAt` has passed, or if `ExpiresAt`
+is missing and the scheduled imaging date has passed, MWL marks the entry:
+
+```json
+{
+  "Active": false,
+  "ExpiredAt": "2026-07-01T12:00:00+09:00",
+  "ExpireReason": "expired_without_imaging"
+}
+```
+
+MWL does not set `CancelledAt`, `CancelReason`, or `CompletedAt` during expiry.
+Cancelled means an explicit source/business cancellation or deletion arrived
+through Gateway or the internal MWL API. If a source cancellation later arrives
+for an already expired entry, MWL records `CancelledAt` and `CancelReason` while
+keeping `ExpiredAt` as historical trace.
+
+MWL C-FIND returns only `Active=true` entries. Completed, expired, and
+cancelled entries can remain in `/app/data/worklist.json`, but modalities will
+not see them.
+
 Gateway also provides a protected admin cleanup endpoint for the runtime
 worklist:
 
@@ -158,6 +193,7 @@ POST /admin/worklist/prune
 This endpoint calls the MWL API through Gateway. It defaults to `dry_run=true`
 and never removes `Active=true` entries. It can remove only inactive completed,
 cancelled, or expired entries matching the requested statuses and age threshold.
+Expired pruning uses `ExpiredAt`, not the original `ExpiresAt` window.
 The response is summary-only and may include `AccessionNumber`, but not patient
 name, chart number, DOB, sex, diagnosis, EMR notes, or full worklist entries.
 
@@ -216,7 +252,9 @@ birth, sex, resident ID, phone, address, diagnosis, or EMR notes. `PatientID`
 from the worklist JSON is treated as the chart number for audit purposes.
 
 `PUT /worklist` upserts audit rows by `AccessionNumber`. Complete and cancel
-actions update both the JSON worklist entry and the matching audit row.
+actions update both the JSON worklist entry and the matching audit row. Expiry
+writes a minimal `worklist_expired` event with accession number only and updates
+status to `expired` without adding demographics.
 
 Run it with:
 
@@ -246,6 +284,10 @@ docker compose exec mwl python tools/query_mwl.py --modality BMD --station-aet B
 MWL must remain EMR-agnostic. It should not derive entries from eGHIS, poll
 eGHIS, contain eGHIS database code, communicate directly with Orthanc, or infer
 study completion.
+
+MWL also must not infer source cancellations or source deletions. Those are
+business-order states owned by KaosEghis-PACS and delivered as explicit events
+through Gateway.
 
 KaosEghis-PACS is the EMR-aware adapter. It reads eGHIS with read-only access,
 handles polling or events, normalizes orders, and sends worklist events to

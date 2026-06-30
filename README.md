@@ -18,6 +18,9 @@ Current transitional runtime:
 - Orthanc temporarily owns the legacy storage identity `VIEWREX:104`.
 - MWL owns `VIEWREX_WL:105`, active worklist state, the local MWL API, and the
   minimal audit database.
+- MWL expires active entries internally when `ExpiresAt` has passed, or when
+  no `ExpiresAt` exists and the scheduled imaging date has passed. Expiry is a
+  KaosPACS imaging lifecycle state, not a source cancellation.
 - Gateway provides localhost-only workflow API endpoints in front of the MWL
   API, including normalized order event endpoints for future KaosEghis-PACS
   integration.
@@ -55,6 +58,9 @@ Final Gateway-centered runtime:
   read-only access, normalizes orders, and sends worklist events to Gateway.
   It should not call MWL directly in production, call Orthanc directly, or
   infer DICOM study completion.
+- KaosEghis-PACS owns source order create/update/cancel/delete/restore events.
+  KaosPACS owns imaging lifecycle completion and expiry only; it must not infer
+  source cancellation or deletion by polling eGHIS or `public.mwl`.
 - MWL remains the dedicated DICOM Modality Worklist SCP at `VIEWREX_WL:105`.
   Legacy modalities query MWL directly with C-FIND; Gateway does not own or
   proxy the MWL DICOM port.
@@ -169,8 +175,9 @@ demographics or dataset contents.
 
 `POST /admin/worklist/prune` removes old inactive completed, cancelled, or
 expired entries from the runtime MWL worklist only. It defaults to
-`dry_run=true`, never removes `Active=true` entries, and returns a summary with
-accession numbers only. It does not prune the MWL audit DB or Gateway audit DB.
+`dry_run=true` and the completed, cancelled, and expired statuses. It never
+removes `Active=true` entries and returns a summary with accession numbers only.
+It does not prune the MWL audit DB or Gateway audit DB.
 
 Port `104` is a privileged low port. Binding it may require a rootful Docker
 daemon, host networking, or adjusted capabilities depending on the environment.
@@ -185,3 +192,9 @@ active runtime worklist at `/app/data/worklist.json`.
 
 `/app/data` persists on the host at `/srv/docker/kaospacs/mwl` and also stores
 the minimal audit database at `/app/data/mwl_audit.sqlite3`.
+
+MWL C-FIND returns only `Active=true` entries. Completed, expired, and
+cancelled entries remain in the runtime JSON until pruned, but they are hidden
+from modalities. Expired entries are marked with `ExpiredAt` and
+`ExpireReason=expired_without_imaging`; cancelled entries are explicit
+source/business cancellations and use `CancelledAt`.

@@ -6,12 +6,13 @@ import os
 import sqlite3
 import tempfile
 import threading
-from datetime import datetime
+from datetime import datetime, time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 from pydicom.dataset import Dataset
 from pydicom.sequence import Sequence
@@ -26,6 +27,8 @@ DEFAULT_API_PORT = 8055
 DEFAULT_WORKLIST_SEED_PATH = Path("/app/config/worklist.json")
 DEFAULT_WORKLIST_PATH = Path("/app/data/worklist.json")
 DEFAULT_AUDIT_DB_PATH = Path("/app/data/mwl_audit.sqlite3")
+DEFAULT_TIMEZONE = "Asia/Seoul"
+EXPIRE_REASON_WITHOUT_IMAGING = "expired_without_imaging"
 REQUIRED_FIELDS = (
     "PatientID",
     "PatientName",
@@ -36,6 +39,7 @@ REQUIRED_FIELDS = (
 )
 
 LOGGER = logging.getLogger("kaospacs.mwl")
+LOCAL_TZ = ZoneInfo(os.getenv("TZ", DEFAULT_TIMEZONE))
 
 
 def _text(value: Any) -> str:
@@ -70,8 +74,33 @@ def _parse_expires_at(value: Any) -> datetime:
     return datetime.fromisoformat(raw)
 
 
+def _parse_scheduled_expiry(entry: dict[str, Any]) -> datetime | None:
+    raw_date = _text(entry.get("ScheduledProcedureStepStartDate"))
+    if not raw_date:
+        return None
+
+    if len(raw_date) == 8 and raw_date.isdigit():
+        normalized_date = f"{raw_date[0:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
+    else:
+        normalized_date = raw_date
+
+    scheduled_date = datetime.fromisoformat(normalized_date).date()
+    return datetime.combine(scheduled_date, time(23, 59, 59), tzinfo=LOCAL_TZ)
+
+
+def _expiry_deadline(entry: dict[str, Any]) -> datetime | None:
+    expires_at = _text(entry.get("ExpiresAt"))
+    if expires_at:
+        return _parse_expires_at(expires_at)
+    return _parse_scheduled_expiry(entry)
+
+
 def _iso_now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _iso_timestamp(value: datetime) -> str:
+    return value.astimezone().isoformat(timespec="seconds")
 
 
 def _scheduled_at(entry: dict[str, Any]) -> str:
@@ -105,17 +134,18 @@ def _entry_status(entry: dict[str, Any], now: datetime | None = None) -> str:
         return "cancelled"
     if _text(entry.get("CompletedAt")):
         return "completed"
+    if _text(entry.get("ExpiredAt")):
+        return "expired"
     if not entry.get("Active", True):
         return "inactive"
 
-    expires_at = _text(entry.get("ExpiresAt"))
-    if expires_at:
-        effective_now = now or datetime.now().astimezone()
-        try:
-            if _is_expired(_parse_expires_at(expires_at), effective_now):
-                return "expired"
-        except ValueError:
-            return "invalid"
+    effective_now = now or datetime.now().astimezone()
+    try:
+        deadline = _expiry_deadline(entry)
+    except ValueError:
+        return "invalid"
+    if deadline and _is_expired(deadline, effective_now):
+        return "expired"
     return "active"
 
 
@@ -165,17 +195,9 @@ def _is_returnable_entry(entry: dict[str, Any], index: int, now: datetime) -> bo
             LOGGER.warning("Skipping invalid worklist entry reason=%s", error)
         return False
 
-    if not entry.get("Active", True):
-        LOGGER.info("Skipping inactive worklist entry index=%s", index)
-        return False
-
-    expires_at = _text(entry.get("ExpiresAt"))
-    if expires_at and _is_expired(_parse_expires_at(expires_at), now):
-        LOGGER.info(
-            "Skipping expired worklist entry index=%s expires_at=%s",
-            index,
-            expires_at,
-        )
+    status = _entry_status(entry, now)
+    if status != "active":
+        LOGGER.info("Skipping non-active worklist entry index=%s status=%s", index, status)
         return False
 
     return True
@@ -250,6 +272,17 @@ def init_audit_db(path: Path) -> None:
                 completed_at TEXT,
                 cancelled_at TEXT,
                 cancel_reason TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mwl_events (
+                id INTEGER PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                accession_number TEXT,
+                success INTEGER NOT NULL,
+                created_at TEXT NOT NULL
             )
             """
         )
@@ -333,8 +366,108 @@ def upsert_audit_entries(path: Path, entries: list[dict[str, Any]]) -> None:
             )
 
 
-def _load_worklist(path: Path, now: datetime | None = None) -> list[dict[str, Any]]:
+def record_worklist_expired(path: Path, entry: dict[str, Any]) -> None:
+    init_audit_db(path)
+    now = _iso_now()
+    accession_number = _text(entry.get("AccessionNumber"))
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO mwl_events (
+                event_type,
+                accession_number,
+                success,
+                created_at
+            ) VALUES (?, ?, ?, ?)
+            """,
+            ("worklist_expired", accession_number, 1, now),
+        )
+        if accession_number:
+            connection.execute(
+                """
+                INSERT INTO mwl_audit (
+                    accession_number,
+                    status,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(accession_number) DO UPDATE SET
+                    status=excluded.status,
+                    updated_at=excluded.updated_at
+                """,
+                (accession_number, "expired", now, now),
+            )
+
+
+def expire_stale_entries(
+    payload: dict[str, Any],
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    entries = payload.get("entries", [])
+    if not isinstance(entries, list):
+        raise ValueError("worklist config must be an object with entries")
+
+    effective_now = now or datetime.now().astimezone()
+    expired_entries = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("Active", True) is not True:
+            continue
+        if _text(entry.get("CompletedAt")) or _text(entry.get("CancelledAt")):
+            continue
+        if _text(entry.get("ExpiredAt")):
+            continue
+        try:
+            deadline = _expiry_deadline(entry)
+        except ValueError as error:
+            LOGGER.warning(
+                "Skipping expiry for invalid worklist entry index=%s error=%s",
+                index,
+                error.__class__.__name__,
+            )
+            continue
+        if deadline is None or not _is_expired(deadline, effective_now):
+            continue
+
+        entry["Active"] = False
+        entry["ExpiredAt"] = _iso_timestamp(effective_now)
+        entry["ExpireReason"] = EXPIRE_REASON_WITHOUT_IMAGING
+        expired_entries.append(entry)
+        LOGGER.info(
+            "Expired worklist entry accession=%s reason=%s",
+            _text(entry.get("AccessionNumber")),
+            EXPIRE_REASON_WITHOUT_IMAGING,
+        )
+    return expired_entries
+
+
+def expire_worklist_file(
+    path: Path,
+    audit_db_path: Path | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     payload = read_worklist_payload(path)
+    expired_entries = expire_stale_entries(payload, now=now)
+    if not expired_entries:
+        return payload
+
+    write_worklist_payload(path, payload)
+    if audit_db_path is not None:
+        for entry in expired_entries:
+            try:
+                record_worklist_expired(audit_db_path, entry)
+            except Exception as error:
+                LOGGER.warning(
+                    "Failed to record MWL expiry audit accession=%s error=%s",
+                    _text(entry.get("AccessionNumber")),
+                    error.__class__.__name__,
+                )
+    return payload
+
+
+def _load_worklist(path: Path, now: datetime | None = None) -> list[dict[str, Any]]:
+    payload = expire_worklist_file(path, now=now)
 
     entries = payload.get("entries")
     if not isinstance(entries, list):
@@ -384,7 +517,10 @@ def _entry_to_dataset(entry: dict[str, Any]) -> Dataset:
 def load_worklist_datasets(
     path: Path = DEFAULT_WORKLIST_PATH,
     now: datetime | None = None,
+    audit_db_path: Path | None = None,
 ) -> list[Dataset]:
+    if audit_db_path is not None:
+        expire_worklist_file(path, audit_db_path=audit_db_path, now=now)
     return [_entry_to_dataset(entry) for entry in _load_worklist(path, now=now)]
 
 
@@ -430,7 +566,7 @@ def _assoc_context(event: evt.Event) -> tuple[str, str, str]:
     return remote_ip, calling_ae, called_ae
 
 
-def make_handle_find(worklist_path: Path):
+def make_handle_find(worklist_path: Path, audit_db_path: Path | None = None):
     def handle_find(event: evt.Event):
         identifier = event.identifier
         remote_ip, calling_ae, called_ae = _assoc_context(event)
@@ -441,7 +577,7 @@ def make_handle_find(worklist_path: Path):
         requested_station = _dataset_value(query_step, "ScheduledStationAETitle")
 
         try:
-            datasets = load_worklist_datasets(worklist_path)
+            datasets = load_worklist_datasets(worklist_path, audit_db_path=audit_db_path)
         except Exception:
             LOGGER.exception("Failed to load worklist path=%s", worklist_path)
             yield 0xA700, None
@@ -559,7 +695,10 @@ def make_api_handler(worklist_path: Path, audit_db_path: Path):
                 return
             if path == "/worklist":
                 try:
-                    payload = read_worklist_payload(worklist_path)
+                    payload = expire_worklist_file(
+                        worklist_path,
+                        audit_db_path=audit_db_path,
+                    )
                 except Exception:
                     LOGGER.exception("MWL API failed to read worklist path=%s", worklist_path)
                     _json_response(
@@ -731,6 +870,7 @@ def start_server(
     ae_title: str,
     port: int,
     worklist_path: Path,
+    audit_db_path: Path | None = None,
     block: bool = True,
 ):
     ae = AE(ae_title=ae_title)
@@ -747,7 +887,7 @@ def start_server(
         ("", port),
         block=block,
         evt_handlers=[
-            (evt.EVT_C_FIND, make_handle_find(worklist_path)),
+            (evt.EVT_C_FIND, make_handle_find(worklist_path, audit_db_path)),
             (evt.EVT_C_ECHO, handle_echo),
         ],
     )
@@ -774,7 +914,12 @@ def main() -> None:
         worklist_path=worklist_path,
         audit_db_path=audit_db_path,
     )
-    start_server(ae_title=ae_title, port=port, worklist_path=worklist_path)
+    start_server(
+        ae_title=ae_title,
+        port=port,
+        worklist_path=worklist_path,
+        audit_db_path=audit_db_path,
+    )
 
 
 if __name__ == "__main__":

@@ -11,6 +11,9 @@ from pydicom.sequence import Sequence
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.main import (
+    EXPIRE_REASON_WITHOUT_IMAGING,
+    expire_stale_entries,
+    expire_worklist_file,
     initialize_worklist_from_seed,
     load_worklist_datasets,
     matches_query,
@@ -19,6 +22,7 @@ from app.main import (
 
 
 NOW = datetime(2026, 6, 27, 9, 0, 0, tzinfo=timezone.utc)
+NOW_SEOUL = "2026-06-27T18:00:00+09:00"
 
 
 def write_worklist(tmp_path, entries):
@@ -65,6 +69,17 @@ def audit_rows(path):
 def audit_columns(path):
     with sqlite3.connect(path) as connection:
         return [row[1] for row in connection.execute("PRAGMA table_info(mwl_audit)")]
+
+
+def audit_event_rows(path):
+    with sqlite3.connect(path) as connection:
+        connection.row_factory = sqlite3.Row
+        return [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM mwl_events ORDER BY id"
+            )
+        ]
 
 
 def valid_entry(**overrides):
@@ -180,6 +195,95 @@ def test_expired_entry_is_not_returned(tmp_path):
     datasets = load_worklist_datasets(path, now=NOW)
 
     assert datasets == []
+    entry = json.loads(path.read_text(encoding="utf-8"))["entries"][0]
+    assert entry["Active"] is False
+    assert entry["ExpiredAt"] == NOW_SEOUL
+    assert entry["ExpireReason"] == EXPIRE_REASON_WITHOUT_IMAGING
+
+
+def test_active_entry_with_past_expires_at_becomes_expired(tmp_path):
+    payload = {
+        "entries": [
+            valid_entry(ExpiresAt="2026-06-26T23:59:59+00:00"),
+        ]
+    }
+
+    expired = expire_stale_entries(payload, now=NOW)
+
+    assert len(expired) == 1
+    entry = payload["entries"][0]
+    assert entry["Active"] is False
+    assert entry["ExpiredAt"] == NOW_SEOUL
+    assert entry["ExpireReason"] == EXPIRE_REASON_WITHOUT_IMAGING
+    assert "CompletedAt" not in entry
+    assert "CancelledAt" not in entry
+    assert "CancelReason" not in entry
+
+
+def test_active_entry_with_past_scheduled_date_without_expires_at_becomes_expired(tmp_path):
+    payload = {
+        "entries": [
+            valid_entry(
+                ExpiresAt="",
+                ScheduledProcedureStepStartDate="20260626",
+                ScheduledProcedureStepStartTime="090000",
+            ),
+        ]
+    }
+
+    expired = expire_stale_entries(payload, now=NOW)
+
+    assert len(expired) == 1
+    assert payload["entries"][0]["Active"] is False
+    assert payload["entries"][0]["ExpireReason"] == EXPIRE_REASON_WITHOUT_IMAGING
+
+
+def test_future_active_entry_remains_active():
+    payload = {
+        "entries": [
+            valid_entry(ExpiresAt="2026-06-28T23:59:59+00:00"),
+        ]
+    }
+
+    expired = expire_stale_entries(payload, now=NOW)
+
+    assert expired == []
+    assert payload["entries"][0]["Active"] is True
+    assert "ExpiredAt" not in payload["entries"][0]
+
+
+def test_completed_entry_never_becomes_expired():
+    payload = {
+        "entries": [
+            valid_entry(
+                ExpiresAt="2026-06-26T23:59:59+00:00",
+                CompletedAt="2026-06-27T08:00:00+00:00",
+            ),
+        ]
+    }
+
+    expired = expire_stale_entries(payload, now=NOW)
+
+    assert expired == []
+    assert payload["entries"][0]["Active"] is True
+    assert "ExpiredAt" not in payload["entries"][0]
+
+
+def test_cancelled_entry_never_becomes_expired():
+    payload = {
+        "entries": [
+            valid_entry(
+                ExpiresAt="2026-06-26T23:59:59+00:00",
+                CancelledAt="2026-06-27T08:00:00+00:00",
+            ),
+        ]
+    }
+
+    expired = expire_stale_entries(payload, now=NOW)
+
+    assert expired == []
+    assert payload["entries"][0]["Active"] is True
+    assert "ExpiredAt" not in payload["entries"][0]
 
 
 def test_invalid_entry_missing_required_field_is_skipped(tmp_path, caplog):
@@ -219,6 +323,32 @@ def test_api_get_worklist_returns_current_entries(tmp_path):
 
     assert status == 200
     assert payload["entries"][0]["PatientID"] == "VALID001"
+
+
+def test_api_get_worklist_expires_stale_entries_and_keeps_inactive_visible(tmp_path):
+    path = write_worklist(
+        tmp_path,
+        [valid_entry(ExpiresAt="2026-06-26T23:59:59+00:00")],
+    )
+    audit_db = tmp_path / "audit.sqlite3"
+    server = start_test_api(path, audit_db)
+    try:
+        status, payload = api_request(server, "GET", "/worklist")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert status == 200
+    entry = payload["entries"][0]
+    assert entry["Active"] is False
+    assert entry["ExpiredAt"]
+    assert entry["ExpireReason"] == EXPIRE_REASON_WITHOUT_IMAGING
+    assert load_worklist_datasets(path, now=NOW) == []
+    assert audit_event_rows(audit_db)[0]["event_type"] == "worklist_expired"
+    rows = audit_rows(audit_db)
+    assert rows[0]["accession_number"] == "VALID001"
+    assert rows[0]["status"] == "expired"
+    assert rows[0]["chart_no"] is None
 
 
 def test_initialize_worklist_from_seed_copies_only_when_missing(tmp_path):
@@ -361,6 +491,61 @@ def test_api_cancel_marks_entry_inactive_with_reason(tmp_path):
     assert rows[0]["cancel_reason"] == "patient no-show"
 
 
+def test_explicit_cancel_remains_cancelled_not_expired(tmp_path):
+    path = write_worklist(
+        tmp_path,
+        [valid_entry(ExpiresAt="2026-06-26T23:59:59+00:00")],
+    )
+    audit_db = tmp_path / "audit.sqlite3"
+    server = start_test_api(path, audit_db)
+    try:
+        status, payload = api_request(
+            server,
+            "POST",
+            "/worklist/cancel",
+            {"AccessionNumber": "VALID001", "CancelReason": "deleted_in_source"},
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    entry = payload["worklist"]["entries"][0]
+    assert status == 200
+    assert entry["Active"] is False
+    assert entry["CancelReason"] == "deleted_in_source"
+    assert "CancelledAt" in entry
+    assert "ExpiredAt" not in entry
+
+
+def test_source_cancel_after_expiry_sets_cancelled_and_keeps_expired_trace(tmp_path):
+    path = write_worklist(
+        tmp_path,
+        [valid_entry(ExpiresAt="2026-06-26T23:59:59+00:00")],
+    )
+    audit_db = tmp_path / "audit.sqlite3"
+    expire_worklist_file(path, audit_db_path=audit_db, now=NOW)
+    server = start_test_api(path, audit_db)
+    try:
+        status, payload = api_request(
+            server,
+            "POST",
+            "/worklist/cancel",
+            {"AccessionNumber": "VALID001", "CancelReason": "cancelled_in_source"},
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    entry = payload["worklist"]["entries"][0]
+    assert status == 200
+    assert entry["CancelledAt"]
+    assert entry["CancelReason"] == "cancelled_in_source"
+    assert entry["ExpiredAt"]
+    assert entry["ExpireReason"] == EXPIRE_REASON_WITHOUT_IMAGING
+    rows = audit_rows(audit_db)
+    assert rows[0]["status"] == "cancelled"
+
+
 def test_audit_db_does_not_contain_demographic_columns(tmp_path):
     path = write_worklist(tmp_path, [valid_entry()])
     audit_db = tmp_path / "audit.sqlite3"
@@ -379,3 +564,39 @@ def test_audit_db_does_not_contain_demographic_columns(tmp_path):
     assert "patient_name" not in columns
     assert "patient_birth_date" not in columns
     assert "patient_sex" not in columns
+
+
+def test_expiry_audit_event_does_not_contain_demographic_columns(tmp_path):
+    path = write_worklist(
+        tmp_path,
+        [
+            valid_entry(
+                PatientName="PRIVATE^NAME",
+                PatientID="PRIVATE-ID",
+                PatientBirthDate="19770202",
+                PatientSex="F",
+                ExpiresAt="2026-06-26T23:59:59+00:00",
+            )
+        ],
+    )
+    audit_db = tmp_path / "audit.sqlite3"
+
+    expire_worklist_file(path, audit_db_path=audit_db, now=NOW)
+
+    event_columns = {
+        row[1]
+        for row in sqlite3.connect(audit_db).execute("PRAGMA table_info(mwl_events)")
+    }
+    assert event_columns == {
+        "id",
+        "event_type",
+        "accession_number",
+        "success",
+        "created_at",
+    }
+    serialized_events = json.dumps(audit_event_rows(audit_db))
+    assert "PRIVATE^NAME" not in serialized_events
+    assert "PRIVATE-ID" not in serialized_events
+    assert "19770202" not in serialized_events
+    assert "PatientName" not in serialized_events
+    assert "PatientID" not in serialized_events

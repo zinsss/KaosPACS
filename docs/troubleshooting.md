@@ -243,15 +243,15 @@ include patient data, accession numbers, or stored DICOM content.
 
 ## Runtime Worklist Accumulates Old Entries
 
-Completed and cancelled entries are preserved in the runtime MWL worklist for
-traceability, but test entries can accumulate. Gateway provides a protected
-admin cleanup endpoint:
+Completed, expired, and cancelled entries are preserved in the runtime MWL
+worklist for traceability, but test entries can accumulate. Gateway provides a
+protected admin cleanup endpoint:
 
 ```bash
 curl -X POST http://127.0.0.1:8060/admin/worklist/prune \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
-  --data '{"dry_run":true,"older_than_days":7,"statuses":["completed","cancelled"]}'
+  --data '{"dry_run":true,"older_than_days":7,"statuses":["completed","cancelled","expired"]}'
 ```
 
 The default is `dry_run=true`. Review the summary before running with
@@ -267,6 +267,25 @@ Safety rules:
   patient demographics.
 - This prunes only `/app/data/worklist.json`; it does not delete MWL audit DB
   rows or Gateway audit DB rows.
+
+## Worklist Entry Expired
+
+MWL marks an active entry expired when its imaging window has passed without
+DICOM completion. `ExpiresAt` is the primary window. If `ExpiresAt` is missing,
+MWL falls back to the scheduled imaging date.
+
+Expired entries are marked:
+
+```text
+Active=false
+ExpiredAt=<current ISO datetime>
+ExpireReason=expired_without_imaging
+```
+
+They remain in `/app/data/worklist.json` until pruned, but they are not returned
+to DICOM MWL C-FIND. Expiry is not source cancellation. Do not treat it as
+eGHIS cancellation or deletion; source cancellations must arrive explicitly
+from KaosEghis-PACS through Gateway or the internal MWL API.
 
 ## MWL Worklist Is Empty
 
@@ -292,8 +311,8 @@ sudo ls -l /srv/docker/kaospacs/mwl
 docker compose exec mwl python tools/query_mwl.py
 ```
 
-If entries are marked `Active=false`, completed, cancelled, or expired, they are
-not returned to DICOM MWL C-FIND.
+If entries are marked `Active=false`, completed, expired, or cancelled, they
+are not returned to DICOM MWL C-FIND.
 
 ## MWL API Write Fails
 

@@ -29,6 +29,8 @@ Orthanc + MWL runtime stable. It contains:
 - Active MWL JSON state at `/app/data/worklist.json`, initialized from the
   read-only seed `/app/config/worklist.json`.
 - Minimal MWL SQLite audit database at `/app/data/mwl_audit.sqlite3`.
+- KaosPACS-owned MWL expiry for active entries that pass their imaging window
+  without DICOM completion.
 - Gateway localhost-only workflow API on `127.0.0.1:8060`, accepting
   normalized order events and proxying validated worklist requests to the
   internal MWL API.
@@ -54,6 +56,11 @@ KaosPACS MWL API / JSON
 The MWL API is local-only by default and manages explicit worklist state:
 active, completed, cancelled, and expired. It does not infer workflow from
 Orthanc studies.
+
+Expiry is an internal imaging lifecycle state. It marks stale active entries
+`Active=false` with `ExpiredAt` and
+`ExpireReason=expired_without_imaging`. It is not a source cancellation, source
+deletion, or eGHIS status inference.
 
 Orthanc owning `VIEWREX:104` is a temporary runtime stage, not the final
 architecture. Gateway does not bind port `104`, does not use AET `VIEWREX`,
@@ -163,11 +170,14 @@ Business logic belongs outside Orthanc:
 - KaosEghis-PACS: eGHIS order discovery with read-only access, polling or event
   handling, normalization, and sending normalized order events to Gateway. It
   should not call MWL directly in production, call Orthanc directly, or infer
-  DICOM completion.
+  DICOM completion. It owns source/business order create, update, cancel,
+  delete, restore, and reactivate events.
 - MWL: modality worklist responses, local worklist state, local MWL API, and
   minimal audit tracking. It is not a workflow engine, must not connect
   directly to eGHIS, must not infer study completion, and must not communicate
-  directly with Orthanc.
+  directly with Orthanc. It owns KaosPACS internal expiry for active entries
+  whose imaging window passed without DICOM completion, and it must not infer
+  source cancellation or deletion from eGHIS or `public.mwl`.
 - Web: browser launch, viewer routing, and EMR-facing PACS screens.
 - Migration: read-only ViewRex extraction and additive import tooling.
 
