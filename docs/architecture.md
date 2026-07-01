@@ -149,9 +149,12 @@ GET /imaging/worklist
 
 KaosEghis-PACS UI should read this Gateway endpoint for imaging state. It
 returns a flattened view with derived `active`, `completed`, `expired`,
-`cancelled`, or `inactive` states and counts. It does not poll eGHIS or
-`public.mwl`; it reads the current KaosPACS MWL HTTP `/worklist` through the
-Gateway/MWL boundary.
+or `cancelled` states and counts by default. `inactive` rows are available only
+through `GET /imaging/worklist?view=all`; inactive means a retained
+non-actionable row with no completion, expiry, or source cancellation timestamp,
+and KaosEghis-PACS must not treat it as active. The endpoint does not poll
+eGHIS or `public.mwl`; it reads the current KaosPACS MWL HTTP `/worklist`
+through the Gateway/MWL boundary.
 
 KaosEghis-PACS authenticates to Gateway with `Authorization: Bearer <token>`
 when `GATEWAY_API_TOKEN` is configured. This shared token is a simple

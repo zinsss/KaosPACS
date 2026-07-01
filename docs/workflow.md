@@ -110,11 +110,16 @@ This endpoint returns flat rows plus counts using derived state:
 - `completed`: `CompletedAt` is present
 - `expired`: `ExpiredAt` is present
 - `active`: `Active=true`
-- `inactive`: everything else
+
+By default, the endpoint returns only `active`, `completed`, `expired`, and
+`cancelled` rows. Retained rows that are not active and have no completion,
+expiry, or cancellation timestamp are `inactive`; they are available only with
+`GET /imaging/worklist?view=all` for reconciliation. KaosEghis-PACS must not
+treat inactive rows as active orders.
 
 The UI should not infer imaging state from raw `public.mwl`, direct eGHIS
 tables, MWL internals, or DICOM C-FIND. Lower-level `GET /worklist` remains a
-Gateway/MWL reconcile endpoint.
+temporary compatibility, reconcile, and debug endpoint.
 
 Completed, expired, or cancelled entries are kept in JSON and marked
 `Active=false`; they are not physically deleted and are not returned in DICOM

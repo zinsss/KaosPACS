@@ -176,10 +176,27 @@ demographics or dataset contents.
 
 `GET /imaging/worklist` is the operator-facing imaging lifecycle endpoint for
 KaosEghis-PACS UI. It reads the current MWL JSON through Gateway, derives
-`active`, `completed`, `expired`, `cancelled`, or `inactive` state, and returns
-flat rows plus counts. KaosEghis-PACS UI should use this endpoint instead of
-reading raw `public.mwl`, eGHIS tables, or MWL internals. Lower-level
-`GET /worklist` remains available for reconcile/debug workflows.
+imaging lifecycle state, and returns flat rows plus counts. By default it
+returns only `active`, `completed`, `expired`, and `cancelled` rows.
+`inactive` rows are included only when calling
+`GET /imaging/worklist?view=all`; inactive means a retained non-actionable row
+with no completion, expiry, or source cancellation timestamp. KaosEghis-PACS UI
+must not treat inactive rows as active orders.
+
+`POST /orders/upsert` accepts UTF-8 JSON normalized by KaosEghis-PACS,
+preserves Korean text, and returns a stable response:
+
+```json
+{"status":"ok","action":"upserted","AccessionNumber":"..."}
+```
+
+`POST /orders/cancel` accepts `AccessionNumber` and records explicit
+source/business cancellation. KaosPACS does not infer cancellation from missing
+source rows.
+
+KaosEghis-PACS UI should use `/imaging/worklist` instead of reading raw
+`public.mwl`, eGHIS tables, or MWL internals. Lower-level `GET /worklist`
+remains available for temporary compatibility, reconcile, and debug workflows.
 
 `POST /admin/worklist/prune` removes old inactive completed, cancelled, or
 expired entries from the runtime MWL worklist only. It defaults to

@@ -4,27 +4,39 @@ from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from app.api import audit_event, gateway_bad_gateway, json_response, mwl_client, text
 from app.clients.mwl import MwlHttpError, MwlUnavailableError
 
 
-COUNT_STATES = ("active", "completed", "expired", "cancelled", "inactive")
+IMAGING_STATES = ("active", "completed", "expired", "cancelled")
+ALL_STATES = (*IMAGING_STATES, "inactive")
 
 
-def imaging_worklist_payload(worklist_payload: Any) -> dict[str, Any]:
+def imaging_worklist_payload(
+    worklist_payload: Any,
+    *,
+    include_inactive: bool = False,
+) -> dict[str, Any]:
     entries = worklist_payload.get("entries", []) if isinstance(worklist_payload, dict) else []
     if not isinstance(entries, list):
         entries = []
 
-    mapped_entries = [
+    all_entries = [
         _imaging_entry(entry)
         for entry in entries
         if isinstance(entry, dict)
     ]
+    mapped_entries = [
+        entry
+        for entry in all_entries
+        if include_inactive or entry["state"] != "inactive"
+    ]
     mapped_entries.sort(key=_sort_key)
 
-    counts = {state: 0 for state in COUNT_STATES}
+    count_states = ALL_STATES if include_inactive else IMAGING_STATES
+    counts = {state: 0 for state in count_states}
     for entry in mapped_entries:
         counts[entry["state"]] += 1
 
@@ -67,7 +79,10 @@ def handle_get_imaging_worklist(handler: BaseHTTPRequestHandler, path: str) -> N
         gateway_bad_gateway(handler)
         return
 
-    payload = imaging_worklist_payload(response.payload)
+    payload = imaging_worklist_payload(
+        response.payload,
+        include_inactive=_include_inactive(handler),
+    )
     audit_event(
         handler,
         event_type="imaging_worklist_get",
@@ -76,6 +91,11 @@ def handle_get_imaging_worklist(handler: BaseHTTPRequestHandler, path: str) -> N
         success=True,
     )
     json_response(handler, HTTPStatus.OK, payload)
+
+
+def _include_inactive(handler: BaseHTTPRequestHandler) -> bool:
+    query = parse_qs(urlparse(handler.path).query)
+    return any(value.lower() == "all" for value in query.get("view", []))
 
 
 def _imaging_entry(entry: dict[str, Any]) -> dict[str, Any]:

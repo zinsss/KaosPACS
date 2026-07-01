@@ -53,6 +53,7 @@ Useful endpoints:
 http://127.0.0.1:8060/health
 GET http://127.0.0.1:8060/status
 http://127.0.0.1:8060/worklist
+GET http://127.0.0.1:8060/imaging/worklist
 POST http://127.0.0.1:8060/orders/upsert
 POST http://127.0.0.1:8060/orders/cancel
 POST http://127.0.0.1:8060/admin/worklist/prune
@@ -156,6 +157,23 @@ Only `GET /health` remains unauthenticated. This is a simple shared-token
 control for a localhost or clinic LAN deployment. It is not intended as
 internet-grade security, and future authentication may evolve independently.
 
+KaosEghis-PACS should use the protected Gateway contract:
+
+```text
+POST /orders/upsert
+POST /orders/cancel
+GET  /imaging/worklist
+```
+
+`/orders/upsert` accepts UTF-8 JSON and preserves Korean text in the MWL entry.
+`/orders/cancel` records explicit source cancellation by `AccessionNumber`; it
+does not infer cancellation from missing source rows. `/imaging/worklist`
+returns the operator-facing imaging lifecycle states `active`, `completed`,
+`expired`, and `cancelled` by default. `inactive` rows are returned only with
+`GET /imaging/worklist?view=all`; inactive means a retained non-actionable row
+with no completion, expiry, or source cancellation timestamp, and KaosEghis-PACS
+must not treat it as active.
+
 `GET /status` is protected by the same bearer token when authentication is
 enabled. It is for operational visibility only and reports dependency
 reachability plus current ownership state. It must not include worklist entries,
@@ -233,6 +251,10 @@ curl -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
   http://127.0.0.1:8060/status
 curl -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
   http://127.0.0.1:8060/worklist
+curl -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
+  http://127.0.0.1:8060/imaging/worklist
+curl -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
+  'http://127.0.0.1:8060/imaging/worklist?view=all'
 curl -X POST http://127.0.0.1:8060/orders/upsert \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
