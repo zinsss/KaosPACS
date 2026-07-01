@@ -2,12 +2,15 @@ import json
 
 from pydicom import dcmread
 from pydicom.dataset import Dataset, FileMetaDataset
+from pydicom.multival import MultiValue
 from pydicom.sequence import Sequence
 from pydicom.uid import ExplicitVRLittleEndian, SecondaryCaptureImageStorage, generate_uid
+from pydicom.valuerep import PersonName
 
 from app.dicom.charset_fix import (
     UTF8_CHARSET,
     append_charset_fix_report,
+    log_charset_fix_result,
     maybe_fix_charset,
 )
 
@@ -130,6 +133,69 @@ def test_iso_ir_149_to_utf8_preserves_identity_and_pixel_data(tmp_path) -> None:
     assert reread.PatientID == "PID-STABLE"
 
 
+def test_person_name_component_groups_remain_equivalent_after_save_reread(
+    tmp_path,
+) -> None:
+    dataset = _dataset()
+    dataset.PatientName = PersonName("Hong^Gildong=홍^길동=Hong^GilDong")
+    dataset.ReferringPhysicianName = PersonName("Refer^Doctor=참조^의사")
+    dataset.PerformingPhysicianName = PersonName("Perform^Doctor=시행^의사")
+
+    result = maybe_fix_charset(dataset, enabled=True, mode="iso_ir_149_to_utf8")
+
+    assert result.fix_applied is True
+    assert isinstance(result.dataset.PatientName, PersonName)
+    assert str(result.dataset.PatientName) == "Hong^Gildong=홍^길동=Hong^GilDong"
+    assert str(result.dataset.ReferringPhysicianName) == "Refer^Doctor=참조^의사"
+    assert str(result.dataset.PerformingPhysicianName) == "Perform^Doctor=시행^의사"
+    assert "PatientName" in result.fixed_keywords
+    assert "ReferringPhysicianName" in result.fixed_keywords
+    assert "PerformingPhysicianName" in result.fixed_keywords
+
+    output_path = tmp_path / "fixed-pn.dcm"
+    result.dataset.save_as(output_path, write_like_original=False)
+    reread = dcmread(output_path)
+    assert reread.SpecificCharacterSet == UTF8_CHARSET
+    assert str(reread.PatientName) == "Hong^Gildong=홍^길동=Hong^GilDong"
+    assert str(reread.ReferringPhysicianName) == "Refer^Doctor=참조^의사"
+    assert str(reread.PerformingPhysicianName) == "Perform^Doctor=시행^의사"
+
+
+def test_multivalue_lo_text_preserves_multiplicity_after_save_reread(
+    tmp_path,
+) -> None:
+    dataset = _dataset()
+    dataset.StudyDescription = MultiValue(str, ["검사1", "검사2"])
+    dataset.SeriesDescription = MultiValue(str, ["시리즈1", "시리즈2"])
+
+    result = maybe_fix_charset(dataset, enabled=True, mode="iso_ir_149_to_utf8")
+
+    assert result.fix_applied is True
+    assert isinstance(result.dataset.StudyDescription, MultiValue)
+    assert list(result.dataset.StudyDescription) == ["검사1", "검사2"]
+    assert isinstance(result.dataset.SeriesDescription, MultiValue)
+    assert list(result.dataset.SeriesDescription) == ["시리즈1", "시리즈2"]
+
+    output_path = tmp_path / "fixed-multivalue.dcm"
+    result.dataset.save_as(output_path, write_like_original=False)
+    reread = dcmread(output_path)
+    assert reread.SpecificCharacterSet == UTF8_CHARSET
+    assert list(reread.StudyDescription) == ["검사1", "검사2"]
+    assert list(reread.SeriesDescription) == ["시리즈1", "시리즈2"]
+
+
+def test_already_decoded_korean_str_remains_unchanged_before_reserialization() -> None:
+    dataset = _dataset()
+    original_study_description = dataset.StudyDescription
+    original_series_description = dataset.SeriesDescription
+
+    result = maybe_fix_charset(dataset, enabled=True, mode="iso_ir_149_to_utf8")
+
+    assert result.fix_applied is True
+    assert result.dataset.StudyDescription == original_study_description
+    assert result.dataset.SeriesDescription == original_series_description
+
+
 def test_non_target_charsets_are_skipped_without_guessing() -> None:
     utf8_dataset = _dataset()
     utf8_dataset.SpecificCharacterSet = "ISO_IR 192"
@@ -179,3 +245,15 @@ def test_charset_fix_report_contains_keywords_only_without_values(tmp_path) -> N
     assert "환자" not in serialized
     assert "PID-STABLE" not in serialized
     assert "PRIVATE VALUE" not in serialized
+
+
+def test_charset_fix_logs_contain_no_phi_values(caplog) -> None:
+    dataset = _dataset()
+    caplog.set_level("INFO")
+
+    result = maybe_fix_charset(dataset, enabled=True, mode="iso_ir_149_to_utf8")
+    log_charset_fix_result(result)
+
+    assert "테스트" not in caplog.text
+    assert "환자" not in caplog.text
+    assert "PID-STABLE" not in caplog.text

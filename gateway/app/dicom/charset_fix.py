@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from pydicom.dataset import Dataset
+from pydicom.multival import MultiValue
+from pydicom.valuerep import PersonName
 
 
 LOGGER = logging.getLogger("kaospacs.gateway.dicom.charset_fix")
@@ -200,9 +202,20 @@ def _rewrite_supported_text(
 def _normalize_text_value(value: Any) -> Any:
     if isinstance(value, bytes):
         return value.decode("euc_kr")
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, PersonName):
+        return value
+    if isinstance(value, MultiValue):
+        return MultiValue(
+            value.type_constructor,
+            [_normalize_text_value(item) for item in value],
+        )
+    if isinstance(value, list):
         return [_normalize_text_value(item) for item in value]
-    return str(value)
+    if isinstance(value, tuple):
+        return tuple(_normalize_text_value(item) for item in value)
+    return value
 
 
 def _base_result(
