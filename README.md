@@ -34,10 +34,10 @@ Current runtime:
   under `/app/data/dicom-inbox`, forwards the dataset to Orthanc, matches the
   study to active MWL entries, and completes the matched worklist item. It
   records a read-only charset/tag inspection summary at
-  `/app/data/dicom_inspection.jsonl`. A guarded charset fixer exists but is
-  disabled by default with `GATEWAY_DICOM_CHARSET_FIX_ENABLED=false`; when
-  explicitly enabled it only supports `ISO_IR 149` to `ISO_IR 192` for approved
-  display text fields. It does not modify UIDs, pixel data, PatientID,
+  `/app/data/dicom_inspection.jsonl`. The guarded charset fixer is enabled by
+  default and only supports declared `ISO_IR 149` / `ISO 2022 IR 149` to
+  `ISO_IR 192` for approved display text fields. It does not modify UIDs,
+  pixel data, PatientID,
   AccessionNumber, Modality, private tags, or unapproved fields.
 - Gateway can protect workflow endpoints with `GATEWAY_API_TOKEN` bearer-token
   authentication. `/health` remains unauthenticated.
@@ -133,13 +133,15 @@ docker compose ps
   received DICOM objects under `/app/data/dicom-inbox` and forwards them to
   Orthanc at `orthanc:11112`. It appends non-PHI charset/tag inspection summaries to
   `/app/data/dicom_inspection.jsonl` when
-  `GATEWAY_DICOM_INSPECTION_ENABLED=true`. The optional charset fixer is off by
-  default. To test validated Korean acquisition DICOM normalization, set
-  `GATEWAY_DICOM_CHARSET_FIX_ENABLED=true` and
+  `GATEWAY_DICOM_INSPECTION_ENABLED=true`. The charset fixer is enabled by
+  default with `GATEWAY_DICOM_CHARSET_FIX_ENABLED=true` and
   `GATEWAY_DICOM_CHARSET_FIX_MODE=iso_ir_149_to_utf8`; reports are written to
-  `/app/data/dicom_charset_fix.jsonl`. When a fix applies, Gateway keeps the
+  `/app/data/dicom_charset_fix.jsonl`. It applies only to declared Korean
+  acquisition DICOM character sets. When a fix applies, Gateway keeps the
   original received file in `/app/data/dicom-inbox` and writes the normalized
-  forwarding copy under `/app/data/dicom-inbox/forwarded`. `GATEWAY_DICOM_FORWARD_MODE=direct`
+  forwarding copy under `/app/data/dicom-inbox/forwarded`. To disable, set
+  `GATEWAY_DICOM_CHARSET_FIX_ENABLED=false` and
+  `GATEWAY_DICOM_CHARSET_FIX_MODE=off`, then restart Gateway. `GATEWAY_DICOM_FORWARD_MODE=direct`
   is the default. Optional
   `GATEWAY_DICOM_FORWARD_MODE=queue` stores locally, enqueues, returns success
   after enqueue, and lets the retry worker forward later. Queue mode does not

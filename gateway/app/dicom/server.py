@@ -85,8 +85,8 @@ def handle_store(
     forward_mode: str = "direct",
     inspection_enabled: bool = True,
     inspection_report_path: Path | None = None,
-    charset_fix_enabled: bool = False,
-    charset_fix_mode: str = "off",
+    charset_fix_enabled: bool = True,
+    charset_fix_mode: str = "iso_ir_149_to_utf8",
     charset_fix_report_path: Path | None = None,
 ) -> int:
     dataset = event.dataset.copy()
@@ -549,8 +549,8 @@ class GatewayDicomServer:
         forward_mode: str = "direct",
         inspection_enabled: bool = True,
         inspection_report_path: Path | None = None,
-        charset_fix_enabled: bool = False,
-        charset_fix_mode: str = "off",
+        charset_fix_enabled: bool = True,
+        charset_fix_mode: str = "iso_ir_149_to_utf8",
         charset_fix_report_path: Path | None = None,
     ) -> None:
         self.bind = bind

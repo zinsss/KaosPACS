@@ -51,19 +51,19 @@ ORTHANC_DICOM_AET=VIEWREX
 ```
 
 Gateway writes read-only non-PHI charset/tag inspection summaries to
-`/app/data/dicom_inspection.jsonl`. The guarded charset fixer is disabled by
+`/app/data/dicom_inspection.jsonl`. The guarded charset fixer is enabled by
 default:
 
 ```text
-GATEWAY_DICOM_CHARSET_FIX_ENABLED=false
-GATEWAY_DICOM_CHARSET_FIX_MODE=off
+GATEWAY_DICOM_CHARSET_FIX_ENABLED=true
+GATEWAY_DICOM_CHARSET_FIX_MODE=iso_ir_149_to_utf8
 ```
 
-When enabled for validated samples with
-`GATEWAY_DICOM_CHARSET_FIX_MODE=iso_ir_149_to_utf8`, fix reports are written to
-`/app/data/dicom_charset_fix.jsonl`. Gateway does not apply broad charset
-guessing, private tag edits, pixel edits, UID edits, PatientID edits,
-AccessionNumber edits, Modality edits, or PHI logging.
+Fix reports are written to `/app/data/dicom_charset_fix.jsonl`. Gateway only
+fixes declared `ISO_IR 149` or `ISO 2022 IR 149` acquisition DICOM. It skips
+missing charset, unknown charset, and `ISO_IR 192`. Gateway does not apply
+broad charset guessing, private tag edits, pixel edits, UID edits, PatientID
+edits, AccessionNumber edits, Modality edits, or PHI logging.
 
 If queue rows appear unexpectedly, verify:
 
@@ -155,14 +155,17 @@ DICOM responses default to `SpecificCharacterSet=ISO_IR 192`.
 `SpecificCharacterSet=ISO_IR 149` has also been observed in
 modality-produced acquisition DICOM. The current runtime reports those samples
 with `needs_charset_review=true` in `/app/data/dicom_inspection.jsonl`. It
-rewrites acquisition DICOM only when the guarded fixer is explicitly enabled.
+rewrites acquisition DICOM only when the guarded fixer rule matches.
 
 The final charset/tag handling point is Gateway ingestion, not Orthanc or MWL.
-Gateway defaults to inspection only. It should fix Korean charset/tag issues
-only after validation with real samples and a rollback plan. To roll back:
+Gateway defaults to the validated conservative fixer. It should expand Korean
+charset/tag fixes only after validation with real samples and a rollback plan.
+To disable the current fixer:
 
 ```bash
-# set GATEWAY_DICOM_CHARSET_FIX_ENABLED=false in .env
+# set these in .env
+# GATEWAY_DICOM_CHARSET_FIX_ENABLED=false
+# GATEWAY_DICOM_CHARSET_FIX_MODE=off
 docker compose up -d gateway
 ```
 

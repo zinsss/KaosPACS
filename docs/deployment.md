@@ -98,15 +98,17 @@ GATEWAY_FORWARDING_AET=KAOSPACS_GW
 GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS=10
 GATEWAY_DICOM_INSPECTION_ENABLED=true
 GATEWAY_DICOM_INSPECTION_REPORT_PATH=/app/data/dicom_inspection.jsonl
-GATEWAY_DICOM_CHARSET_FIX_ENABLED=false
-GATEWAY_DICOM_CHARSET_FIX_MODE=off
+GATEWAY_DICOM_CHARSET_FIX_ENABLED=true
+GATEWAY_DICOM_CHARSET_FIX_MODE=iso_ir_149_to_utf8
 GATEWAY_DICOM_CHARSET_FIX_REPORT_PATH=/app/data/dicom_charset_fix.jsonl
 ```
 
 Gateway stores incoming datasets locally, writes a read-only non-PHI
 charset/tag inspection summary, forwards datasets to Orthanc, and then
-matches/completes the MWL item in direct mode. The charset fixer is disabled by
-default. When explicitly enabled with `iso_ir_149_to_utf8`, Gateway keeps the
+matches/completes the MWL item in direct mode. The charset fixer is enabled by
+default for the narrow `iso_ir_149_to_utf8` rule. It only processes declared
+`ISO_IR 149` or `ISO 2022 IR 149` acquisition DICOM. It skips missing charset,
+unknown charset, and `ISO_IR 192`. When a fix applies, Gateway keeps the
 original received file and writes a normalized forwarding copy under
 `/app/data/dicom-inbox/forwarded`. It does not perform broad charset guessing,
 private tag edits, pixel edits, UID edits, PatientID edits, AccessionNumber
@@ -131,10 +133,12 @@ Charset fix reports are JSONL records under the Gateway data mount:
 ```
 
 They contain fixed/skipped keyword names and status only, not old or new text
-values. To roll back to inspection-only behavior:
+values. To disable charset fixing:
 
 ```bash
-# set GATEWAY_DICOM_CHARSET_FIX_ENABLED=false in .env
+# set these in .env
+# GATEWAY_DICOM_CHARSET_FIX_ENABLED=false
+# GATEWAY_DICOM_CHARSET_FIX_MODE=off
 docker compose up -d gateway
 ```
 

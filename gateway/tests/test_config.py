@@ -162,6 +162,18 @@ def test_config_env_overrides() -> None:
     assert config.safe_log_dict()["gateway_api_token_configured"] is True
 
 
+def test_charset_fix_can_be_explicitly_disabled() -> None:
+    config = load_config(
+        {
+            "GATEWAY_DICOM_CHARSET_FIX_ENABLED": "false",
+            "GATEWAY_DICOM_CHARSET_FIX_MODE": "off",
+        }
+    )
+
+    assert config.gateway_dicom_charset_fix_enabled is False
+    assert config.gateway_dicom_charset_fix_mode == "off"
+
+
 def test_empty_gateway_api_token_disables_auth() -> None:
     config = load_config({"GATEWAY_API_TOKEN": ""})
 

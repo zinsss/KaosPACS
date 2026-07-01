@@ -6,8 +6,10 @@ Korean text has two separate paths in KaosPACS:
 - Modality-produced acquisition DICOM stored by Orthanc.
 
 Keep those paths separate. Worklist text can be UTF-8-safe today. Acquisition
-DICOM charset rewriting must stay guarded and opt-in until validated with real
-clinical modality samples.
+DICOM charset rewriting must stay guarded and limited to the validated Korean
+`ISO_IR 149` path. The fixer is enabled by default so Gateway normalizes known
+legacy Korean studies before Orthanc storage, and it can be explicitly disabled
+for rollback.
 
 ## Worklist Text
 
@@ -37,19 +39,22 @@ target viewers.
 
 ## Current Rule
 
-Default runtime remains inspection-only:
+The guarded fixer is enabled by default:
 
 ```text
-GATEWAY_DICOM_CHARSET_FIX_ENABLED=false
-GATEWAY_DICOM_CHARSET_FIX_MODE=off
+GATEWAY_DICOM_CHARSET_FIX_ENABLED=true
+GATEWAY_DICOM_CHARSET_FIX_MODE=iso_ir_149_to_utf8
 ```
 
-Do not enable charset fixing until real Korean modality samples have been
-validated in Orthanc Explorer, Stone Viewer, Weasis, and raw DICOM inspection.
+It remains narrow: it only processes datasets whose `SpecificCharacterSet`
+contains `ISO_IR 149` or `ISO 2022 IR 149`. It skips missing charset, unknown
+charset, and `ISO_IR 192`. It does not guess.
+
 Rollback is:
 
 ```text
 GATEWAY_DICOM_CHARSET_FIX_ENABLED=false
+GATEWAY_DICOM_CHARSET_FIX_MODE=off
 docker compose up -d gateway
 ```
 
@@ -57,7 +62,7 @@ docker compose up -d gateway
 
 Korean charset and tag inspection belongs at the Gateway ingestion point.
 Gateway records read-only inspection summaries for received DICOM objects. It
-also has a conservative opt-in fixer for one validated path:
+also has a conservative fixer for one validated path:
 
 ```text
 GATEWAY_DICOM_CHARSET_FIX_ENABLED=true
@@ -68,8 +73,8 @@ Do not put charset normalization inside MWL or KaosEghis-PACS. Do not rely on
 Orthanc as the long-term place for modality-facing charset fixes; Orthanc
 should remain the internal storage/index/viewer backend.
 
-With the fixer disabled, the Gateway C-STORE front door stores and forwards
-datasets unchanged. It inspects charset/tag shape only and appends non-PHI
+When the fixer is disabled, the Gateway C-STORE front door stores and forwards
+datasets unchanged. It still inspects charset/tag shape and appends non-PHI
 JSONL reports to:
 
 ```text
@@ -84,9 +89,9 @@ store PatientName values, PatientID values, DOB, sex, phone, address,
 diagnosis, physician names, institution names, full datasets, or pixel data.
 
 Gateway does not normalize or rewrite Korean acquisition character sets unless
-the guarded fixer is explicitly enabled.
+the declared charset matches the guarded fixer rule.
 
-## Opt-In ISO_IR 149 Fixer
+## Guarded ISO_IR 149 Fixer
 
 The only supported fixer mode is:
 
@@ -94,8 +99,8 @@ The only supported fixer mode is:
 iso_ir_149_to_utf8
 ```
 
-When enabled, Gateway processes only datasets whose `SpecificCharacterSet`
-contains `ISO_IR 149`. It writes the original received file under
+Gateway processes only datasets whose `SpecificCharacterSet`
+contains `ISO_IR 149` or `ISO 2022 IR 149`. It writes the original received file under
 `/app/data/dicom-inbox`, writes a normalized forwarding copy under
 `/app/data/dicom-inbox/forwarded`, sets the forwarding copy
 `SpecificCharacterSet` to `ISO_IR 192`, and forwards that copy to Orthanc.

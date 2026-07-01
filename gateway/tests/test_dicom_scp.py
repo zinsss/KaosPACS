@@ -231,7 +231,7 @@ def test_handle_store_charset_fix_disabled_reports_and_forwards_original(
     ]
 
 
-def test_handle_store_charset_fix_enabled_forwards_normalized_copy(tmp_path) -> None:
+def test_handle_store_default_charset_fix_forwards_normalized_copy(tmp_path) -> None:
     dataset = _minimal_dataset()
     dataset.SpecificCharacterSet = "ISO_IR 149"
     dataset.PatientName = "KOREAN^TEST"
@@ -260,8 +260,6 @@ def test_handle_store_charset_fix_enabled_forwards_normalized_copy(tmp_path) -> 
         tmp_path / "inbox",
         forwarder=forwarder,
         audit_db=audit_db,
-        charset_fix_enabled=True,
-        charset_fix_mode="iso_ir_149_to_utf8",
         charset_fix_report_path=fix_report_path,
     )
 
@@ -290,6 +288,37 @@ def test_handle_store_charset_fix_enabled_forwards_normalized_copy(tmp_path) -> 
     assert "PID-STABLE" not in json.dumps(report, ensure_ascii=False)
     assert _dicom_charset_fix_events(audit_db) == [
         ("dicom_charset_fix_checked", "ACC-TEST", 1, None),
+    ]
+
+
+def test_handle_store_charset_fix_mode_off_forwards_original(tmp_path) -> None:
+    dataset = _minimal_dataset()
+    dataset.SpecificCharacterSet = "ISO_IR 149"
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    forwarder = ReadingForwarder(ForwardResult(True, 0x0000))
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    fix_report_path = tmp_path / "dicom_charset_fix.jsonl"
+    init_audit_db(audit_db)
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        forwarder=forwarder,
+        audit_db=audit_db,
+        charset_fix_enabled=True,
+        charset_fix_mode="off",
+        charset_fix_report_path=fix_report_path,
+    )
+
+    original_path = tmp_path / "inbox" / f"{dataset.SOPInstanceUID}.dcm"
+    assert status == 0x0000
+    assert forwarder.paths == [original_path]
+    assert not (tmp_path / "inbox" / "forwarded").exists()
+    report = json.loads(fix_report_path.read_text(encoding="utf-8"))
+    assert report["fix_applied"] is False
+    assert report["reason"] == "mode_off"
+    assert _dicom_charset_fix_events(audit_db) == [
+        ("dicom_charset_fix_checked", "ACC-TEST", 1, "skipped_mode_off"),
     ]
 
 
@@ -643,7 +672,13 @@ def test_handle_store_forwarding_enabled_calls_forwarder_after_local_write(tmp_p
     assert _dicom_audit_events(audit_db) == [
         ("dicom_store_received", "ACC-TEST", 0, 1, None),
         ("dicom_charset_inspected", "ACC-TEST", None, 1, "review_required"),
-        ("dicom_charset_fix_checked", "ACC-TEST", None, 1, "skipped_disabled"),
+        (
+            "dicom_charset_fix_checked",
+            "ACC-TEST",
+            None,
+            1,
+            "skipped_not_target_charset",
+        ),
         ("dicom_forward_success", "ACC-TEST", 0, 1, None),
     ]
 
@@ -663,7 +698,13 @@ def test_handle_store_forwarding_failure_returns_failure_status(tmp_path, caplog
     assert _dicom_audit_events(audit_db) == [
         ("dicom_store_received", "ACC-TEST", 0, 1, None),
         ("dicom_charset_inspected", "ACC-TEST", None, 1, "review_required"),
-        ("dicom_charset_fix_checked", "ACC-TEST", None, 1, "skipped_disabled"),
+        (
+            "dicom_charset_fix_checked",
+            "ACC-TEST",
+            None,
+            1,
+            "skipped_not_target_charset",
+        ),
         ("dicom_forward_failed", "ACC-TEST", None, 0, "association_failed"),
     ]
     assert "SHOULD^NOTLOG" not in caplog.text

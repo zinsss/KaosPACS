@@ -30,11 +30,11 @@ and participates in production image ingestion.
 
 Gateway receives C-STORE as `VIEWREX:104`, stores files in
 `/app/data/dicom-inbox`, records a read-only charset/tag inspection report, and
-forwards datasets to Orthanc on the internal DICOM port. By default, forwarding
-is unchanged/inspection-only. If `GATEWAY_DICOM_CHARSET_FIX_ENABLED=true` and
-`GATEWAY_DICOM_CHARSET_FIX_MODE=iso_ir_149_to_utf8`, Gateway may write a
-normalized forwarding copy under `/app/data/dicom-inbox/forwarded` for datasets
-declaring `ISO_IR 149`. A persistent queue foundation can be enabled with
+forwards datasets to Orthanc on the internal DICOM port. The narrow Korean
+charset fixer is enabled by default. If a dataset declares `ISO_IR 149` or
+`ISO 2022 IR 149`, Gateway writes a normalized forwarding copy under
+`/app/data/dicom-inbox/forwarded`; otherwise it forwards the original file. A
+persistent queue foundation can be enabled with
 `GATEWAY_DICOM_QUEUE_ENABLED=true`, which records pending queue rows after
 successful local stores. A retry worker can be separately enabled with
 `GATEWAY_QUEUE_WORKER_ENABLED=true`; it forwards queued files to Orthanc and
@@ -43,7 +43,7 @@ successful local storage and direct forwarding, Gateway reads the active MWL
 worklist and attempts a deterministic match. If the match succeeds and has an
 accession number, Gateway calls `POST /worklist/complete`. Queue mode stores
 locally, enqueues, returns success after enqueue, and the worker forwards later.
-Queue mode does not match or complete worklists yet. If the opt-in charset
+Queue mode does not match or complete worklists yet. If the guarded charset
 fixer applies, queue mode enqueues the normalized forwarding copy. Gateway does
 not perform broad charset guessing, private tag edits, pixel edits, UID edits,
 PatientID edits, AccessionNumber edits, or metadata rewriting.
@@ -69,8 +69,9 @@ reports to:
 The only current fix mode is `iso_ir_149_to_utf8`. It is conservative and
 touches only approved display text fields. It never rewrites PatientID,
 AccessionNumber, Modality, UIDs, pixel data, private tags, or unknown text
-tags. Disable the fixer and restart Gateway to return to inspection-only
-behavior.
+tags. Disable the fixer with `GATEWAY_DICOM_CHARSET_FIX_ENABLED=false` and
+`GATEWAY_DICOM_CHARSET_FIX_MODE=off`, then restart Gateway, to return to
+inspection-only behavior.
 
 Gateway records minimal workflow audit events for worklist API calls in its own
 SQLite database. This audit is separate from the MWL audit DB and stores only
