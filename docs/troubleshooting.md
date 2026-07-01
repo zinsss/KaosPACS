@@ -50,8 +50,9 @@ ORTHANC_DICOM_PORT=11112
 ORTHANC_DICOM_AET=VIEWREX
 ```
 
-Gateway stores and forwards datasets unchanged. It does not apply charset
-fixes, tag normalization, pixel edits, or PHI logging.
+Gateway stores and forwards datasets unchanged. It writes read-only non-PHI
+charset/tag inspection summaries to `/app/data/dicom_inspection.jsonl`. It
+does not apply charset fixes, tag normalization, pixel edits, or PHI logging.
 
 If queue rows appear unexpectedly, verify:
 
@@ -141,12 +142,13 @@ Gateway and MWL preserve Korean order/worklist text as UTF-8 JSON, and MWL
 DICOM responses default to `SpecificCharacterSet=ISO_IR 192`.
 
 `SpecificCharacterSet=ISO_IR 149` has also been observed in
-modality-produced acquisition DICOM. The current runtime does not rewrite those
-stored acquisition DICOM character sets.
+modality-produced acquisition DICOM. The current runtime reports those samples
+with `needs_charset_review=true` in `/app/data/dicom_inspection.jsonl`, but it
+does not rewrite stored acquisition DICOM character sets.
 
 The final charset/tag handling point is Gateway ingestion, not Orthanc or MWL.
-Gateway should only inspect or fix Korean charset/tag issues after validation
-with real samples and a rollback plan.
+Gateway currently inspects only. It should fix Korean charset/tag issues only
+after validation with real samples and a rollback plan.
 
 Compare behavior in:
 

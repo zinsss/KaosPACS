@@ -668,6 +668,10 @@ def test_status_with_token_returns_operational_metadata(tmp_path) -> None:
                 "port": 11112,
                 "aet": "VIEWREX",
             },
+            "inspection": {
+                "enabled": True,
+                "report_path": "/app/data/dicom_inspection.jsonl",
+            },
             "mode": "production-front-door",
         }
         assert body["ownership"]["storage_scp"] == {

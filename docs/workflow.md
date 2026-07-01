@@ -29,8 +29,9 @@ future KaosEghis-PACS integration. It also binds the production DICOM identity
 and participates in production image ingestion.
 
 Gateway receives C-STORE as `VIEWREX:104`, stores files in
-`/app/data/dicom-inbox`, and forwards unchanged datasets to Orthanc on the
-internal DICOM port. A persistent queue foundation can be enabled with
+`/app/data/dicom-inbox`, records a read-only charset/tag inspection report, and
+forwards unchanged datasets to Orthanc on the internal DICOM port. A persistent
+queue foundation can be enabled with
 `GATEWAY_DICOM_QUEUE_ENABLED=true`, which records pending queue rows after
 successful local stores. A retry worker can be separately enabled with
 `GATEWAY_QUEUE_WORKER_ENABLED=true`; it forwards queued files to Orthanc and
@@ -41,6 +42,17 @@ accession number, Gateway calls `POST /worklist/complete`. Queue mode stores
 locally, enqueues, returns success after enqueue, and the worker forwards later.
 Queue mode does not match or complete worklists yet. Gateway does not perform
 charset fixes, tag edits, pixel edits, or metadata rewriting.
+
+Gateway appends non-PHI DICOM inspection summaries to:
+
+```text
+/app/data/dicom_inspection.jsonl
+```
+
+The report records DICOM identifiers, declared character set, transfer syntax,
+text tag presence, text VR counts, and review reasons. It does not record
+PatientName values, PatientID values, DOB, sex, diagnosis, physician names,
+institution names, full datasets, or pixel data.
 
 Gateway records minimal workflow audit events for worklist API calls in its own
 SQLite database. This audit is separate from the MWL audit DB and stores only
@@ -207,6 +219,7 @@ Current default direct-mode Gateway DICOM flow:
 ```text
 Gateway C-STORE VIEWREX:104
   -> store locally in /app/data/dicom-inbox
+  -> inspect charset/tag presence without modifying the dataset
   -> optionally enqueue pending forwarding row when queue is enabled
   -> forward unchanged dataset to Orthanc
   -> GET active MWL worklist
@@ -223,6 +236,7 @@ Optional queue-mode Gateway DICOM flow:
 ```text
 Gateway C-STORE VIEWREX:104
   -> store locally in /app/data/dicom-inbox
+  -> inspect charset/tag presence without modifying the dataset
   -> enqueue pending forwarding row
   -> C-STORE returns success after enqueue
   -> retry worker forwards to Orthanc

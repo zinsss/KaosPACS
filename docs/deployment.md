@@ -96,11 +96,25 @@ ORTHANC_DICOM_PORT=11112
 ORTHANC_DICOM_AET=VIEWREX
 GATEWAY_FORWARDING_AET=KAOSPACS_GW
 GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS=10
+GATEWAY_DICOM_INSPECTION_ENABLED=true
+GATEWAY_DICOM_INSPECTION_REPORT_PATH=/app/data/dicom_inspection.jsonl
 ```
 
-Gateway stores incoming datasets locally, forwards them unchanged to Orthanc,
-and then matches/completes the MWL item in direct mode. It does not perform
-charset fixes, tag normalization, pixel edits, or metadata rewriting.
+Gateway stores incoming datasets locally, writes a read-only non-PHI
+charset/tag inspection summary, forwards datasets unchanged to Orthanc, and
+then matches/completes the MWL item in direct mode. It does not perform charset
+fixes, tag normalization, pixel edits, or metadata rewriting.
+
+Inspection reports are JSONL records under the Gateway data mount:
+
+```text
+/app/data/dicom_inspection.jsonl
+/srv/docker/kaospacs/gateway/dicom_inspection.jsonl
+```
+
+They include DICOM identifiers, declared character set, transfer syntax, text
+tag presence, text VR counts, and review reasons. They must not include patient
+names, patient IDs, DOB, sex, diagnosis, full datasets, or pixel data.
 
 Orthanc internal DICOM settings:
 

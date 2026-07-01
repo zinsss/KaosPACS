@@ -9,6 +9,8 @@ from app.config import (
     DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED,
     DEFAULT_GATEWAY_DICOM_FORWARD_MODE,
     DEFAULT_GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS,
+    DEFAULT_GATEWAY_DICOM_INSPECTION_ENABLED,
+    DEFAULT_GATEWAY_DICOM_INSPECTION_REPORT_PATH,
     DEFAULT_GATEWAY_DICOM_QUEUE_ENABLED,
     DEFAULT_GATEWAY_DICOM_PORT,
     DEFAULT_GATEWAY_DICOM_STORAGE_DIR,
@@ -64,6 +66,14 @@ def test_config_defaults() -> None:
         config.gateway_dicom_forward_timeout_seconds
         == DEFAULT_GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS
     )
+    assert (
+        config.gateway_dicom_inspection_enabled
+        == DEFAULT_GATEWAY_DICOM_INSPECTION_ENABLED
+    )
+    assert (
+        config.gateway_dicom_inspection_report_path
+        == DEFAULT_GATEWAY_DICOM_INSPECTION_REPORT_PATH
+    )
     assert "gateway_api_token" not in config.safe_log_dict()
     assert config.safe_log_dict()["gateway_api_token_configured"] is False
 
@@ -97,6 +107,8 @@ def test_config_env_overrides() -> None:
             "ORTHANC_DICOM_AET": "ORTHANC_TEST",
             "GATEWAY_FORWARDING_AET": "GW_FORWARD",
             "GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS": "12.5",
+            "GATEWAY_DICOM_INSPECTION_ENABLED": "false",
+            "GATEWAY_DICOM_INSPECTION_REPORT_PATH": "/tmp/inspection.jsonl",
         }
     )
 
@@ -126,6 +138,8 @@ def test_config_env_overrides() -> None:
     assert config.orthanc_dicom_aet == "ORTHANC_TEST"
     assert config.gateway_forwarding_aet == "GW_FORWARD"
     assert config.gateway_dicom_forward_timeout_seconds == 12.5
+    assert config.gateway_dicom_inspection_enabled is False
+    assert str(config.gateway_dicom_inspection_report_path) == "/tmp/inspection.jsonl"
     assert "secret-token" not in str(config.safe_log_dict())
     assert config.safe_log_dict()["gateway_api_token_configured"] is True
 

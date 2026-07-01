@@ -59,6 +59,10 @@ def status_payload(config: GatewayConfig) -> dict[str, Any]:
                 "port": config.orthanc_dicom_port,
                 "aet": config.orthanc_dicom_aet,
             },
+            "inspection": {
+                "enabled": config.gateway_dicom_inspection_enabled,
+                "report_path": str(config.gateway_dicom_inspection_report_path),
+            },
             "mode": "production-front-door",
         },
         "ownership": {

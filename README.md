@@ -9,7 +9,7 @@ worklist SCP. Orthanc uses PostgreSQL for metadata/index storage while DICOM
 binaries stay on host file storage.
 
 KaosPACS remains EMR-agnostic. eGHIS integration, polling, routing, web launch,
-Weasis launch coordination, charset evaluation, and ViewRex database migration
+Weasis launch coordination, charset fixing, and ViewRex database migration
 remain separate future work.
 
 ## Architecture Stage
@@ -33,8 +33,9 @@ Current runtime:
 - Gateway receives production C-STORE as `VIEWREX:104`, stores a local copy
   under `/app/data/dicom-inbox`, forwards the unchanged dataset to Orthanc,
   matches the study to active MWL entries, and completes the matched worklist
-  item. It does not perform charset fixes, tag normalization, pixel edits, or
-  metadata rewriting.
+  item. It records a read-only charset/tag inspection summary at
+  `/app/data/dicom_inspection.jsonl`. It does not perform charset fixes, tag
+  normalization, pixel edits, or metadata rewriting.
 - Gateway can protect workflow endpoints with `GATEWAY_API_TOKEN` bearer-token
   authentication. `/health` remains unauthenticated.
 - Gateway writes a minimal workflow audit DB at
@@ -128,7 +129,10 @@ docker compose ps
 - Gateway DICOM front door: enabled by default as `VIEWREX:104`. It stores
   received DICOM objects under `/app/data/dicom-inbox`, forwards them unchanged
   to Orthanc at `orthanc:11112`, and does not perform charset fixes or tag
-  edits. `GATEWAY_DICOM_FORWARD_MODE=direct` is the default. Optional
+  edits. It appends non-PHI charset/tag inspection summaries to
+  `/app/data/dicom_inspection.jsonl` when
+  `GATEWAY_DICOM_INSPECTION_ENABLED=true`. `GATEWAY_DICOM_FORWARD_MODE=direct`
+  is the default. Optional
   `GATEWAY_DICOM_FORWARD_MODE=queue` stores locally, enqueues, returns success
   after enqueue, and lets the retry worker forward later. Queue mode does not
   match or complete MWL worklists yet. Queue enqueueing is idempotent by
@@ -160,10 +164,10 @@ host loopback only and must not be exposed on the LAN.
 `GATEWAY_API_TOKEN` is set. It reports dependency reachability and ownership
 state only. It must not expose worklist entries, patient demographics, chart
 numbers, accession numbers, diagnosis, EMR notes, tokens, or request payloads.
-It also reports Gateway DICOM ownership, forwarding target, and queue state.
-Gateway DICOM queue status is operational only and reports counts by queue
-state plus retry worker enabled/running state; it does not expose patient
-demographics or dataset contents.
+It also reports Gateway DICOM ownership, forwarding target, inspection report
+path, and queue state. Gateway DICOM queue status is operational only and
+reports counts by queue state plus retry worker enabled/running state; it does
+not expose patient demographics or dataset contents.
 
 `GET /imaging/worklist` is the operator-facing imaging lifecycle endpoint for
 KaosEghis-PACS UI. It reads the current MWL JSON through Gateway, derives

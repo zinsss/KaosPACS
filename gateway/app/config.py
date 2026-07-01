@@ -32,6 +32,10 @@ DEFAULT_ORTHANC_DICOM_PORT = 11112
 DEFAULT_ORTHANC_DICOM_AET = "VIEWREX"
 DEFAULT_GATEWAY_FORWARDING_AET = "KAOSPACS_GW"
 DEFAULT_GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS = 10.0
+DEFAULT_GATEWAY_DICOM_INSPECTION_ENABLED = True
+DEFAULT_GATEWAY_DICOM_INSPECTION_REPORT_PATH = Path(
+    "/app/data/dicom_inspection.jsonl"
+)
 
 
 @dataclass(frozen=True)
@@ -66,6 +70,12 @@ class GatewayConfig:
     gateway_forwarding_aet: str = DEFAULT_GATEWAY_FORWARDING_AET
     gateway_dicom_forward_timeout_seconds: float = (
         DEFAULT_GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS
+    )
+    gateway_dicom_inspection_enabled: bool = (
+        DEFAULT_GATEWAY_DICOM_INSPECTION_ENABLED
+    )
+    gateway_dicom_inspection_report_path: Path = (
+        DEFAULT_GATEWAY_DICOM_INSPECTION_REPORT_PATH
     )
 
     def safe_log_dict(self) -> dict[str, object]:
@@ -193,6 +203,16 @@ def load_config(env: Mapping[str, str] | None = None) -> GatewayConfig:
         gateway_dicom_forward_timeout_seconds=_float_from_env(
             source.get("GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS"),
             DEFAULT_GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS,
+        ),
+        gateway_dicom_inspection_enabled=_bool_from_env(
+            source.get("GATEWAY_DICOM_INSPECTION_ENABLED"),
+            DEFAULT_GATEWAY_DICOM_INSPECTION_ENABLED,
+        ),
+        gateway_dicom_inspection_report_path=Path(
+            source.get(
+                "GATEWAY_DICOM_INSPECTION_REPORT_PATH",
+                str(DEFAULT_GATEWAY_DICOM_INSPECTION_REPORT_PATH),
+            )
         ),
     )
     return _validate_config(config)
