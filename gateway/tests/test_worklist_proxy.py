@@ -434,7 +434,6 @@ def test_imaging_worklist_maps_states_counts_and_calls_only_mwl_worklist(tmp_pat
             "completed": 1,
             "expired": 1,
             "cancelled": 1,
-            "inactive": 1,
         }
         assert [entry["AccessionNumber"] for entry in body["entries"]] == [
             "ACTIVE-1",
@@ -442,7 +441,6 @@ def test_imaging_worklist_maps_states_counts_and_calls_only_mwl_worklist(tmp_pat
             "CANCELLED-1",
             "EXPIRED-1",
             "COMPLETE-1",
-            "INACTIVE-1",
         ]
         entries = {entry["AccessionNumber"]: entry for entry in body["entries"]}
         assert entries["ACTIVE-1"] == {
@@ -469,12 +467,50 @@ def test_imaging_worklist_maps_states_counts_and_calls_only_mwl_worklist(tmp_pat
         assert entries["EXPIRED-1"]["ExpireReason"] == "expired_without_imaging"
         assert entries["CANCELLED-1"]["state"] == "cancelled"
         assert entries["CANCELLED-1"]["CancelReason"] == "cancelled_in_source"
-        assert entries["INACTIVE-1"]["state"] == "inactive"
+        assert "INACTIVE-1" not in entries
         assert RecordingMwlHandler.calls == [
             {"method": "GET", "path": "/worklist", "payload": None}
         ]
         assert audit_rows(audit_db) == [
             ("imaging_worklist_get", "/imaging/worklist", None, 200, 1, None)
+        ]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_imaging_worklist_view_all_includes_inactive_without_marking_active(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl(imaging_worklist_payload())
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_api_token="secret-token",
+    )
+
+    try:
+        status, body = request_json(
+            "GET",
+            f"{gateway_url}/imaging/worklist?view=all",
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        assert status == 200
+        assert body["counts"] == {
+            "active": 2,
+            "completed": 1,
+            "expired": 1,
+            "cancelled": 1,
+            "inactive": 1,
+        }
+        entries = {entry["AccessionNumber"]: entry for entry in body["entries"]}
+        assert entries["INACTIVE-1"]["state"] == "inactive"
+        assert entries["INACTIVE-1"]["CompletedAt"] is None
+        assert entries["INACTIVE-1"]["ExpiredAt"] is None
+        assert entries["INACTIVE-1"]["CancelledAt"] is None
+        assert RecordingMwlHandler.calls == [
+            {"method": "GET", "path": "/worklist", "payload": None}
         ]
     finally:
         stop_server(gateway_server, gateway_thread)

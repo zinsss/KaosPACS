@@ -46,13 +46,27 @@ and the cutover is planned. `VIEWREX_WL:105` remains owned by the MWL service
 in both the current and final architectures; Gateway does not proxy the DICOM
 MWL SCP.
 
-Gateway is present as a localhost-only workflow HTTP service in front of MWL.
+Gateway is present as a workflow HTTP service in front of MWL. Gateway HTTP
+host publishing is controlled by:
+
+```text
+GATEWAY_HTTP_BIND
+GATEWAY_HTTP_PORT
+```
+
+For same-host deployments, `GATEWAY_HTTP_BIND` may be `127.0.0.1`. For
+cross-machine KaosEghis-PACS integration, set `GATEWAY_HTTP_BIND=0.0.0.0`, keep
+`GATEWAY_API_TOKEN` configured, and restrict access to trusted clinic hosts
+with the firewall. The MWL HTTP API remains published on host loopback only at
+`127.0.0.1:8055`; do not expose MWL API on the LAN.
+
 Useful endpoints:
 
 ```text
 http://127.0.0.1:8060/health
 GET http://127.0.0.1:8060/status
 http://127.0.0.1:8060/worklist
+GET http://127.0.0.1:8060/imaging/worklist
 POST http://127.0.0.1:8060/orders/upsert
 POST http://127.0.0.1:8060/orders/cancel
 POST http://127.0.0.1:8060/admin/worklist/prune
@@ -153,8 +167,25 @@ Authorization: Bearer <token>
 ```
 
 Only `GET /health` remains unauthenticated. This is a simple shared-token
-control for a localhost or clinic LAN deployment. It is not intended as
+control for a clinic LAN or localhost deployment. It is not intended as
 internet-grade security, and future authentication may evolve independently.
+
+KaosEghis-PACS should use the protected Gateway contract:
+
+```text
+POST /orders/upsert
+POST /orders/cancel
+GET  /imaging/worklist
+```
+
+`/orders/upsert` accepts UTF-8 JSON and preserves Korean text in the MWL entry.
+`/orders/cancel` records explicit source cancellation by `AccessionNumber`; it
+does not infer cancellation from missing source rows. `/imaging/worklist`
+returns the operator-facing imaging lifecycle states `active`, `completed`,
+`expired`, and `cancelled` by default. `inactive` rows are returned only with
+`GET /imaging/worklist?view=all`; inactive means a retained non-actionable row
+with no completion, expiry, or source cancellation timestamp, and KaosEghis-PACS
+must not treat it as active.
 
 `GET /status` is protected by the same bearer token when authentication is
 enabled. It is for operational visibility only and reports dependency
@@ -233,6 +264,10 @@ curl -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
   http://127.0.0.1:8060/status
 curl -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
   http://127.0.0.1:8060/worklist
+curl -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
+  http://127.0.0.1:8060/imaging/worklist
+curl -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
+  'http://127.0.0.1:8060/imaging/worklist?view=all'
 curl -X POST http://127.0.0.1:8060/orders/upsert \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $GATEWAY_API_TOKEN" \

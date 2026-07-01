@@ -31,9 +31,11 @@ Orthanc + MWL runtime stable. It contains:
 - Minimal MWL SQLite audit database at `/app/data/mwl_audit.sqlite3`.
 - KaosPACS-owned MWL expiry for active entries that pass their imaging window
   without DICOM completion.
-- Gateway localhost-only workflow API on `127.0.0.1:8060`, accepting
-  normalized order events and proxying validated worklist requests to the
-  internal MWL API.
+- Gateway workflow API accepting normalized order events and proxying validated
+  worklist requests to the internal MWL API. Gateway HTTP host publishing is
+  deployment-configurable. For same-host deployments it may bind `127.0.0.1`;
+  for cross-machine KaosEghis-PACS integration it should bind `0.0.0.0` with
+  bearer-token auth and firewall restriction.
 - Optional Gateway shared bearer-token authentication through
   `GATEWAY_API_TOKEN` for workflow endpoints. `GET /health` stays public.
 - Gateway workflow audit SQLite DB at `/app/data/gateway_audit.sqlite3`,
@@ -149,14 +151,19 @@ GET /imaging/worklist
 
 KaosEghis-PACS UI should read this Gateway endpoint for imaging state. It
 returns a flattened view with derived `active`, `completed`, `expired`,
-`cancelled`, or `inactive` states and counts. It does not poll eGHIS or
-`public.mwl`; it reads the current KaosPACS MWL HTTP `/worklist` through the
-Gateway/MWL boundary.
+or `cancelled` states and counts by default. `inactive` rows are available only
+through `GET /imaging/worklist?view=all`; inactive means a retained
+non-actionable row with no completion, expiry, or source cancellation timestamp,
+and KaosEghis-PACS must not treat it as active. The endpoint does not poll
+eGHIS or `public.mwl`; it reads the current KaosPACS MWL HTTP `/worklist`
+through the Gateway/MWL boundary.
 
 KaosEghis-PACS authenticates to Gateway with `Authorization: Bearer <token>`
-when `GATEWAY_API_TOKEN` is configured. This shared token is a simple
-localhost/clinic LAN control, not internet-grade security. Leaving the token
-unset disables Gateway authentication for development only.
+when `GATEWAY_API_TOKEN` is configured. This shared token is a simple clinic
+LAN or localhost control, not internet-grade security. Leaving the token unset
+disables Gateway authentication for development only. The MWL HTTP API remains
+host-loopback published only; cross-machine callers must use Gateway, not MWL
+directly.
 
 ## Boundaries
 
