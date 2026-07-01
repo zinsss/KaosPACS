@@ -5,10 +5,8 @@
 Port `104` is a privileged low port. Depending on the host, binding it may
 require rootful Docker, host networking, or extra capabilities.
 
-In the current transitional stack, Orthanc binds `VIEWREX:104`. In the final
-Gateway-centered stack, Gateway will bind `VIEWREX:104` and Orthanc will be an
-internal backend. Do not change the compose port owner until Gateway is
-implemented and a cutover is planned.
+Gateway binds `VIEWREX:104`. Orthanc is an internal backend on the Docker
+network and should not publish a host DICOM port for direct modality traffic.
 
 MWL remains separate. Gateway does not own `VIEWREX_WL:105`; the MWL service
 continues to answer legacy modality C-FIND requests directly.
@@ -22,39 +20,38 @@ docker compose logs orthanc
 
 Also check whether another DICOM service is already bound to port `104`.
 
-## Gateway DICOM Skeleton Unexpectedly Listening
+## Gateway DICOM Front Door
 
-Gateway's C-STORE skeleton is disabled by default and must not own production
-storage traffic. Its test defaults are:
+Gateway's C-STORE front door owns production storage traffic:
 
 ```text
-AET:  KAOSPACS_GW_TEST
-Bind: 127.0.0.1
-Port: 11104
+AET:  VIEWREX
+Bind: 0.0.0.0
+Port: 104
 ```
 
 Check:
 
 ```bash
 docker compose logs gateway
-sudo ss -ltnp | grep -E ':(104|11104)\b' || true
+sudo ss -ltnp | grep -E ':(104|11112)\b' || true
 ```
 
-If `11104` is listening unexpectedly, verify `GATEWAY_DICOM_ENABLED=false` in
-the runtime environment and restart only the Gateway service. Do not change
-Orthanc ownership of `VIEWREX:104` during this skeleton phase.
+If port `104` is not owned by Gateway, check `GATEWAY_DICOM_ENABLED=true`,
+`GATEWAY_DICOM_AET=VIEWREX`, `GATEWAY_DICOM_PORT=104`, and
+`GATEWAY_DICOM_BIND=0.0.0.0`, then restart Gateway.
 
-If test-mode forwarding unexpectedly sends studies to Orthanc, verify:
+If forwarding to Orthanc fails, verify:
 
 ```text
-GATEWAY_DICOM_FORWARD_ENABLED=false
+GATEWAY_DICOM_FORWARD_ENABLED=true
+ORTHANC_DICOM_HOST=orthanc
+ORTHANC_DICOM_PORT=11112
+ORTHANC_DICOM_AET=VIEWREX
 ```
 
-Forwarding requires both `GATEWAY_DICOM_ENABLED=true` and
-`GATEWAY_DICOM_FORWARD_ENABLED=true`. It is local test scaffolding only; it
-does not imply Gateway owns `VIEWREX:104`. Matched test-mode DICOM receives can
-call MWL completion after successful storage and optional forwarding, but they
-do not apply charset fixes.
+Gateway stores and forwards datasets unchanged. It does not apply charset
+fixes, tag normalization, pixel edits, or PHI logging.
 
 If queue rows appear unexpectedly, verify:
 
@@ -77,7 +74,7 @@ the worker can forward queued files to Orthanc. Direct mode remains the default:
 GATEWAY_DICOM_FORWARD_MODE=direct
 ```
 
-Queue mode is test-only and requires both queueing and the worker:
+Queue mode requires both queueing and the worker:
 
 ```text
 GATEWAY_DICOM_FORWARD_MODE=queue
@@ -85,8 +82,7 @@ GATEWAY_DICOM_QUEUE_ENABLED=true
 GATEWAY_QUEUE_WORKER_ENABLED=true
 ```
 
-Queue mode does not replace production DICOM ingress, and it does not call MWL
-completion yet.
+Queue mode does not call MWL completion yet.
 
 Repeated C-STORE sends with the same `SOPInstanceUID` should not create
 duplicate queue rows. The queue uses a partial unique index on `SOPInstanceUID`
@@ -136,10 +132,8 @@ Port: 104
 IP:   192.168.0.200
 ```
 
-If the modality uses a different called AET, the current transitional receiver
-may reject the association or the workflow may not match the legacy
-configuration. Today that receiver is Orthanc. In the final architecture it
-will be Gateway.
+If the modality uses a different called AET, Gateway rejects the association or
+the workflow will not match the legacy configuration.
 
 ## Korean Text Display Issue
 
@@ -241,8 +235,8 @@ The `orthanc_http` check uses Gateway's internal Orthanc HTTP client against
 `ORTHANC_URL`. It checks reachability only and does not expose studies, patient
 data, DICOM instances, or Orthanc response bodies through `/status`.
 
-The `gateway_dicom` block reports only whether the disabled C-STORE skeleton is
-enabled and its configured test bind/AET/port/storage directory. It must not
+The `gateway_dicom` block reports the production C-STORE front-door
+configuration, forwarding target, queue counts, and worker state. It must not
 include patient data, accession numbers, or stored DICOM content.
 
 ## Runtime Worklist Accumulates Old Entries
@@ -358,14 +352,14 @@ ID, phone, address, diagnosis, or EMR notes.
 
 ## Worklist Entry Not Completing
 
-In the current transitional stage, worklist completion is an explicit API call.
-The MWL service does not infer completion from Orthanc studies.
+Worklist completion is an explicit API call. The MWL service does not infer
+completion from Orthanc studies.
 
-Gateway test-mode completion currently runs only in direct mode after local
-store, optional direct forwarding, and MWL matching. Queue-mode worker
-forwarding does not call completion yet.
+Gateway completion currently runs in direct mode after local store, direct
+forwarding, and MWL matching. Queue-mode worker forwarding does not call
+completion yet.
 
-In the final Gateway-centered stage, Gateway is responsible for calling:
+Gateway is responsible for calling:
 
 ```text
 POST /worklist/complete

@@ -1,6 +1,7 @@
 import logging
 import socket
 import sqlite3
+import json
 from pathlib import Path
 
 from pydicom.dataset import Dataset, FileMetaDataset
@@ -135,6 +136,21 @@ def test_handle_store_forwarding_disabled_stores_locally_only(tmp_path) -> None:
 
     assert status == 0x0000
     assert (tmp_path / f"{dataset.SOPInstanceUID}.dcm").exists()
+
+
+def test_handle_store_does_not_modify_incoming_dataset_tags(tmp_path) -> None:
+    dataset = _minimal_dataset()
+    dataset.SpecificCharacterSet = "ISO_IR 149"
+    before = json.loads(dataset.to_json())
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+
+    status = handle_store(event, tmp_path)
+
+    assert status == 0x0000
+    assert json.loads(dataset.to_json()) == before
+    assert dataset.SpecificCharacterSet == "ISO_IR 149"
+    assert dataset.PatientName == "SHOULD^NOTLOG"
+    assert dataset.PatientID == "SECRETID"
 
 
 def test_handle_store_queue_disabled_does_not_enqueue(tmp_path) -> None:
@@ -632,6 +648,47 @@ def test_enabled_loopback_c_store_writes_file_without_phi_logs(tmp_path, caplog)
         assert "PatientID" not in caplog.text
     finally:
         server.stop()
+
+
+def test_called_ae_must_match_gateway_aet(tmp_path) -> None:
+    port = _free_loopback_port()
+    server = GatewayDicomServer(
+        bind="127.0.0.1",
+        port=port,
+        aet="VIEWREX",
+        storage_dir=tmp_path,
+    ).start()
+    ae = AE(ae_title="KAOSPACS_TEST")
+    ae.add_requested_context(SecondaryCaptureImageStorage, ExplicitVRLittleEndian)
+
+    try:
+        association = ae.associate("127.0.0.1", port, ae_title="WRONG_AET")
+
+        assert not association.is_established
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        server.stop()
+
+
+def test_start_dicom_listener_uses_production_gateway_identity(tmp_path) -> None:
+    port = _free_loopback_port()
+    config = GatewayConfig(
+        gateway_dicom_enabled=True,
+        gateway_dicom_bind="127.0.0.1",
+        gateway_dicom_port=port,
+        gateway_dicom_storage_dir=tmp_path,
+    )
+
+    server = start_dicom_listener(config)
+
+    try:
+        assert server is not None
+        assert server.aet == "VIEWREX"
+        assert server.port == port
+        assert server.bind == "127.0.0.1"
+    finally:
+        if server is not None:
+            server.stop()
 
 
 def test_forwarder_success_with_local_test_scp(tmp_path, caplog) -> None:

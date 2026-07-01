@@ -1,1 +1,1 @@
-"""Gateway DICOM skeleton modules."""
+"""Gateway DICOM front-door modules."""

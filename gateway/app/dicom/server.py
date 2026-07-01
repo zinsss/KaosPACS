@@ -72,7 +72,7 @@ def handle_store(
     queue_enabled: bool = False,
     forward_mode: str = "direct",
 ) -> int:
-    dataset = event.dataset
+    dataset = event.dataset.copy()
     dataset.file_meta = event.file_meta
 
     try:
@@ -95,12 +95,13 @@ def handle_store(
 
     LOGGER.info(
         "C-STORE stored calling_ae=%s called_ae=%s remote_ip=%s sop_instance_uid=%s "
-        "study_instance_uid=%s accession_number=%s modality=%s",
+        "study_instance_uid=%s series_instance_uid=%s accession_number=%s modality=%s",
         _calling_ae(event),
         _called_ae(event),
         _remote_ip(event),
         _text(getattr(dataset, "SOPInstanceUID", "")),
         _text(getattr(dataset, "StudyInstanceUID", "")),
+        _text(getattr(dataset, "SeriesInstanceUID", "")),
         _text(getattr(dataset, "AccessionNumber", "")),
         _text(getattr(dataset, "Modality", "")),
     )
@@ -380,6 +381,7 @@ class GatewayDicomServer:
 
     def start(self) -> "GatewayDicomServer":
         ae = AE(ae_title=self.aet)
+        ae.require_called_aet = True
         for context in AllStoragePresentationContexts:
             ae.add_supported_context(context.abstract_syntax, TRANSFER_SYNTAXES)
         self._server = ae.start_server(
@@ -388,7 +390,7 @@ class GatewayDicomServer:
             evt_handlers=[(evt.EVT_C_STORE, self._handle_store)],
         )
         LOGGER.info(
-            "Gateway DICOM C-STORE skeleton listening bind=%s port=%s aet=%s storage_dir=%s "
+            "Gateway DICOM C-STORE listening bind=%s port=%s aet=%s storage_dir=%s "
             "forward_enabled=%s queue_enabled=%s forward_mode=%s",
             self.bind,
             self.port,
@@ -421,7 +423,7 @@ class GatewayDicomServer:
 def start_dicom_listener(config: GatewayConfig) -> GatewayDicomServer | None:
     if not config.gateway_dicom_enabled:
         LOGGER.info(
-            "Gateway DICOM C-STORE skeleton disabled bind=%s port=%s aet=%s",
+            "Gateway DICOM C-STORE disabled bind=%s port=%s aet=%s",
             config.gateway_dicom_bind,
             config.gateway_dicom_port,
             config.gateway_dicom_aet,

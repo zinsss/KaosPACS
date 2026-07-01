@@ -38,21 +38,21 @@ target viewers.
 ## Current Rule
 
 Do not rewrite, normalize, or mass-fix acquisition DICOM character sets during
-the current Orthanc/PostgreSQL runtime.
+the current Gateway/Orthanc runtime.
 
-## Final Handling Point
+## Handling Point
 
-In the final Gateway-centered architecture, Korean charset and tag inspection
-belongs at the Gateway ingestion point. Gateway may fix charset/tag issues only
-after safe validation with real samples, viewer checks, and a rollback plan.
+Korean charset and tag inspection belongs at the Gateway ingestion point, but
+this is intentionally not implemented yet. Gateway may fix charset/tag issues
+only after safe validation with real samples, viewer checks, and a rollback
+plan.
 
 Do not put charset normalization inside MWL or KaosEghis-PACS. Do not rely on
 Orthanc as the long-term place for modality-facing charset fixes; Orthanc
 should remain the internal storage/index/viewer backend.
 
-The current Gateway C-STORE skeleton is disabled test scaffolding only. It
-stores explicitly tested datasets when enabled but does not inspect, normalize,
-or rewrite Korean acquisition character sets.
+The current Gateway C-STORE front door stores and forwards datasets but does
+not inspect, normalize, or rewrite Korean acquisition character sets.
 
 Future charset work should document:
 
