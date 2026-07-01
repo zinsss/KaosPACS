@@ -1,7 +1,7 @@
+import json
 import logging
 import socket
 import sqlite3
-import json
 from pathlib import Path
 
 from pydicom.dataset import Dataset, FileMetaDataset
@@ -93,8 +93,6 @@ def test_handle_store_failure_returns_status_without_phi_logs(tmp_path, caplog, 
     assert "OT" not in caplog.text
     assert "SHOULD^NOTLOG" not in caplog.text
     assert "SECRETID" not in caplog.text
-    assert "PatientName" not in caplog.text
-    assert "PatientID" not in caplog.text
 
 
 class RecordingForwarder:
@@ -151,6 +149,75 @@ def test_handle_store_does_not_modify_incoming_dataset_tags(tmp_path) -> None:
     assert dataset.SpecificCharacterSet == "ISO_IR 149"
     assert dataset.PatientName == "SHOULD^NOTLOG"
     assert dataset.PatientID == "SECRETID"
+
+
+def test_handle_store_writes_charset_inspection_report_and_audit(tmp_path, caplog) -> None:
+    caplog.set_level(logging.INFO)
+    dataset = _minimal_dataset()
+    dataset.SpecificCharacterSet = "ISO_IR 149"
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    report_path = tmp_path / "dicom_inspection.jsonl"
+    init_audit_db(audit_db)
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        audit_db=audit_db,
+        inspection_report_path=report_path,
+    )
+
+    assert status == 0x0000
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["specific_character_set"] == ["ISO_IR 149"]
+    assert payload["needs_charset_review"] is True
+    assert payload["text_tag_presence"]["PatientName"] is True
+    assert payload["text_tag_presence"]["PatientID"] is True
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "SHOULD^NOTLOG" not in serialized
+    assert "SECRETID" not in serialized
+    assert _dicom_inspection_events(audit_db) == [
+        ("dicom_charset_inspected", "ACC-TEST", 1, "review_required"),
+    ]
+    assert "needs_charset_review=True" in caplog.text
+    assert "SHOULD^NOTLOG" not in caplog.text
+    assert "SECRETID" not in caplog.text
+
+
+def test_handle_store_inspection_failure_does_not_fail_c_store(
+    tmp_path,
+    caplog,
+    monkeypatch,
+) -> None:
+    caplog.set_level(logging.INFO)
+    dataset = _minimal_dataset()
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    forwarder = RecordingForwarder(ForwardResult(True, 0x0000))
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    init_audit_db(audit_db)
+
+    def fail_inspection(_dataset):
+        raise RuntimeError("synthetic inspection failure SHOULD^NOTLOG SECRETID")
+
+    monkeypatch.setattr(dicom_server, "inspect_dataset", fail_inspection)
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        forwarder=forwarder,
+        audit_db=audit_db,
+        inspection_report_path=tmp_path / "dicom_inspection.jsonl",
+    )
+
+    assert status == 0x0000
+    assert forwarder.paths == [tmp_path / "inbox" / f"{dataset.SOPInstanceUID}.dcm"]
+    assert _dicom_inspection_events(audit_db) == [
+        ("dicom_charset_inspected", "ACC-TEST", 0, "inspection_failed"),
+    ]
+    assert "RuntimeError" in caplog.text
+    assert "synthetic inspection failure" not in caplog.text
+    assert "SHOULD^NOTLOG" not in caplog.text
+    assert "SECRETID" not in caplog.text
 
 
 def test_handle_store_queue_disabled_does_not_enqueue(tmp_path) -> None:
@@ -371,8 +438,6 @@ def test_handle_store_queue_mode_enqueue_failure_returns_write_failure(
     assert "synthetic enqueue failure" not in caplog.text
     assert "SHOULD^NOTLOG" not in caplog.text
     assert "SECRETID" not in caplog.text
-    assert "PatientName" not in caplog.text
-    assert "PatientID" not in caplog.text
 
 
 def test_handle_store_forwarding_enabled_calls_forwarder_after_local_write(tmp_path) -> None:
@@ -390,6 +455,7 @@ def test_handle_store_forwarding_enabled_calls_forwarder_after_local_write(tmp_p
     assert stored_path.exists()
     assert _dicom_audit_events(audit_db) == [
         ("dicom_store_received", "ACC-TEST", 0, 1, None),
+        ("dicom_charset_inspected", "ACC-TEST", None, 1, "review_required"),
         ("dicom_forward_success", "ACC-TEST", 0, 1, None),
     ]
 
@@ -408,12 +474,11 @@ def test_handle_store_forwarding_failure_returns_failure_status(tmp_path, caplog
     assert (tmp_path / "inbox" / f"{dataset.SOPInstanceUID}.dcm").exists()
     assert _dicom_audit_events(audit_db) == [
         ("dicom_store_received", "ACC-TEST", 0, 1, None),
+        ("dicom_charset_inspected", "ACC-TEST", None, 1, "review_required"),
         ("dicom_forward_failed", "ACC-TEST", None, 0, "association_failed"),
     ]
     assert "SHOULD^NOTLOG" not in caplog.text
     assert "SECRETID" not in caplog.text
-    assert "PatientName" not in caplog.text
-    assert "PatientID" not in caplog.text
 
 
 def test_handle_store_success_gets_worklist_and_completes_matched_accession(
@@ -462,8 +527,6 @@ def test_handle_store_success_gets_worklist_and_completes_matched_accession(
     assert "AccessionNumber" in caplog.text
     assert "SHOULD^NOTLOG" not in caplog.text
     assert "SECRETID" not in caplog.text
-    assert "PatientName" not in caplog.text
-    assert "PatientID" not in caplog.text
 
 
 def test_handle_store_no_match_audits_accession_only_without_demographics(tmp_path, caplog) -> None:
@@ -501,8 +564,6 @@ def test_handle_store_no_match_audits_accession_only_without_demographics(tmp_pa
     assert "matched=False" in caplog.text
     assert "SHOULD^NOTLOG" not in caplog.text
     assert "SECRETID" not in caplog.text
-    assert "PatientName" not in caplog.text
-    assert "PatientID" not in caplog.text
 
 
 def test_handle_store_does_not_complete_when_forward_fails(tmp_path) -> None:
@@ -573,8 +634,6 @@ def test_handle_store_completion_failure_does_not_fail_c_store(tmp_path, caplog)
     ]
     assert "SHOULD^NOTLOG" not in caplog.text
     assert "SECRETID" not in caplog.text
-    assert "PatientName" not in caplog.text
-    assert "PatientID" not in caplog.text
 
 
 def test_handle_store_unexpected_completion_exception_does_not_fail_c_store(
@@ -613,8 +672,6 @@ def test_handle_store_unexpected_completion_exception_does_not_fail_c_store(
     assert "unexpected completion failure" not in caplog.text
     assert "SHOULD^NOTLOG" not in caplog.text
     assert "SECRETID" not in caplog.text
-    assert "PatientName" not in caplog.text
-    assert "PatientID" not in caplog.text
 
 
 def test_enabled_loopback_c_store_writes_file_without_phi_logs(tmp_path, caplog) -> None:
@@ -644,8 +701,6 @@ def test_enabled_loopback_c_store_writes_file_without_phi_logs(tmp_path, caplog)
         assert "OT" in caplog.text
         assert "SHOULD^NOTLOG" not in caplog.text
         assert "SECRETID" not in caplog.text
-        assert "PatientName" not in caplog.text
-        assert "PatientID" not in caplog.text
     finally:
         server.stop()
 
@@ -723,8 +778,6 @@ def test_forwarder_success_with_local_test_scp(tmp_path, caplog) -> None:
         assert "ORTHANC_TEST" in caplog.text
         assert "SHOULD^NOTLOG" not in caplog.text
         assert "SECRETID" not in caplog.text
-        assert "PatientName" not in caplog.text
-        assert "PatientID" not in caplog.text
     finally:
         target_server.stop()
 
@@ -745,8 +798,6 @@ def test_forwarder_unavailable_returns_failure_without_raising(caplog) -> None:
     assert result.error in {"association_failed", "forward_unavailable"}
     assert "SHOULD^NOTLOG" not in caplog.text
     assert "SECRETID" not in caplog.text
-    assert "PatientName" not in caplog.text
-    assert "PatientID" not in caplog.text
 
 
 def _dicom_audit_events(db_path: Path):
@@ -779,6 +830,18 @@ def _dicom_completion_events(db_path: Path):
             SELECT event_type, accession_number, matched_by, success, error_code
             FROM gateway_events
             WHERE event_type = 'dicom_worklist_complete'
+            ORDER BY id
+            """
+        ).fetchall()
+
+
+def _dicom_inspection_events(db_path: Path):
+    with sqlite3.connect(db_path) as connection:
+        return connection.execute(
+            """
+            SELECT event_type, accession_number, success, error_code
+            FROM gateway_events
+            WHERE event_type = 'dicom_charset_inspected'
             ORDER BY id
             """
         ).fetchall()

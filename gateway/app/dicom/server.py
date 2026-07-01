@@ -12,6 +12,11 @@ from app.clients.mwl import MwlApiClient, MwlHttpError, MwlUnavailableError
 from app.config import GatewayConfig
 from app.dicom.completion import CompletionResult, complete_matched_worklist
 from app.dicom.forwarder import DicomForwarder
+from app.dicom.inspection import (
+    append_inspection_report,
+    inspect_dataset,
+    log_inspection_report,
+)
 from app.dicom.matcher import MatchResult, match_dataset_to_worklist
 from app.dicom.queue import enqueue_stored_dataset
 from app.dicom.storage import store_dataset
@@ -71,6 +76,8 @@ def handle_store(
     queue_db: Path | None = None,
     queue_enabled: bool = False,
     forward_mode: str = "direct",
+    inspection_enabled: bool = True,
+    inspection_report_path: Path | None = None,
 ) -> int:
     dataset = event.dataset.copy()
     dataset.file_meta = event.file_meta
@@ -111,6 +118,12 @@ def handle_store(
         event_type="dicom_store_received",
         status_code=SUCCESS_STATUS,
         success=True,
+    )
+    _inspect_after_store(
+        dataset,
+        audit_db,
+        inspection_enabled=inspection_enabled,
+        inspection_report_path=inspection_report_path,
     )
     if forward_mode == "queue":
         if not queue_enabled:
@@ -284,6 +297,65 @@ def _enqueue_after_store(
         return None
 
 
+def _inspect_after_store(
+    dataset: Any,
+    audit_db: Path | None,
+    *,
+    inspection_enabled: bool,
+    inspection_report_path: Path | None,
+) -> None:
+    if not inspection_enabled:
+        return
+    try:
+        report = inspect_dataset(dataset)
+        log_inspection_report(report)
+        if inspection_report_path is not None:
+            append_inspection_report(inspection_report_path, report)
+        _audit_dicom_inspection(
+            audit_db,
+            report.accession_number or None,
+            success=True,
+            error_code="review_required" if report.needs_charset_review else None,
+        )
+    except Exception as error:
+        LOGGER.warning(
+            "DICOM charset inspection failed sop_instance_uid=%s "
+            "study_instance_uid=%s accession_number=%s modality=%s exception=%s",
+            _text(getattr(dataset, "SOPInstanceUID", "")),
+            _text(getattr(dataset, "StudyInstanceUID", "")),
+            _text(getattr(dataset, "AccessionNumber", "")),
+            _text(getattr(dataset, "Modality", "")),
+            error.__class__.__name__,
+        )
+        _audit_dicom_inspection(
+            audit_db,
+            _text(getattr(dataset, "AccessionNumber", "")) or None,
+            success=False,
+            error_code="inspection_failed",
+        )
+
+
+def _audit_dicom_inspection(
+    audit_db: Path | None,
+    accession_number: str | None,
+    *,
+    success: bool,
+    error_code: str | None,
+) -> None:
+    if audit_db is None:
+        return
+    record_gateway_event(
+        audit_db,
+        event_type="dicom_charset_inspected",
+        request_path="/dicom/c-store",
+        accession_number=accession_number,
+        matched_by=None,
+        status_code=None,
+        success=success,
+        error_code=error_code,
+    )
+
+
 def _audit_dicom_completion(
     audit_db: Path | None,
     match_result: MatchResult,
@@ -334,9 +406,9 @@ def _audit_dicom_event(
     dataset: Any,
     *,
     event_type: str,
-        status_code: int | None,
-        success: bool,
-        error_code: str | None = None,
+    status_code: int | None,
+    success: bool,
+    error_code: str | None = None,
 ) -> None:
     if audit_db is None:
         return
@@ -366,6 +438,8 @@ class GatewayDicomServer:
         queue_db: Path | None = None,
         queue_enabled: bool = False,
         forward_mode: str = "direct",
+        inspection_enabled: bool = True,
+        inspection_report_path: Path | None = None,
     ) -> None:
         self.bind = bind
         self.port = port
@@ -377,6 +451,8 @@ class GatewayDicomServer:
         self.queue_db = queue_db
         self.queue_enabled = queue_enabled
         self.forward_mode = forward_mode
+        self.inspection_enabled = inspection_enabled
+        self.inspection_report_path = inspection_report_path
         self._server: Any | None = None
 
     def start(self) -> "GatewayDicomServer":
@@ -417,6 +493,8 @@ class GatewayDicomServer:
             queue_db=self.queue_db,
             queue_enabled=self.queue_enabled,
             forward_mode=self.forward_mode,
+            inspection_enabled=self.inspection_enabled,
+            inspection_report_path=self.inspection_report_path,
         )
 
 
@@ -458,4 +536,6 @@ def start_dicom_listener(config: GatewayConfig) -> GatewayDicomServer | None:
         queue_db=config.gateway_queue_db,
         queue_enabled=config.gateway_dicom_queue_enabled,
         forward_mode=config.gateway_dicom_forward_mode,
+        inspection_enabled=config.gateway_dicom_inspection_enabled,
+        inspection_report_path=config.gateway_dicom_inspection_report_path,
     ).start()
