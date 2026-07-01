@@ -143,8 +143,12 @@ will be Gateway.
 
 ## Korean Text Display Issue
 
-`SpecificCharacterSet=ISO_IR 149` has been observed. Initial setup does not
-rewrite DICOM character sets.
+Gateway and MWL preserve Korean order/worklist text as UTF-8 JSON, and MWL
+DICOM responses default to `SpecificCharacterSet=ISO_IR 192`.
+
+`SpecificCharacterSet=ISO_IR 149` has also been observed in
+modality-produced acquisition DICOM. The current runtime does not rewrite those
+stored acquisition DICOM character sets.
 
 The final charset/tag handling point is Gateway ingestion, not Orthanc or MWL.
 Gateway should only inspect or fix Korean charset/tag issues after validation

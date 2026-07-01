@@ -181,6 +181,43 @@ def test_valid_entry_is_returned(tmp_path):
     assert datasets[0].PatientID == "VALID001"
 
 
+def test_missing_specific_character_set_defaults_to_utf8(tmp_path):
+    entry = valid_entry()
+    entry.pop("SpecificCharacterSet")
+    path = write_worklist(tmp_path, [entry])
+
+    datasets = load_worklist_datasets(path, now=NOW)
+
+    assert len(datasets) == 1
+    assert datasets[0].SpecificCharacterSet == "ISO_IR 192"
+
+
+def test_korean_text_is_preserved_in_mwl_dataset(tmp_path):
+    path = write_worklist(
+        tmp_path,
+        [
+            valid_entry(
+                PatientName="홍길동",
+                PatientID="PT-KR-001",
+                AccessionNumber="ACC-KR-001",
+                StudyDescription="골밀도 검사",
+                RequestedProcedureDescription="골밀도 검사",
+                ScheduledProcedureStepDescription="골밀도 검사",
+            )
+        ],
+    )
+
+    datasets = load_worklist_datasets(path, now=NOW)
+
+    assert len(datasets) == 1
+    assert str(datasets[0].SpecificCharacterSet) == "ISO_IR 192"
+    assert str(datasets[0].PatientName) == "홍길동"
+    assert (
+        str(datasets[0].ScheduledProcedureStepSequence[0].ScheduledProcedureStepDescription)
+        == "골밀도 검사"
+    )
+
+
 def test_inactive_entry_is_not_returned(tmp_path):
     path = write_worklist(tmp_path, [valid_entry(Active=False)])
 

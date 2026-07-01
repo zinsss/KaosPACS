@@ -53,6 +53,7 @@ def value(dataset: Dataset, keyword: str) -> str:
 def print_match(identifier: Dataset) -> None:
     step = identifier.ScheduledProcedureStepSequence[0]
     print("---")
+    print("SpecificCharacterSet:", value(identifier, "SpecificCharacterSet"))
     print("PatientID:", value(identifier, "PatientID"))
     print("PatientName:", value(identifier, "PatientName"))
     print("AccessionNumber:", value(identifier, "AccessionNumber"))
