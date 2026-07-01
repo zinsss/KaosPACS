@@ -4,7 +4,9 @@ import socket
 import sqlite3
 from pathlib import Path
 
+from pydicom import dcmread
 from pydicom.dataset import Dataset, FileMetaDataset
+from pydicom.sequence import Sequence
 from pydicom.uid import ExplicitVRLittleEndian, SecondaryCaptureImageStorage, generate_uid
 from pynetdicom import AE
 
@@ -105,6 +107,18 @@ class RecordingForwarder:
         return self.result
 
 
+class ReadingForwarder:
+    def __init__(self, result: ForwardResult) -> None:
+        self.result = result
+        self.paths: list[Path] = []
+        self.datasets: list[Dataset] = []
+
+    def forward_file(self, path: Path) -> ForwardResult:
+        self.paths.append(path)
+        self.datasets.append(dcmread(path))
+        return self.result
+
+
 class RecordingMwlClient:
     def __init__(self, payload, *, complete_status=200, complete_error=None):
         self.payload = payload
@@ -180,6 +194,145 @@ def test_handle_store_writes_charset_inspection_report_and_audit(tmp_path, caplo
         ("dicom_charset_inspected", "ACC-TEST", 1, "review_required"),
     ]
     assert "needs_charset_review=True" in caplog.text
+    assert "SHOULD^NOTLOG" not in caplog.text
+    assert "SECRETID" not in caplog.text
+
+
+def test_handle_store_charset_fix_disabled_reports_and_forwards_original(
+    tmp_path,
+) -> None:
+    dataset = _minimal_dataset()
+    dataset.SpecificCharacterSet = "ISO_IR 149"
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    forwarder = ReadingForwarder(ForwardResult(True, 0x0000))
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    fix_report_path = tmp_path / "dicom_charset_fix.jsonl"
+    init_audit_db(audit_db)
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        forwarder=forwarder,
+        audit_db=audit_db,
+        charset_fix_enabled=False,
+        charset_fix_mode="iso_ir_149_to_utf8",
+        charset_fix_report_path=fix_report_path,
+    )
+
+    original_path = tmp_path / "inbox" / f"{dataset.SOPInstanceUID}.dcm"
+    assert status == 0x0000
+    assert forwarder.paths == [original_path]
+    assert not (tmp_path / "inbox" / "forwarded").exists()
+    report = json.loads(fix_report_path.read_text(encoding="utf-8"))
+    assert report["fix_applied"] is False
+    assert report["reason"] == "disabled"
+    assert _dicom_charset_fix_events(audit_db) == [
+        ("dicom_charset_fix_checked", "ACC-TEST", 1, "skipped_disabled"),
+    ]
+
+
+def test_handle_store_charset_fix_enabled_forwards_normalized_copy(tmp_path) -> None:
+    dataset = _minimal_dataset()
+    dataset.SpecificCharacterSet = "ISO_IR 149"
+    dataset.PatientName = "KOREAN^TEST"
+    dataset.PatientID = "PID-STABLE"
+    dataset.StudyDescription = "KOREAN STUDY"
+    step = Dataset()
+    step.ScheduledProcedureStepDescription = "KOREAN STEP"
+    dataset.ScheduledProcedureStepSequence = Sequence([step])
+    dataset.Rows = 1
+    dataset.Columns = 2
+    dataset.SamplesPerPixel = 1
+    dataset.PhotometricInterpretation = "MONOCHROME2"
+    dataset.BitsAllocated = 8
+    dataset.BitsStored = 8
+    dataset.HighBit = 7
+    dataset.PixelRepresentation = 0
+    dataset.PixelData = b"\x01\x02"
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    forwarder = ReadingForwarder(ForwardResult(True, 0x0000))
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    fix_report_path = tmp_path / "dicom_charset_fix.jsonl"
+    init_audit_db(audit_db)
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        forwarder=forwarder,
+        audit_db=audit_db,
+        charset_fix_enabled=True,
+        charset_fix_mode="iso_ir_149_to_utf8",
+        charset_fix_report_path=fix_report_path,
+    )
+
+    original_path = tmp_path / "inbox" / f"{dataset.SOPInstanceUID}.dcm"
+    forwarded_path = tmp_path / "inbox" / "forwarded" / f"{dataset.SOPInstanceUID}.dcm"
+    assert status == 0x0000
+    assert forwarder.paths == [forwarded_path]
+    assert original_path.exists()
+    assert forwarded_path.exists()
+    original = dcmread(original_path)
+    forwarded = forwarder.datasets[0]
+    assert original.SpecificCharacterSet == "ISO_IR 149"
+    assert forwarded.SpecificCharacterSet == "ISO_IR 192"
+    assert str(forwarded.SOPInstanceUID) == str(dataset.SOPInstanceUID)
+    assert str(forwarded.StudyInstanceUID) == str(dataset.StudyInstanceUID)
+    assert str(forwarded.SeriesInstanceUID) == str(dataset.SeriesInstanceUID)
+    assert forwarded.AccessionNumber == "ACC-TEST"
+    assert forwarded.Modality == "OT"
+    assert forwarded.PatientID == "PID-STABLE"
+    assert bytes(forwarded.PixelData) == b"\x01\x02"
+    report = json.loads(fix_report_path.read_text(encoding="utf-8"))
+    assert report["fix_applied"] is True
+    assert report["new_specific_character_set"] == ["ISO_IR 192"]
+    assert "PatientName" in report["fixed_keywords"]
+    assert "PatientID" in report["skipped_keywords"]
+    assert "PID-STABLE" not in json.dumps(report, ensure_ascii=False)
+    assert _dicom_charset_fix_events(audit_db) == [
+        ("dicom_charset_fix_checked", "ACC-TEST", 1, None),
+    ]
+
+
+def test_handle_store_charset_fix_failure_forwards_original_without_failing(
+    tmp_path,
+    caplog,
+    monkeypatch,
+) -> None:
+    caplog.set_level(logging.INFO)
+    dataset = _minimal_dataset()
+    dataset.SpecificCharacterSet = "ISO_IR 149"
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    forwarder = ReadingForwarder(ForwardResult(True, 0x0000))
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    fix_report_path = tmp_path / "dicom_charset_fix.jsonl"
+    init_audit_db(audit_db)
+
+    def fail_fix(*_args, **_kwargs):
+        raise RuntimeError("synthetic charset fix failure SHOULD^NOTLOG SECRETID")
+
+    monkeypatch.setattr(dicom_server, "maybe_fix_charset", fail_fix)
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        forwarder=forwarder,
+        audit_db=audit_db,
+        charset_fix_enabled=True,
+        charset_fix_mode="iso_ir_149_to_utf8",
+        charset_fix_report_path=fix_report_path,
+    )
+
+    original_path = tmp_path / "inbox" / f"{dataset.SOPInstanceUID}.dcm"
+    assert status == 0x0000
+    assert forwarder.paths == [original_path]
+    assert _dicom_charset_fix_events(audit_db) == [
+        ("dicom_charset_fix_checked", "ACC-TEST", 0, "charset_fix_failed"),
+    ]
+    report = json.loads(fix_report_path.read_text(encoding="utf-8"))
+    assert report["fix_applied"] is False
+    assert report["error_code"] == "charset_fix_failed"
+    assert "RuntimeError" in caplog.text
+    assert "synthetic charset fix failure" not in caplog.text
     assert "SHOULD^NOTLOG" not in caplog.text
     assert "SECRETID" not in caplog.text
 
@@ -395,6 +548,40 @@ def test_handle_store_queue_mode_duplicate_sop_does_not_create_duplicate_rows(
     assert rows == [(str(dataset.SOPInstanceUID), "pending")]
 
 
+def test_handle_store_queue_mode_enqueues_normalized_copy_when_fix_applies(
+    tmp_path,
+) -> None:
+    dataset = _minimal_dataset()
+    dataset.SpecificCharacterSet = "ISO_IR 149"
+    dataset.StudyDescription = "KOREAN STUDY"
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    queue_db = tmp_path / "gateway_queue.sqlite3"
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        queue_db=queue_db,
+        queue_enabled=True,
+        forward_mode="queue",
+        charset_fix_enabled=True,
+        charset_fix_mode="iso_ir_149_to_utf8",
+        charset_fix_report_path=tmp_path / "dicom_charset_fix.jsonl",
+    )
+
+    forwarded_path = tmp_path / "inbox" / "forwarded" / f"{dataset.SOPInstanceUID}.dcm"
+    assert status == 0x0000
+    assert forwarded_path.exists()
+    with sqlite3.connect(queue_db) as connection:
+        row = connection.execute(
+            f"""
+            SELECT file_path, status
+            FROM {QUEUE_TABLE}
+            """
+        ).fetchone()
+    assert row == (str(forwarded_path), "pending")
+    assert dcmread(forwarded_path).SpecificCharacterSet == "ISO_IR 192"
+
+
 def test_handle_store_queue_mode_requires_queue_enabled(tmp_path) -> None:
     dataset = _minimal_dataset()
     event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
@@ -456,6 +643,7 @@ def test_handle_store_forwarding_enabled_calls_forwarder_after_local_write(tmp_p
     assert _dicom_audit_events(audit_db) == [
         ("dicom_store_received", "ACC-TEST", 0, 1, None),
         ("dicom_charset_inspected", "ACC-TEST", None, 1, "review_required"),
+        ("dicom_charset_fix_checked", "ACC-TEST", None, 1, "skipped_disabled"),
         ("dicom_forward_success", "ACC-TEST", 0, 1, None),
     ]
 
@@ -475,6 +663,7 @@ def test_handle_store_forwarding_failure_returns_failure_status(tmp_path, caplog
     assert _dicom_audit_events(audit_db) == [
         ("dicom_store_received", "ACC-TEST", 0, 1, None),
         ("dicom_charset_inspected", "ACC-TEST", None, 1, "review_required"),
+        ("dicom_charset_fix_checked", "ACC-TEST", None, 1, "skipped_disabled"),
         ("dicom_forward_failed", "ACC-TEST", None, 0, "association_failed"),
     ]
     assert "SHOULD^NOTLOG" not in caplog.text
@@ -842,6 +1031,18 @@ def _dicom_inspection_events(db_path: Path):
             SELECT event_type, accession_number, success, error_code
             FROM gateway_events
             WHERE event_type = 'dicom_charset_inspected'
+            ORDER BY id
+            """
+        ).fetchall()
+
+
+def _dicom_charset_fix_events(db_path: Path):
+    with sqlite3.connect(db_path) as connection:
+        return connection.execute(
+            """
+            SELECT event_type, accession_number, success, error_code
+            FROM gateway_events
+            WHERE event_type = 'dicom_charset_fix_checked'
             ORDER BY id
             """
         ).fetchall()

@@ -98,12 +98,19 @@ GATEWAY_FORWARDING_AET=KAOSPACS_GW
 GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS=10
 GATEWAY_DICOM_INSPECTION_ENABLED=true
 GATEWAY_DICOM_INSPECTION_REPORT_PATH=/app/data/dicom_inspection.jsonl
+GATEWAY_DICOM_CHARSET_FIX_ENABLED=false
+GATEWAY_DICOM_CHARSET_FIX_MODE=off
+GATEWAY_DICOM_CHARSET_FIX_REPORT_PATH=/app/data/dicom_charset_fix.jsonl
 ```
 
 Gateway stores incoming datasets locally, writes a read-only non-PHI
-charset/tag inspection summary, forwards datasets unchanged to Orthanc, and
-then matches/completes the MWL item in direct mode. It does not perform charset
-fixes, tag normalization, pixel edits, or metadata rewriting.
+charset/tag inspection summary, forwards datasets to Orthanc, and then
+matches/completes the MWL item in direct mode. The charset fixer is disabled by
+default. When explicitly enabled with `iso_ir_149_to_utf8`, Gateway keeps the
+original received file and writes a normalized forwarding copy under
+`/app/data/dicom-inbox/forwarded`. It does not perform broad charset guessing,
+private tag edits, pixel edits, UID edits, PatientID edits, AccessionNumber
+edits, or Modality edits.
 
 Inspection reports are JSONL records under the Gateway data mount:
 
@@ -115,6 +122,21 @@ Inspection reports are JSONL records under the Gateway data mount:
 They include DICOM identifiers, declared character set, transfer syntax, text
 tag presence, text VR counts, and review reasons. They must not include patient
 names, patient IDs, DOB, sex, diagnosis, full datasets, or pixel data.
+
+Charset fix reports are JSONL records under the Gateway data mount:
+
+```text
+/app/data/dicom_charset_fix.jsonl
+/srv/docker/kaospacs/gateway/dicom_charset_fix.jsonl
+```
+
+They contain fixed/skipped keyword names and status only, not old or new text
+values. To roll back to inspection-only behavior:
+
+```bash
+# set GATEWAY_DICOM_CHARSET_FIX_ENABLED=false in .env
+docker compose up -d gateway
+```
 
 Orthanc internal DICOM settings:
 

@@ -30,8 +30,11 @@ and participates in production image ingestion.
 
 Gateway receives C-STORE as `VIEWREX:104`, stores files in
 `/app/data/dicom-inbox`, records a read-only charset/tag inspection report, and
-forwards unchanged datasets to Orthanc on the internal DICOM port. A persistent
-queue foundation can be enabled with
+forwards datasets to Orthanc on the internal DICOM port. By default, forwarding
+is unchanged/inspection-only. If `GATEWAY_DICOM_CHARSET_FIX_ENABLED=true` and
+`GATEWAY_DICOM_CHARSET_FIX_MODE=iso_ir_149_to_utf8`, Gateway may write a
+normalized forwarding copy under `/app/data/dicom-inbox/forwarded` for datasets
+declaring `ISO_IR 149`. A persistent queue foundation can be enabled with
 `GATEWAY_DICOM_QUEUE_ENABLED=true`, which records pending queue rows after
 successful local stores. A retry worker can be separately enabled with
 `GATEWAY_QUEUE_WORKER_ENABLED=true`; it forwards queued files to Orthanc and
@@ -40,8 +43,10 @@ successful local storage and direct forwarding, Gateway reads the active MWL
 worklist and attempts a deterministic match. If the match succeeds and has an
 accession number, Gateway calls `POST /worklist/complete`. Queue mode stores
 locally, enqueues, returns success after enqueue, and the worker forwards later.
-Queue mode does not match or complete worklists yet. Gateway does not perform
-charset fixes, tag edits, pixel edits, or metadata rewriting.
+Queue mode does not match or complete worklists yet. If the opt-in charset
+fixer applies, queue mode enqueues the normalized forwarding copy. Gateway does
+not perform broad charset guessing, private tag edits, pixel edits, UID edits,
+PatientID edits, AccessionNumber edits, or metadata rewriting.
 
 Gateway appends non-PHI DICOM inspection summaries to:
 
@@ -53,6 +58,19 @@ The report records DICOM identifiers, declared character set, transfer syntax,
 text tag presence, text VR counts, and review reasons. It does not record
 PatientName values, PatientID values, DOB, sex, diagnosis, physician names,
 institution names, full datasets, or pixel data.
+
+When the optional charset fixer is enabled, Gateway also appends non-PHI fix
+reports to:
+
+```text
+/app/data/dicom_charset_fix.jsonl
+```
+
+The only current fix mode is `iso_ir_149_to_utf8`. It is conservative and
+touches only approved display text fields. It never rewrites PatientID,
+AccessionNumber, Modality, UIDs, pixel data, private tags, or unknown text
+tags. Disable the fixer and restart Gateway to return to inspection-only
+behavior.
 
 Gateway records minimal workflow audit events for worklist API calls in its own
 SQLite database. This audit is separate from the MWL audit DB and stores only
@@ -178,7 +196,7 @@ KaosPACS MWL JSON/API
   -> modality selects scheduled patient
   -> modality acquires image
   -> Gateway receives DICOM as VIEWREX:104
-  -> Gateway forwards unchanged DICOM to Orthanc internal backend
+  -> Gateway forwards original or explicitly normalized DICOM to Orthanc
   -> Orthanc stores DICOM
 ```
 
@@ -220,8 +238,9 @@ Current default direct-mode Gateway DICOM flow:
 Gateway C-STORE VIEWREX:104
   -> store locally in /app/data/dicom-inbox
   -> inspect charset/tag presence without modifying the dataset
+  -> optionally write normalized forwarding copy when charset fixer is enabled
   -> optionally enqueue pending forwarding row when queue is enabled
-  -> forward unchanged dataset to Orthanc
+  -> forward selected original/normalized dataset to Orthanc
   -> GET active MWL worklist
   -> match by AccessionNumber, RequestedProcedureID, ScheduledProcedureStepID
   -> POST /worklist/complete when matched accession is present
@@ -237,6 +256,7 @@ Optional queue-mode Gateway DICOM flow:
 Gateway C-STORE VIEWREX:104
   -> store locally in /app/data/dicom-inbox
   -> inspect charset/tag presence without modifying the dataset
+  -> optionally write normalized forwarding copy when charset fixer is enabled
   -> enqueue pending forwarding row
   -> C-STORE returns success after enqueue
   -> retry worker forwards to Orthanc

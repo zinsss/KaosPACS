@@ -6,8 +6,8 @@ Korean text has two separate paths in KaosPACS:
 - Modality-produced acquisition DICOM stored by Orthanc.
 
 Keep those paths separate. Worklist text can be UTF-8-safe today. Acquisition
-DICOM charset rewriting still needs clinical sample validation before any
-production transformation, so Gateway currently performs inspection only.
+DICOM charset rewriting must stay guarded and opt-in until validated with real
+clinical modality samples.
 
 ## Worklist Text
 
@@ -37,22 +37,40 @@ target viewers.
 
 ## Current Rule
 
-Do not rewrite, normalize, or mass-fix acquisition DICOM character sets during
-the current Gateway/Orthanc runtime.
+Default runtime remains inspection-only:
+
+```text
+GATEWAY_DICOM_CHARSET_FIX_ENABLED=false
+GATEWAY_DICOM_CHARSET_FIX_MODE=off
+```
+
+Do not enable charset fixing until real Korean modality samples have been
+validated in Orthanc Explorer, Stone Viewer, Weasis, and raw DICOM inspection.
+Rollback is:
+
+```text
+GATEWAY_DICOM_CHARSET_FIX_ENABLED=false
+docker compose up -d gateway
+```
 
 ## Handling Point
 
 Korean charset and tag inspection belongs at the Gateway ingestion point.
-Gateway now records read-only inspection summaries for received DICOM objects.
-It may fix charset/tag issues only after safe validation with real samples,
-viewer checks, and a rollback plan.
+Gateway records read-only inspection summaries for received DICOM objects. It
+also has a conservative opt-in fixer for one validated path:
+
+```text
+GATEWAY_DICOM_CHARSET_FIX_ENABLED=true
+GATEWAY_DICOM_CHARSET_FIX_MODE=iso_ir_149_to_utf8
+```
 
 Do not put charset normalization inside MWL or KaosEghis-PACS. Do not rely on
 Orthanc as the long-term place for modality-facing charset fixes; Orthanc
 should remain the internal storage/index/viewer backend.
 
-The current Gateway C-STORE front door stores and forwards datasets unchanged.
-It inspects charset/tag shape only and appends non-PHI JSONL reports to:
+With the fixer disabled, the Gateway C-STORE front door stores and forwards
+datasets unchanged. It inspects charset/tag shape only and appends non-PHI
+JSONL reports to:
 
 ```text
 /app/data/dicom_inspection.jsonl
@@ -65,7 +83,60 @@ presence booleans, text VR counts, and charset review reasons. It does not
 store PatientName values, PatientID values, DOB, sex, phone, address,
 diagnosis, physician names, institution names, full datasets, or pixel data.
 
-Gateway still does not normalize or rewrite Korean acquisition character sets.
+Gateway does not normalize or rewrite Korean acquisition character sets unless
+the guarded fixer is explicitly enabled.
+
+## Opt-In ISO_IR 149 Fixer
+
+The only supported fixer mode is:
+
+```text
+iso_ir_149_to_utf8
+```
+
+When enabled, Gateway processes only datasets whose `SpecificCharacterSet`
+contains `ISO_IR 149`. It writes the original received file under
+`/app/data/dicom-inbox`, writes a normalized forwarding copy under
+`/app/data/dicom-inbox/forwarded`, sets the forwarding copy
+`SpecificCharacterSet` to `ISO_IR 192`, and forwards that copy to Orthanc.
+Queue mode enqueues the normalized copy when a fix applies.
+
+The fixer is intentionally conservative. It may rewrite only these display
+text fields:
+
+- `PatientName`
+- `StudyDescription`
+- `SeriesDescription`
+- `RequestedProcedureDescription`
+- `ScheduledProcedureStepDescription`
+- `InstitutionName`
+- `ReferringPhysicianName`
+- `PerformingPhysicianName`
+
+It also supports those fields inside nested sequence items, including
+`ScheduledProcedureStepSequence`.
+
+The fixer must not rewrite:
+
+- `PatientID`
+- `AccessionNumber`
+- `Modality`
+- UIDs
+- pixel data
+- private tags
+- unknown text tags
+
+Fix reports are non-PHI JSONL records at:
+
+```text
+/app/data/dicom_charset_fix.jsonl
+```
+
+They contain SOP/Study/Series UIDs, accession number, modality, original and
+new character set, fix mode, whether a fix was applied, fixed keyword names,
+skipped keyword names, and reason/error code. They must not contain old or new
+text values, patient names, patient IDs, physician names, institution names,
+full datasets, or pixel data.
 
 Future charset work should document:
 

@@ -50,9 +50,20 @@ ORTHANC_DICOM_PORT=11112
 ORTHANC_DICOM_AET=VIEWREX
 ```
 
-Gateway stores and forwards datasets unchanged. It writes read-only non-PHI
-charset/tag inspection summaries to `/app/data/dicom_inspection.jsonl`. It
-does not apply charset fixes, tag normalization, pixel edits, or PHI logging.
+Gateway writes read-only non-PHI charset/tag inspection summaries to
+`/app/data/dicom_inspection.jsonl`. The guarded charset fixer is disabled by
+default:
+
+```text
+GATEWAY_DICOM_CHARSET_FIX_ENABLED=false
+GATEWAY_DICOM_CHARSET_FIX_MODE=off
+```
+
+When enabled for validated samples with
+`GATEWAY_DICOM_CHARSET_FIX_MODE=iso_ir_149_to_utf8`, fix reports are written to
+`/app/data/dicom_charset_fix.jsonl`. Gateway does not apply broad charset
+guessing, private tag edits, pixel edits, UID edits, PatientID edits,
+AccessionNumber edits, Modality edits, or PHI logging.
 
 If queue rows appear unexpectedly, verify:
 
@@ -143,12 +154,17 @@ DICOM responses default to `SpecificCharacterSet=ISO_IR 192`.
 
 `SpecificCharacterSet=ISO_IR 149` has also been observed in
 modality-produced acquisition DICOM. The current runtime reports those samples
-with `needs_charset_review=true` in `/app/data/dicom_inspection.jsonl`, but it
-does not rewrite stored acquisition DICOM character sets.
+with `needs_charset_review=true` in `/app/data/dicom_inspection.jsonl`. It
+rewrites acquisition DICOM only when the guarded fixer is explicitly enabled.
 
 The final charset/tag handling point is Gateway ingestion, not Orthanc or MWL.
-Gateway currently inspects only. It should fix Korean charset/tag issues only
-after validation with real samples and a rollback plan.
+Gateway defaults to inspection only. It should fix Korean charset/tag issues
+only after validation with real samples and a rollback plan. To roll back:
+
+```bash
+# set GATEWAY_DICOM_CHARSET_FIX_ENABLED=false in .env
+docker compose up -d gateway
+```
 
 Compare behavior in:
 

@@ -9,6 +9,9 @@ from app.config import (
     DEFAULT_GATEWAY_DICOM_FORWARD_ENABLED,
     DEFAULT_GATEWAY_DICOM_FORWARD_MODE,
     DEFAULT_GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS,
+    DEFAULT_GATEWAY_DICOM_CHARSET_FIX_ENABLED,
+    DEFAULT_GATEWAY_DICOM_CHARSET_FIX_MODE,
+    DEFAULT_GATEWAY_DICOM_CHARSET_FIX_REPORT_PATH,
     DEFAULT_GATEWAY_DICOM_INSPECTION_ENABLED,
     DEFAULT_GATEWAY_DICOM_INSPECTION_REPORT_PATH,
     DEFAULT_GATEWAY_DICOM_QUEUE_ENABLED,
@@ -74,6 +77,15 @@ def test_config_defaults() -> None:
         config.gateway_dicom_inspection_report_path
         == DEFAULT_GATEWAY_DICOM_INSPECTION_REPORT_PATH
     )
+    assert (
+        config.gateway_dicom_charset_fix_enabled
+        == DEFAULT_GATEWAY_DICOM_CHARSET_FIX_ENABLED
+    )
+    assert config.gateway_dicom_charset_fix_mode == DEFAULT_GATEWAY_DICOM_CHARSET_FIX_MODE
+    assert (
+        config.gateway_dicom_charset_fix_report_path
+        == DEFAULT_GATEWAY_DICOM_CHARSET_FIX_REPORT_PATH
+    )
     assert "gateway_api_token" not in config.safe_log_dict()
     assert config.safe_log_dict()["gateway_api_token_configured"] is False
 
@@ -109,6 +121,9 @@ def test_config_env_overrides() -> None:
             "GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS": "12.5",
             "GATEWAY_DICOM_INSPECTION_ENABLED": "false",
             "GATEWAY_DICOM_INSPECTION_REPORT_PATH": "/tmp/inspection.jsonl",
+            "GATEWAY_DICOM_CHARSET_FIX_ENABLED": "true",
+            "GATEWAY_DICOM_CHARSET_FIX_MODE": "iso_ir_149_to_utf8",
+            "GATEWAY_DICOM_CHARSET_FIX_REPORT_PATH": "/tmp/charset-fix.jsonl",
         }
     )
 
@@ -140,6 +155,9 @@ def test_config_env_overrides() -> None:
     assert config.gateway_dicom_forward_timeout_seconds == 12.5
     assert config.gateway_dicom_inspection_enabled is False
     assert str(config.gateway_dicom_inspection_report_path) == "/tmp/inspection.jsonl"
+    assert config.gateway_dicom_charset_fix_enabled is True
+    assert config.gateway_dicom_charset_fix_mode == "iso_ir_149_to_utf8"
+    assert str(config.gateway_dicom_charset_fix_report_path) == "/tmp/charset-fix.jsonl"
     assert "secret-token" not in str(config.safe_log_dict())
     assert config.safe_log_dict()["gateway_api_token_configured"] is True
 
@@ -154,6 +172,11 @@ def test_empty_gateway_api_token_disables_auth() -> None:
 def test_unknown_forward_mode_fails_config_validation() -> None:
     with pytest.raises(ValueError, match="GATEWAY_DICOM_FORWARD_MODE"):
         load_config({"GATEWAY_DICOM_FORWARD_MODE": "mystery"})
+
+
+def test_unknown_charset_fix_mode_fails_config_validation() -> None:
+    with pytest.raises(ValueError, match="GATEWAY_DICOM_CHARSET_FIX_MODE"):
+        load_config({"GATEWAY_DICOM_CHARSET_FIX_MODE": "guess_everything"})
 
 
 def test_queue_forward_mode_requires_queue_enabled() -> None:

@@ -63,6 +63,11 @@ def status_payload(config: GatewayConfig) -> dict[str, Any]:
                 "enabled": config.gateway_dicom_inspection_enabled,
                 "report_path": str(config.gateway_dicom_inspection_report_path),
             },
+            "charset_fix": {
+                "enabled": config.gateway_dicom_charset_fix_enabled,
+                "mode": config.gateway_dicom_charset_fix_mode,
+                "report_path": str(config.gateway_dicom_charset_fix_report_path),
+            },
             "mode": "production-front-door",
         },
         "ownership": {
