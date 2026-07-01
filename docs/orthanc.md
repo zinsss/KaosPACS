@@ -5,28 +5,21 @@ KaosPACS.
 
 ## Identity
 
-Current transitional storage identity:
+Internal storage identity:
 
 ```text
 AET:  VIEWREX
-Port: 104
+Port: 11112
 HTTP: 8042
 ```
 
-Orthanc currently owns `VIEWREX:104` to keep the verified legacy modality
-storage path working. This is temporary. In the final Gateway-centered
-architecture, Gateway will own `VIEWREX:104` and Orthanc will move behind
-Gateway as an internal backend.
+Gateway owns the legacy modality-facing storage identity `VIEWREX:104`.
+Orthanc no longer publishes a host DICOM port for direct modality traffic.
+Gateway forwards accepted studies to Orthanc on the internal Docker network at
+`orthanc:11112`, AET `VIEWREX`.
 
-Gateway is the workflow and storage integration boundary in the final
-architecture. Orthanc should not receive directly from modalities, from
-KaosEghis-PACS, or from MWL.
-
-The current Gateway DICOM C-STORE skeleton is disabled by default and uses only
-the loopback test identity `KAOSPACS_GW_TEST:11104` when explicitly enabled. It
-does not replace Orthanc as the current `VIEWREX:104` receiver. Test-mode
-forwarding to Orthanc is also disabled by default and requires
-`GATEWAY_DICOM_FORWARD_ENABLED=true`.
+Gateway is the workflow and storage integration boundary. Orthanc should not
+receive directly from modalities, from KaosEghis-PACS, or from MWL.
 
 Orthanc HTTP is available for initial local testing at:
 
@@ -65,10 +58,10 @@ Default host path:
 /srv/docker/kaospacs/orthanc-storage
 ```
 
-In the final architecture, modalities should not send directly to Orthanc.
-Gateway will receive studies, perform validated safe ingestion checks or fixes,
-forward accepted studies to Orthanc, and call the MWL completion endpoint after
-successful receive/forward/storage.
+Modalities should not send directly to Orthanc. Gateway receives studies,
+stores a temporary copy, forwards the unchanged dataset to Orthanc, and calls
+the MWL completion endpoint after successful receive/forward/storage and MWL
+matching.
 
 ## Viewer Assumptions
 

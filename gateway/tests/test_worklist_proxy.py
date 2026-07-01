@@ -638,10 +638,10 @@ def test_status_with_token_returns_operational_metadata(tmp_path) -> None:
             "reachable": True,
         }
         assert body["gateway_dicom"] == {
-            "enabled": False,
-            "aet": "KAOSPACS_GW_TEST",
-            "bind": "127.0.0.1",
-            "port": 11104,
+            "enabled": True,
+            "aet": "VIEWREX",
+            "bind": "0.0.0.0",
+            "port": 104,
             "storage_dir": "/app/data/dicom-inbox",
             "queue_enabled": False,
             "queue_db": {
@@ -662,19 +662,26 @@ def test_status_with_token_returns_operational_metadata(tmp_path) -> None:
                 "max_attempts": 10,
             },
             "forward_mode": "direct",
-            "forward_enabled": False,
+            "forward_enabled": True,
             "forward_target": {
                 "host": "orthanc",
-                "port": 104,
+                "port": 11112,
                 "aet": "VIEWREX",
             },
-            "mode": "skeleton-test-only",
+            "mode": "production-front-door",
         }
         assert body["ownership"]["storage_scp"] == {
             "aet": "VIEWREX",
             "port": 104,
+            "owner": "gateway",
+            "stage": "production",
+        }
+        assert body["ownership"]["storage_backend"] == {
             "owner": "orthanc",
-            "stage": "transitional",
+            "dicom_host": "orthanc",
+            "dicom_port": 11112,
+            "dicom_aet": "VIEWREX",
+            "stage": "internal",
         }
         assert body["ownership"]["mwl_scp"] == {
             "aet": "VIEWREX_WL",

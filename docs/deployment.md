@@ -29,22 +29,21 @@ Create the runtime environment file:
 cp .env.example .env
 ```
 
-Current transitional deployment defaults preserve:
+Deployment defaults preserve:
 
-- `ORTHANC_AET=VIEWREX`
-- `ORTHANC_DICOM_PORT=104`
+- `GATEWAY_DICOM_AET=VIEWREX`
+- `GATEWAY_DICOM_PORT=104`
+- `ORTHANC_DICOM_AET=VIEWREX`
+- `ORTHANC_INTERNAL_DICOM_PORT=11112`
 - `MWL_AET=VIEWREX_WL`
 - `MWL_PORT=105`
 - `MWL_API_PORT=8055`
 - `PACS_HOST_IP=192.168.0.200`
 
-Today, Orthanc owns `VIEWREX:104` so the working storage path remains stable.
-This is not the final architecture. When Gateway is implemented, Gateway will
-own `VIEWREX:104` and Orthanc will move behind Gateway as an internal backend.
-Do not change `docker-compose.yml` for that future stage until Gateway exists
-and the cutover is planned. `VIEWREX_WL:105` remains owned by the MWL service
-in both the current and final architectures; Gateway does not proxy the DICOM
-MWL SCP.
+Gateway owns `VIEWREX:104`. Orthanc DICOM is internal only on
+`orthanc:11112` and has no host DICOM port published for direct modality
+traffic. `VIEWREX_WL:105` remains owned by the MWL service; Gateway does not
+proxy the DICOM MWL SCP.
 
 Gateway is present as a workflow HTTP service in front of MWL. Gateway HTTP
 host publishing is controlled by:
@@ -72,18 +71,18 @@ POST http://127.0.0.1:8060/orders/cancel
 POST http://127.0.0.1:8060/admin/worklist/prune
 ```
 
-It does not bind port `104`, receive production DICOM studies, poll eGHIS, or
-change current PACS runtime behavior. Production order integrations
-should send normalized order events to Gateway, and Gateway calls the internal
-MWL API. Raw Gateway `/worklist` endpoints remain internal/development helpers.
+Production order integrations should send normalized order events to Gateway,
+and Gateway calls the internal MWL API. Raw Gateway `/worklist` endpoints
+remain internal/development helpers. Gateway receives production DICOM studies
+on `VIEWREX:104`; it does not poll eGHIS.
 
-Gateway also includes a disabled DICOM C-STORE skeleton for local testing only:
+Gateway DICOM front-door settings:
 
 ```text
-GATEWAY_DICOM_ENABLED=false
-GATEWAY_DICOM_AET=KAOSPACS_GW_TEST
-GATEWAY_DICOM_BIND=127.0.0.1
-GATEWAY_DICOM_PORT=11104
+GATEWAY_DICOM_ENABLED=true
+GATEWAY_DICOM_AET=VIEWREX
+GATEWAY_DICOM_BIND=0.0.0.0
+GATEWAY_DICOM_PORT=104
 GATEWAY_DICOM_STORAGE_DIR=/app/data/dicom-inbox
 GATEWAY_QUEUE_DB=/app/data/gateway_queue.sqlite3
 GATEWAY_DICOM_QUEUE_ENABLED=false
@@ -91,22 +90,29 @@ GATEWAY_QUEUE_WORKER_ENABLED=false
 GATEWAY_QUEUE_POLL_INTERVAL_SECONDS=5
 GATEWAY_QUEUE_MAX_ATTEMPTS=10
 GATEWAY_DICOM_FORWARD_MODE=direct
-GATEWAY_DICOM_FORWARD_ENABLED=false
+GATEWAY_DICOM_FORWARD_ENABLED=true
 ORTHANC_DICOM_HOST=orthanc
-ORTHANC_DICOM_PORT=104
+ORTHANC_DICOM_PORT=11112
 ORTHANC_DICOM_AET=VIEWREX
 GATEWAY_FORWARDING_AET=KAOSPACS_GW
 GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS=10
 ```
 
-There is no Gateway DICOM port published in `docker-compose.yml` by default.
-Do not use AET `VIEWREX` or port `104` for this skeleton. Orthanc remains the
-current transitional owner of `VIEWREX:104`. Direct test-mode forwarding to
-Orthanc requires `GATEWAY_DICOM_ENABLED=true`,
-`GATEWAY_DICOM_FORWARD_MODE=direct`, and
-`GATEWAY_DICOM_FORWARD_ENABLED=true`. Matched direct-mode test receives can
-call MWL completion after successful storage and optional forwarding, but they
-still do not perform charset fixes.
+Gateway stores incoming datasets locally, forwards them unchanged to Orthanc,
+and then matches/completes the MWL item in direct mode. It does not perform
+charset fixes, tag normalization, pixel edits, or metadata rewriting.
+
+Orthanc internal DICOM settings:
+
+```text
+ORTHANC_DICOM_AET=VIEWREX
+ORTHANC_INTERNAL_DICOM_PORT=11112
+```
+
+`docker-compose.yml` exposes the Orthanc DICOM port only to the Docker network.
+Do not publish Orthanc DICOM on the host; modalities must connect to Gateway.
+Compose maps `ORTHANC_INTERNAL_DICOM_PORT` into the Gateway container as
+`ORTHANC_DICOM_PORT`, which is what the Gateway forwarder reads.
 
 The Gateway DICOM forwarding queue foundation is persisted under the same
 Gateway data mount as `/app/data/gateway_queue.sqlite3`. It is disabled by
@@ -115,10 +121,10 @@ queue rows after successful local stores. The retry worker is separately
 disabled by default with `GATEWAY_QUEUE_WORKER_ENABLED=false`. When explicitly
 enabled, it processes queued files in the background and forwards them to
 Orthanc, but it does not match worklist entries, call completion, delete local
-files, or replace the current direct-forwarding test path.
+files, or replace the current direct-forwarding path.
 
-`GATEWAY_DICOM_FORWARD_MODE=direct` is the default and preserves current
-behavior. `GATEWAY_DICOM_FORWARD_MODE=queue` is test-mode only and requires
+`GATEWAY_DICOM_FORWARD_MODE=direct` is the default.
+`GATEWAY_DICOM_FORWARD_MODE=queue` requires
 both `GATEWAY_DICOM_QUEUE_ENABLED=true` and
 `GATEWAY_QUEUE_WORKER_ENABLED=true`. In queue mode, C-STORE stores locally,
 enqueues a pending row, and returns success after enqueue; the retry worker
@@ -142,9 +148,8 @@ ORTHANC_URL
 ORTHANC_TIMEOUT_SECONDS
 ```
 
-The client is currently used for `/status` reachability and future
-Gateway-to-Orthanc integration only. It does not send DICOM, inspect studies,
-expose studies, or return PHI.
+The client is currently used for `/status` reachability only. It does not send
+DICOM, inspect studies, expose studies, or return PHI.
 
 Gateway workflow endpoints support shared bearer-token authentication through:
 
@@ -283,10 +288,10 @@ curl -X POST http://127.0.0.1:8060/admin/worklist/prune \
 docker compose logs mwl
 ```
 
-Current DICOM storage checks still target Orthanc on `192.168.0.200:104`, AET
-`VIEWREX`. In the final Gateway-centered deployment, the same modality-facing
-storage identity will be owned by Gateway and Orthanc will be internal. Current
-MWL checks continue to target MWL on `192.168.0.200:105`, AET `VIEWREX_WL`, and
+Current DICOM storage checks target Gateway on `192.168.0.200:104`, AET
+`VIEWREX`. Orthanc receives forwarded datasets internally at `orthanc:11112`,
+AET `VIEWREX`, and should not accept direct modality traffic from the LAN. MWL
+checks continue to target MWL on `192.168.0.200:105`, AET `VIEWREX_WL`, and
 that ownership does not move to Gateway.
 
 ## Shutdown

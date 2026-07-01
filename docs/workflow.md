@@ -5,7 +5,7 @@
 KaosPACS replaces the expired ViewRex PACS while keeping the same production
 identity for legacy devices.
 
-## Current Transitional Storage Path
+## Current Storage Path
 
 INNOVISION CR has already been verified sending images to Orthanc when Orthanc
 impersonates ViewRex:
@@ -16,35 +16,31 @@ AET:  VIEWREX
 Port: 104
 ```
 
-The current stack keeps that storage path working through Orthanc.
-Orthanc owning `VIEWREX:104` is transitional only. It keeps the working
-Orthanc + MWL stack stable until Gateway is implemented.
+The current stack keeps that storage identity working through Gateway.
+Gateway owns `VIEWREX:104`; Orthanc receives forwarded datasets internally on
+the Docker network.
 
 Gateway exposes workflow API endpoints in front of MWL. Its HTTP host binding
 is deployment-configurable: same-host deployments may publish it on
 `127.0.0.1`, while cross-machine KaosEghis-PACS integration should publish it
 on `0.0.0.0` with bearer-token auth and firewall restriction. Gateway accepts
 normalized order events at `POST /orders/upsert` and `POST /orders/cancel` for
-future KaosEghis-PACS integration. It does not bind the production DICOM
-identity, forward production studies to Orthanc, or participate in production
-image ingestion yet. Orthanc still owns `VIEWREX:104` transitionally.
+future KaosEghis-PACS integration. It also binds the production DICOM identity
+and participates in production image ingestion.
 
-Gateway has a disabled C-STORE skeleton for loopback test datasets only. When
-explicitly enabled, it uses `KAOSPACS_GW_TEST:11104` on `127.0.0.1`, stores
-files in `/app/data/dicom-inbox`, and can forward to Orthanc only when
-`GATEWAY_DICOM_FORWARD_MODE=direct` and
-`GATEWAY_DICOM_FORWARD_ENABLED=true`. A persistent queue foundation can be
-enabled with `GATEWAY_DICOM_QUEUE_ENABLED=true`, which records pending queue
-rows after successful local stores. A retry worker can be separately enabled
-with `GATEWAY_QUEUE_WORKER_ENABLED=true`; it forwards queued files to Orthanc
-and updates queue state. `direct` mode remains the default active path. After
-successful local storage and optional direct forwarding, Gateway reads the
-active MWL worklist and attempts a deterministic match. If the match succeeds
-and has an accession number, Gateway calls `POST /worklist/complete`. `queue`
-mode is test-mode only: C-STORE stores locally, enqueues, returns success after
-enqueue, and the worker forwards later. Queue mode does not match or complete
-worklists yet. It does not perform charset fixes. It must not be used as the
-production `VIEWREX:104` receiver.
+Gateway receives C-STORE as `VIEWREX:104`, stores files in
+`/app/data/dicom-inbox`, and forwards unchanged datasets to Orthanc on the
+internal DICOM port. A persistent queue foundation can be enabled with
+`GATEWAY_DICOM_QUEUE_ENABLED=true`, which records pending queue rows after
+successful local stores. A retry worker can be separately enabled with
+`GATEWAY_QUEUE_WORKER_ENABLED=true`; it forwards queued files to Orthanc and
+updates queue state. `direct` mode remains the default active path. After
+successful local storage and direct forwarding, Gateway reads the active MWL
+worklist and attempts a deterministic match. If the match succeeds and has an
+accession number, Gateway calls `POST /worklist/complete`. Queue mode stores
+locally, enqueues, returns success after enqueue, and the worker forwards later.
+Queue mode does not match or complete worklists yet. Gateway does not perform
+charset fixes, tag edits, pixel edits, or metadata rewriting.
 
 Gateway records minimal workflow audit events for worklist API calls in its own
 SQLite database. This audit is separate from the MWL audit DB and stores only
@@ -145,10 +141,10 @@ Cancelled means an explicit source/business cancellation or deletion arrived
 through Gateway or the internal MWL API. KaosPACS must not infer source
 cancellation or deletion by polling eGHIS or `public.mwl`.
 
-In the final architecture, Gateway is the expected caller of
-`POST /worklist/complete` after it has successfully received and forwarded a
-study to Orthanc. KaosEghis-PACS sends normalized order events to Gateway; it
-should not call MWL directly in production or infer DICOM study completion.
+Gateway is the expected caller of `POST /worklist/complete` after it has
+successfully received and forwarded a study to Orthanc. KaosEghis-PACS sends
+normalized order events to Gateway; it should not call MWL directly in
+production or infer DICOM study completion.
 
 The MWL audit database is:
 
@@ -162,17 +158,19 @@ sex, resident ID, phone, address, diagnosis, or EMR notes.
 MWL expiry records a minimal `worklist_expired` event with accession number
 only. It does not store patient demographics or full worklist payloads.
 
-## Current Transitional Clinical Flow
+## Current Clinical Flow
 
 ```text
 KaosPACS MWL JSON/API
   -> KaosPACS MWL VIEWREX_WL:105
   -> modality selects scheduled patient
   -> modality acquires image
+  -> Gateway receives DICOM as VIEWREX:104
+  -> Gateway forwards unchanged DICOM to Orthanc internal backend
   -> Orthanc stores DICOM
 ```
 
-## Final Gateway-Centered Flow
+## Gateway-Centered Flow
 
 Order path:
 
@@ -198,7 +196,7 @@ Image path:
 Legacy modality
   -> modality acquires image
   -> Gateway receives DICOM as VIEWREX:104
-  -> Gateway safely inspects/fixes charset or tag issues when validated
+  -> Gateway stores a local copy without modifying the dataset
   -> Gateway forwards study to Orthanc internal backend
   -> Gateway calls POST /worklist/complete
   -> future KaosPACS Web / Weasis opens study
@@ -207,24 +205,23 @@ Legacy modality
 Current default direct-mode Gateway DICOM flow:
 
 ```text
-Gateway test C-STORE KAOSPACS_GW_TEST:11104
+Gateway C-STORE VIEWREX:104
   -> store locally in /app/data/dicom-inbox
   -> optionally enqueue pending forwarding row when queue is enabled
-  -> optionally forward to Orthanc when test forwarding is enabled
+  -> forward unchanged dataset to Orthanc
   -> GET active MWL worklist
   -> match by AccessionNumber, RequestedProcedureID, ScheduledProcedureStepID
   -> POST /worklist/complete when matched accession is present
   -> STOP
 ```
 
-Completion is now implemented only for this matched test-mode Gateway DICOM
-path. Completion failure is logged and audited but does not reject a DICOM
-object that was already stored and, if enabled, forwarded successfully.
+Completion failure is logged and audited but does not reject a DICOM object
+that was already stored and forwarded successfully.
 
 Optional queue-mode Gateway DICOM flow:
 
 ```text
-Gateway test C-STORE KAOSPACS_GW_TEST:11104
+Gateway C-STORE VIEWREX:104
   -> store locally in /app/data/dicom-inbox
   -> enqueue pending forwarding row
   -> C-STORE returns success after enqueue
@@ -234,7 +231,7 @@ Gateway test C-STORE KAOSPACS_GW_TEST:11104
 ```
 
 Queue mode is not active by default and does not replace the current
-direct-forwarding test path. Queue-mode worker forwarding does not match MWL
+direct-forwarding path. Queue-mode worker forwarding does not match MWL
 entries or call completion yet. Queue enqueueing is idempotent by
 `SOPInstanceUID`, so repeated sends of the same instance reuse the existing
 queue row instead of creating duplicate pending rows.

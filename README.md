@@ -3,9 +3,10 @@
 KaosPACS is a Docker-based PACS replacement stack for an expired proprietary
 ViewRex PACS system used with eGHIS EMR and legacy imaging devices.
 
-The current scope runs Orthanc with PostgreSQL metadata/index storage while
-keeping DICOM binaries on host file storage. It also includes a KaosPACS MWL
-service with a localhost-only update API and a minimal SQLite audit database.
+The current scope runs Gateway as the production DICOM Storage SCP front door,
+Orthanc as the internal storage/index/viewer backend, and MWL as the dedicated
+worklist SCP. Orthanc uses PostgreSQL for metadata/index storage while DICOM
+binaries stay on host file storage.
 
 KaosPACS remains EMR-agnostic. eGHIS integration, polling, routing, web launch,
 Weasis launch coordination, charset evaluation, and ViewRex database migration
@@ -13,9 +14,11 @@ remain separate future work.
 
 ## Architecture Stage
 
-Current transitional runtime:
+Current runtime:
 
-- Orthanc temporarily owns the legacy storage identity `VIEWREX:104`.
+- Gateway owns the legacy storage identity `VIEWREX:104`.
+- Orthanc DICOM is internal only on `orthanc:11112` and is not published for
+  direct modality traffic.
 - MWL owns `VIEWREX_WL:105`, active worklist state, the local MWL API, and the
   minimal audit database.
 - MWL expires active entries internally when `ExpiresAt` has passed, or when
@@ -27,36 +30,22 @@ Current transitional runtime:
   publishing is deployment-configurable: same-host deployments may bind
   `127.0.0.1`, while cross-machine KaosEghis-PACS integration should bind
   `0.0.0.0` with bearer-token auth and firewall restriction.
-- Gateway includes a disabled DICOM C-STORE skeleton for loopback testing only.
-  It does not bind port `104`, does not use AET `VIEWREX`, does not receive
-  production studies, and does not forward to Orthanc unless explicit
-  test-mode forwarding is enabled. The default forwarding mode is `direct`,
-  where Gateway can match the received study to the active MWL worklist after
-  successful local receipt and optional direct forwarding, then complete the
-  matched worklist item. Optional `queue` mode is test-mode only and does not
-  match or complete worklists yet.
+- Gateway receives production C-STORE as `VIEWREX:104`, stores a local copy
+  under `/app/data/dicom-inbox`, forwards the unchanged dataset to Orthanc,
+  matches the study to active MWL entries, and completes the matched worklist
+  item. It does not perform charset fixes, tag normalization, pixel edits, or
+  metadata rewriting.
 - Gateway can protect workflow endpoints with `GATEWAY_API_TOKEN` bearer-token
   authentication. `/health` remains unauthenticated.
 - Gateway writes a minimal workflow audit DB at
   `/app/data/gateway_audit.sqlite3`, persisted under
   `/srv/docker/kaospacs/gateway`.
-- Gateway includes a disabled DICOM forwarding queue foundation at
-  `/app/data/gateway_queue.sqlite3`. Queue enqueueing and the retry worker are
-  both disabled by default; current test-mode direct forwarding remains
-  unchanged.
-- This keeps the verified Orthanc + MWL storage path stable while Gateway DICOM
-  behavior remains non-production test scaffolding.
-
-Final Gateway-centered runtime:
-
-- Gateway will become the modality-facing DICOM Storage SCP at
-  `192.168.0.200:104`, AET `VIEWREX`.
-- Gateway will become the single workflow and storage integration boundary.
-- Orthanc will move behind Gateway as the internal storage, index, REST,
-  DICOMweb, and viewer backend.
-- Gateway will receive studies from modalities, inspect or fix Korean
-  charset/tag issues only after safe validation, forward studies to Orthanc,
-  and then call `POST /worklist/complete` after successful receive/forward.
+- Gateway includes a DICOM forwarding queue foundation at
+  `/app/data/gateway_queue.sqlite3`. Direct forwarding is the default
+  production path. Queue mode and the retry worker remain available for
+  configured retry-based forwarding.
+- Gateway is the single workflow and storage integration boundary.
+- Orthanc is the internal storage, index, REST, DICOMweb, and viewer backend.
 - KaosEghis-PACS will remain the EMR-aware adapter that reads eGHIS with
   read-only access, normalizes orders, and sends worklist events to Gateway.
   It should not call MWL directly in production, call Orthanc directly, or
@@ -123,7 +112,8 @@ docker compose ps
 ## Test Endpoints
 
 - Orthanc HTTP: `http://192.168.0.200:8042`
-- Current transitional DICOM SCP: `192.168.0.200:104`, AET `VIEWREX`
+- Gateway production DICOM SCP: `192.168.0.200:104`, AET `VIEWREX`
+- Orthanc internal DICOM backend: `orthanc:11112`, AET `VIEWREX`
 - MWL SCP: `192.168.0.200:105`, AET `VIEWREX_WL`
 - MWL local API: `http://127.0.0.1:8055/health`
 - Gateway health: `http://127.0.0.1:8060/health`
@@ -135,24 +125,16 @@ docker compose ps
   - `POST http://127.0.0.1:8060/orders/cancel`
 - Gateway protected admin API:
   - `POST http://127.0.0.1:8060/admin/worklist/prune`
-- Gateway DICOM skeleton: disabled by default. If explicitly enabled for local
-  tests, it uses `127.0.0.1:11104`, AET `KAOSPACS_GW_TEST`, and stores files
-  under `/app/data/dicom-inbox`. It is not the production `VIEWREX:104`
-  receiver. Test-mode forwarding to Orthanc is also disabled by default with
-  `GATEWAY_DICOM_FORWARD_ENABLED=false`. The persistent queue foundation is
-  also disabled by default with `GATEWAY_DICOM_QUEUE_ENABLED=false`; when
-  enabled, successful local stores insert pending queue rows. The retry worker
-  is separately disabled by default with `GATEWAY_QUEUE_WORKER_ENABLED=false`;
-  when explicitly enabled, it forwards queued files to Orthanc and updates
-  queue state. `GATEWAY_DICOM_FORWARD_MODE=direct` is the default and preserves
-  the current direct-forwarding path. `GATEWAY_DICOM_FORWARD_MODE=queue` is
-  test-mode only: C-STORE stores locally, enqueues, returns success after
-  enqueue, and the worker forwards later. Queue mode does not match or complete
-  MWL worklists yet. Queue enqueueing is idempotent by `SOPInstanceUID`, so
-  repeated modality sends do not create duplicate queue rows. In direct mode,
-  when a received test study is stored, optionally forwarded, and matched to an
-  active MWL entry with an accession number, Gateway calls MWL completion. It
-  does not perform charset fixes.
+- Gateway DICOM front door: enabled by default as `VIEWREX:104`. It stores
+  received DICOM objects under `/app/data/dicom-inbox`, forwards them unchanged
+  to Orthanc at `orthanc:11112`, and does not perform charset fixes or tag
+  edits. `GATEWAY_DICOM_FORWARD_MODE=direct` is the default. Optional
+  `GATEWAY_DICOM_FORWARD_MODE=queue` stores locally, enqueues, returns success
+  after enqueue, and lets the retry worker forward later. Queue mode does not
+  match or complete MWL worklists yet. Queue enqueueing is idempotent by
+  `SOPInstanceUID`, so repeated modality sends do not create duplicate queue
+  rows. In direct mode, when a received study is stored, forwarded, and matched
+  to an active MWL entry with an accession number, Gateway calls MWL completion.
   Matching uses `AccessionNumber`, then `RequestedProcedureID`, then
   `ScheduledProcedureStepID`; it never uses patient name, DOB, or fuzzy matching.
 
@@ -178,7 +160,7 @@ host loopback only and must not be exposed on the LAN.
 `GATEWAY_API_TOKEN` is set. It reports dependency reachability and ownership
 state only. It must not expose worklist entries, patient demographics, chart
 numbers, accession numbers, diagnosis, EMR notes, tokens, or request payloads.
-It also reports whether the disabled Gateway DICOM skeleton is enabled.
+It also reports Gateway DICOM ownership, forwarding target, and queue state.
 Gateway DICOM queue status is operational only and reports counts by queue
 state plus retry worker enabled/running state; it does not expose patient
 demographics or dataset contents.
@@ -215,8 +197,8 @@ It does not prune the MWL audit DB or Gateway audit DB.
 
 Port `104` is a privileged low port. Binding it may require a rootful Docker
 daemon, host networking, or adjusted capabilities depending on the environment.
-In the final architecture, Gateway will own this port and Orthanc will no
-longer be the modality-facing Storage SCP.
+Gateway owns this port. Orthanc DICOM is internal only and is not published for
+direct modality traffic.
 
 ## MWL Runtime Data
 

@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY tests ./tests
 
+EXPOSE 104
 EXPOSE 8060
 
 CMD ["python", "-m", "app.main"]

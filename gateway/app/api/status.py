@@ -59,14 +59,21 @@ def status_payload(config: GatewayConfig) -> dict[str, Any]:
                 "port": config.orthanc_dicom_port,
                 "aet": config.orthanc_dicom_aet,
             },
-            "mode": "skeleton-test-only",
+            "mode": "production-front-door",
         },
         "ownership": {
             "storage_scp": {
                 "aet": "VIEWREX",
                 "port": 104,
+                "owner": "gateway",
+                "stage": "production",
+            },
+            "storage_backend": {
                 "owner": "orthanc",
-                "stage": "transitional",
+                "dicom_host": config.orthanc_dicom_host,
+                "dicom_port": config.orthanc_dicom_port,
+                "dicom_aet": config.orthanc_dicom_aet,
+                "stage": "internal",
             },
             "mwl_scp": {
                 "aet": "VIEWREX_WL",
