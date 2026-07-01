@@ -28,6 +28,7 @@ DEFAULT_WORKLIST_SEED_PATH = Path("/app/config/worklist.json")
 DEFAULT_WORKLIST_PATH = Path("/app/data/worklist.json")
 DEFAULT_AUDIT_DB_PATH = Path("/app/data/mwl_audit.sqlite3")
 DEFAULT_TIMEZONE = "Asia/Seoul"
+DEFAULT_SPECIFIC_CHARACTER_SET = "ISO_IR 192"
 EXPIRE_REASON_WITHOUT_IMAGING = "expired_without_imaging"
 REQUIRED_FIELDS = (
     "PatientID",
@@ -487,7 +488,9 @@ def _load_worklist(path: Path, now: datetime | None = None) -> list[dict[str, An
 
 def _entry_to_dataset(entry: dict[str, Any]) -> Dataset:
     dataset = Dataset()
-    dataset.SpecificCharacterSet = _text(entry.get("SpecificCharacterSet")) or "ISO_IR 192"
+    dataset.SpecificCharacterSet = (
+        _text(entry.get("SpecificCharacterSet")) or DEFAULT_SPECIFIC_CHARACTER_SET
+    )
     dataset.PatientName = _text(entry.get("PatientName"))
     dataset.PatientID = _text(entry.get("PatientID"))
     dataset.PatientBirthDate = _text(entry.get("PatientBirthDate"))

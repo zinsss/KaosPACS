@@ -1147,6 +1147,45 @@ def test_order_upsert_appends_worklist_entry(tmp_path) -> None:
         stop_server(mwl_server, mwl_thread)
 
 
+def test_order_upsert_preserves_korean_text_and_sets_utf8_charset(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl({"entries": []})
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+    )
+    payload = valid_order_payload(
+        ChartNo="PT-KR-001",
+        PatientName="홍길동",
+        AccessionNumber="ACC-KR-001",
+        Description="골밀도 검사",
+        StudyType="골밀도",
+    )
+
+    try:
+        status, body = request_json("POST", f"{gateway_url}/orders/upsert", payload)
+
+        assert status == 200
+        assert body["AccessionNumber"] == "ACC-KR-001"
+        put_call = RecordingMwlHandler.calls[1]
+        assert put_call["method"] == "PUT"
+        new_entry = put_call["payload"]["entries"][0]
+        assert new_entry["PatientID"] == "PT-KR-001"
+        assert new_entry["PatientName"] == "홍길동"
+        assert new_entry["StudyDescription"] == "골밀도 검사"
+        assert new_entry["RequestedProcedureDescription"] == "골밀도 검사"
+        assert new_entry["ScheduledProcedureStepDescription"] == "골밀도 검사"
+        assert new_entry["StudyType"] == "골밀도"
+        assert new_entry["SpecificCharacterSet"] == "ISO_IR 192"
+        serialized = json.dumps(put_call["payload"], ensure_ascii=False)
+        assert "홍길동" in serialized
+        assert "골밀도 검사" in serialized
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
 def test_order_upsert_replaces_matching_accession(tmp_path) -> None:
     audit_db = tmp_path / "gateway_audit.sqlite3"
     mwl_server, mwl_thread = setup_recording_mwl(

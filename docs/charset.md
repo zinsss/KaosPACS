@@ -1,19 +1,44 @@
 # DICOM Charset
 
-Korean DICOM charset behavior is an evaluation issue, not part of initial stack
-implementation.
+Korean text has two separate paths in KaosPACS:
 
-## Observed
+- Order/worklist text created through Gateway and served by MWL.
+- Modality-produced acquisition DICOM stored by Orthanc.
 
-`SpecificCharacterSet=ISO_IR 149` has been observed in Korean DICOM data.
+Keep those paths separate. Worklist text can be UTF-8-safe today; acquisition
+DICOM charset rewriting still needs clinical sample validation before any
+production transformation.
 
-Orthanc can receive and store DICOM data. Viewer behavior and Korean text
-display must be evaluated with actual clinical samples and target viewers.
+## Worklist Text
+
+Gateway and MWL read and write JSON as UTF-8. Gateway order APIs preserve Korean
+patient and study text when converting normalized order events into MWL entries.
+MWL writes runtime JSON with UTF-8 text preserved and returns JSON responses as:
+
+```text
+application/json; charset=utf-8
+```
+
+MWL DICOM responses default to:
+
+```text
+SpecificCharacterSet = ISO_IR 192
+```
+
+`ISO_IR 192` is DICOM UTF-8. It is used unless a worklist entry explicitly
+provides another `SpecificCharacterSet`.
+
+## Acquisition DICOM
+
+`SpecificCharacterSet=ISO_IR 149` has been observed in Korean modality-created
+DICOM data. Orthanc can receive and store DICOM data, but viewer behavior and
+Korean text display still need evaluation with actual clinical samples and
+target viewers.
 
 ## Current Rule
 
-Do not rewrite, normalize, or mass-fix DICOM character sets during initial
-Orthanc/PostgreSQL setup.
+Do not rewrite, normalize, or mass-fix acquisition DICOM character sets during
+the current Orthanc/PostgreSQL runtime.
 
 ## Final Handling Point
 
@@ -27,7 +52,7 @@ should remain the internal storage/index/viewer backend.
 
 The current Gateway C-STORE skeleton is disabled test scaffolding only. It
 stores explicitly tested datasets when enabled but does not inspect, normalize,
-or rewrite Korean character sets.
+or rewrite Korean acquisition character sets.
 
 Future charset work should document:
 
