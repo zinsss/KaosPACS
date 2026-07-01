@@ -46,7 +46,20 @@ and the cutover is planned. `VIEWREX_WL:105` remains owned by the MWL service
 in both the current and final architectures; Gateway does not proxy the DICOM
 MWL SCP.
 
-Gateway is present as a localhost-only workflow HTTP service in front of MWL.
+Gateway is present as a workflow HTTP service in front of MWL. Gateway HTTP
+host publishing is controlled by:
+
+```text
+GATEWAY_HTTP_BIND
+GATEWAY_HTTP_PORT
+```
+
+For same-host deployments, `GATEWAY_HTTP_BIND` may be `127.0.0.1`. For
+cross-machine KaosEghis-PACS integration, set `GATEWAY_HTTP_BIND=0.0.0.0`, keep
+`GATEWAY_API_TOKEN` configured, and restrict access to trusted clinic hosts
+with the firewall. The MWL HTTP API remains published on host loopback only at
+`127.0.0.1:8055`; do not expose MWL API on the LAN.
+
 Useful endpoints:
 
 ```text
@@ -154,7 +167,7 @@ Authorization: Bearer <token>
 ```
 
 Only `GET /health` remains unauthenticated. This is a simple shared-token
-control for a localhost or clinic LAN deployment. It is not intended as
+control for a clinic LAN or localhost deployment. It is not intended as
 internet-grade security, and future authentication may evolve independently.
 
 KaosEghis-PACS should use the protected Gateway contract:

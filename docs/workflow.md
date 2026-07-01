@@ -20,12 +20,14 @@ The current stack keeps that storage path working through Orthanc.
 Orthanc owning `VIEWREX:104` is transitional only. It keeps the working
 Orthanc + MWL stack stable until Gateway is implemented.
 
-Gateway exposes localhost-only workflow API endpoints in front of MWL. It also
-accepts normalized order events at `POST /orders/upsert` and
-`POST /orders/cancel` for future KaosEghis-PACS integration. It does not bind
-the production DICOM identity, forward production studies to Orthanc, or
-participate in production image ingestion yet. Orthanc still owns
-`VIEWREX:104` transitionally.
+Gateway exposes workflow API endpoints in front of MWL. Its HTTP host binding
+is deployment-configurable: same-host deployments may publish it on
+`127.0.0.1`, while cross-machine KaosEghis-PACS integration should publish it
+on `0.0.0.0` with bearer-token auth and firewall restriction. Gateway accepts
+normalized order events at `POST /orders/upsert` and `POST /orders/cancel` for
+future KaosEghis-PACS integration. It does not bind the production DICOM
+identity, forward production studies to Orthanc, or participate in production
+image ingestion yet. Orthanc still owns `VIEWREX:104` transitionally.
 
 Gateway has a disabled C-STORE skeleton for loopback test datasets only. When
 explicitly enabled, it uses `KAOSPACS_GW_TEST:11104` on `127.0.0.1`, stores
@@ -82,9 +84,9 @@ POST /worklist/complete
 POST /worklist/cancel
 ```
 
-The API is bound to `127.0.0.1:8055` by default and should not be exposed
-directly to external systems. Production workflow requests should go through
-Gateway on `127.0.0.1:8060`.
+The MWL API is published on host loopback only at `127.0.0.1:8055` and should
+not be exposed directly to external systems. Production workflow requests
+should go through Gateway on port `8060`.
 
 Gateway's production-facing order endpoints are:
 

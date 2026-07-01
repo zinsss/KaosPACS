@@ -87,9 +87,10 @@ services:
     container_name: kaospacs-gateway
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${GATEWAY_HTTP_PORT:-8060}:8060"
+      - "${GATEWAY_HTTP_BIND:-0.0.0.0}:${GATEWAY_HTTP_PORT:-8060}:8060"
     environment:
       TZ: ${TZ:-Asia/Seoul}
+      GATEWAY_HTTP_HOST: 0.0.0.0
       GATEWAY_HTTP_PORT: "8060"
       ORTHANC_URL: http://orthanc:8042
       ORTHANC_TIMEOUT_SECONDS: ${ORTHANC_TIMEOUT_SECONDS:-3}
