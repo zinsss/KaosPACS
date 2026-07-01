@@ -98,6 +98,24 @@ than raw MWL JSON. Gateway validates those events, converts them into MWL
 entries, and updates the internal MWL API. Raw Gateway `/worklist` endpoints
 remain internal/development helpers.
 
+KaosEghis-PACS operator UI should read imaging lifecycle state from Gateway:
+
+```text
+GET /imaging/worklist
+```
+
+This endpoint returns flat rows plus counts using derived state:
+
+- `cancelled`: `CancelledAt` is present
+- `completed`: `CompletedAt` is present
+- `expired`: `ExpiredAt` is present
+- `active`: `Active=true`
+- `inactive`: everything else
+
+The UI should not infer imaging state from raw `public.mwl`, direct eGHIS
+tables, MWL internals, or DICOM C-FIND. Lower-level `GET /worklist` remains a
+Gateway/MWL reconcile endpoint.
+
 Completed, expired, or cancelled entries are kept in JSON and marked
 `Active=false`; they are not physically deleted and are not returned in DICOM
 MWL C-FIND responses.

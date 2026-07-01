@@ -141,6 +141,18 @@ from KaosEghis-PACS at `POST /orders/upsert` and `POST /orders/cancel`, then
 converts those events into internal MWL API updates. Raw `/worklist` Gateway
 endpoints remain internal/development helpers for now.
 
+Gateway also exposes the operator-facing imaging lifecycle view:
+
+```text
+GET /imaging/worklist
+```
+
+KaosEghis-PACS UI should read this Gateway endpoint for imaging state. It
+returns a flattened view with derived `active`, `completed`, `expired`,
+`cancelled`, or `inactive` states and counts. It does not poll eGHIS or
+`public.mwl`; it reads the current KaosPACS MWL HTTP `/worklist` through the
+Gateway/MWL boundary.
+
 KaosEghis-PACS authenticates to Gateway with `Authorization: Bearer <token>`
 when `GATEWAY_API_TOKEN` is configured. This shared token is a simple
 localhost/clinic LAN control, not internet-grade security. Leaving the token
@@ -157,7 +169,8 @@ Business logic belongs outside Orthanc:
 - Gateway: modality-facing DICOM Storage SCP, safe DICOM ingress inspection,
   optional charset/tag fixes after validation, forwarding to Orthanc,
   normalized order event validation, worklist create/update/cancel through the
-  MWL API, and MWL completion calls after successful storage/forwarding.
+  MWL API, operator-facing imaging lifecycle read API, and MWL completion calls
+  after successful storage/forwarding.
   Current Gateway audit stores only workflow event metadata and accession
   numbers, not demographics or full payloads. Current Gateway Orthanc HTTP
   client usage is limited to non-PHI reachability/future-integration

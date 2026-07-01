@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from app.api import json_response
 from app.api.admin import handle_admin_worklist_prune
+from app.api.imaging import handle_get_imaging_worklist
 from app.api.orders import handle_order_post
 from app.api.status import status_payload
 from app.api.worklist import (
@@ -27,6 +28,7 @@ from app.services.auth import is_auth_enabled, is_authorized
 LOGGER = logging.getLogger("kaospacs.gateway")
 PROTECTED_ENDPOINTS = {
     ("GET", "/status"),
+    ("GET", "/imaging/worklist"),
     ("GET", "/worklist"),
     ("PUT", "/worklist"),
     ("POST", "/worklist/complete"),
@@ -92,6 +94,9 @@ def make_handler(config: GatewayConfig):
                 return
             if path == "/status":
                 json_response(self, HTTPStatus.OK, status_payload(self.config))
+                return
+            if path == "/imaging/worklist":
+                handle_get_imaging_worklist(self, path)
                 return
             if path == "/worklist":
                 handle_get_worklist(self, path)

@@ -162,8 +162,9 @@ KaosPACS and KaosEghis-PACS have separate ownership:
 - KaosPACS owns imaging lifecycle state: complete and expire.
 
 Expiry is internal to KaosPACS. Before serving `GET /worklist` or a DICOM
-C-FIND, MWL checks active entries. If `ExpiresAt` has passed, or if `ExpiresAt`
-is missing and the scheduled imaging date has passed, MWL marks the entry:
+C-FIND, MWL checks active entries. `ExpiresAt` is the primary expiry policy. If
+`ExpiresAt` is missing, MWL falls back to the scheduled imaging date. When that
+effective imaging window has passed, MWL marks the entry:
 
 ```json
 {
