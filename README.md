@@ -23,7 +23,7 @@ Current transitional runtime:
   KaosPACS imaging lifecycle state, not a source cancellation.
 - Gateway provides localhost-only workflow API endpoints in front of the MWL
   API, including normalized order event endpoints for future KaosEghis-PACS
-  integration.
+  integration and an operator-facing imaging worklist view for UI state.
 - Gateway includes a disabled DICOM C-STORE skeleton for loopback testing only.
   It does not bind port `104`, does not use AET `VIEWREX`, does not receive
   production studies, and does not forward to Orthanc unless explicit
@@ -126,6 +126,7 @@ docker compose ps
 - Gateway health: `http://127.0.0.1:8060/health`
 - Gateway protected status: `http://127.0.0.1:8060/status`
 - Gateway worklist API: `http://127.0.0.1:8060/worklist`
+- Gateway imaging worklist API: `http://127.0.0.1:8060/imaging/worklist`
 - Gateway normalized order API:
   - `POST http://127.0.0.1:8060/orders/upsert`
   - `POST http://127.0.0.1:8060/orders/cancel`
@@ -172,6 +173,13 @@ It also reports whether the disabled Gateway DICOM skeleton is enabled.
 Gateway DICOM queue status is operational only and reports counts by queue
 state plus retry worker enabled/running state; it does not expose patient
 demographics or dataset contents.
+
+`GET /imaging/worklist` is the operator-facing imaging lifecycle endpoint for
+KaosEghis-PACS UI. It reads the current MWL JSON through Gateway, derives
+`active`, `completed`, `expired`, `cancelled`, or `inactive` state, and returns
+flat rows plus counts. KaosEghis-PACS UI should use this endpoint instead of
+reading raw `public.mwl`, eGHIS tables, or MWL internals. Lower-level
+`GET /worklist` remains available for reconcile/debug workflows.
 
 `POST /admin/worklist/prune` removes old inactive completed, cancelled, or
 expired entries from the runtime MWL worklist only. It defaults to

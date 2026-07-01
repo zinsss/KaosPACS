@@ -240,6 +240,7 @@ def test_protected_endpoint_without_token_returns_401(tmp_path) -> None:
     ("method", "path", "payload"),
     [
         ("GET", "/worklist", None),
+        ("GET", "/imaging/worklist", None),
         ("GET", "/status", None),
         ("PUT", "/worklist", {"entries": []}),
         ("POST", "/worklist/complete", {"AccessionNumber": "A1"}),
@@ -315,6 +316,166 @@ def test_protected_endpoint_correct_token_succeeds(tmp_path) -> None:
         assert status == 200
         assert body == {"entries": []}
         assert RecordingMwlHandler.calls == [{"method": "GET", "path": "/worklist", "payload": None}]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def imaging_worklist_payload():
+    return {
+        "entries": [
+            {
+                "Active": False,
+                "AccessionNumber": "COMPLETE-1",
+                "PatientID": "P-COMPLETE",
+                "PatientName": "DONE^PATIENT",
+                "PatientBirthDate": "19700101",
+                "PatientSex": "O",
+                "Modality": "BMD",
+                "ScheduledStationAETitle": "BMD",
+                "ScheduledProcedureStepStartDate": "20260629",
+                "ScheduledProcedureStepStartTime": "100000",
+                "ScheduledProcedureStepDescription": "BMD COMPLETE",
+                "CompletedAt": "2026-06-29T10:30:00+09:00",
+            },
+            {
+                "Active": True,
+                "AccessionNumber": "ACTIVE-2",
+                "PatientID": "P-ACTIVE-2",
+                "PatientName": "ACTIVE^TWO",
+                "PatientBirthDate": "19800202",
+                "PatientSex": "F",
+                "Modality": "CR",
+                "ScheduledStationAETitle": "INNOVISION",
+                "ScheduledProcedureStepStartDate": "20260629",
+                "ScheduledProcedureStepStartTime": "090000",
+                "ScheduledProcedureStepDescription": "CR ACTIVE",
+            },
+            {
+                "Active": False,
+                "AccessionNumber": "EXPIRED-1",
+                "PatientID": "P-EXPIRED",
+                "PatientName": "OLD^PATIENT",
+                "PatientBirthDate": "19600101",
+                "PatientSex": "M",
+                "Modality": "BMD",
+                "ScheduledStationAETitle": "BMD",
+                "ScheduledProcedureStepStartDate": "20260628",
+                "ScheduledProcedureStepStartTime": "090000",
+                "StudyDescription": "BMD EXPIRED",
+                "ExpiredAt": "2026-06-29T23:59:59+09:00",
+                "ExpireReason": "expired_without_imaging",
+            },
+            {
+                "Active": False,
+                "AccessionNumber": "CANCELLED-1",
+                "PatientID": "P-CANCEL",
+                "PatientName": "CANCEL^PATIENT",
+                "PatientBirthDate": "19900101",
+                "PatientSex": "O",
+                "Modality": "BMD",
+                "ScheduledStationAETitle": "BMD",
+                "ScheduledProcedureStepStartDate": "20260630",
+                "ScheduledProcedureStepStartTime": "110000",
+                "RequestedProcedureDescription": "BMD CANCELLED",
+                "CancelledAt": "2026-06-30T08:00:00+09:00",
+                "CancelReason": "cancelled_in_source",
+            },
+            {
+                "Active": False,
+                "AccessionNumber": "INACTIVE-1",
+                "PatientID": "P-INACTIVE",
+                "PatientName": "INACTIVE^PATIENT",
+                "PatientBirthDate": "",
+                "PatientSex": "O",
+                "Modality": "OT",
+                "ScheduledStationAETitle": "BMD",
+                "ScheduledProcedureStepStartDate": "",
+                "ScheduledProcedureStepStartTime": "",
+                "ScheduledProcedureStepDescription": "",
+            },
+            {
+                "Active": True,
+                "AccessionNumber": "ACTIVE-1",
+                "PatientID": "P-ACTIVE-1",
+                "PatientName": "ACTIVE^ONE",
+                "PatientBirthDate": "19810101",
+                "PatientSex": "M",
+                "Modality": "BMD",
+                "ScheduledStationAETitle": "BMD",
+                "ScheduledProcedureStepStartDate": "20260629",
+                "ScheduledProcedureStepStartTime": "080000",
+                "ScheduledProcedureStepDescription": "BMD ACTIVE",
+            },
+        ]
+    }
+
+
+def test_imaging_worklist_maps_states_counts_and_calls_only_mwl_worklist(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl(imaging_worklist_payload())
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_api_token="secret-token",
+    )
+
+    try:
+        status, body = request_json(
+            "GET",
+            f"{gateway_url}/imaging/worklist",
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        assert status == 200
+        assert body["counts"] == {
+            "active": 2,
+            "completed": 1,
+            "expired": 1,
+            "cancelled": 1,
+            "inactive": 1,
+        }
+        assert [entry["AccessionNumber"] for entry in body["entries"]] == [
+            "ACTIVE-1",
+            "ACTIVE-2",
+            "CANCELLED-1",
+            "EXPIRED-1",
+            "COMPLETE-1",
+            "INACTIVE-1",
+        ]
+        entries = {entry["AccessionNumber"]: entry for entry in body["entries"]}
+        assert entries["ACTIVE-1"] == {
+            "state": "active",
+            "AccessionNumber": "ACTIVE-1",
+            "PatientID": "P-ACTIVE-1",
+            "PatientName": "ACTIVE^ONE",
+            "PatientBirthDate": "19810101",
+            "PatientSex": "M",
+            "Modality": "BMD",
+            "ScheduledStationAETitle": "BMD",
+            "ScheduledAt": "2026-06-29T08:00:00",
+            "Description": "BMD ACTIVE",
+            "CompletedAt": None,
+            "ExpiredAt": None,
+            "ExpireReason": None,
+            "CancelledAt": None,
+            "CancelReason": None,
+        }
+        assert entries["COMPLETE-1"]["state"] == "completed"
+        assert entries["COMPLETE-1"]["CompletedAt"] == "2026-06-29T10:30:00+09:00"
+        assert entries["EXPIRED-1"]["state"] == "expired"
+        assert entries["EXPIRED-1"]["ExpiredAt"] == "2026-06-29T23:59:59+09:00"
+        assert entries["EXPIRED-1"]["ExpireReason"] == "expired_without_imaging"
+        assert entries["CANCELLED-1"]["state"] == "cancelled"
+        assert entries["CANCELLED-1"]["CancelReason"] == "cancelled_in_source"
+        assert entries["INACTIVE-1"]["state"] == "inactive"
+        assert RecordingMwlHandler.calls == [
+            {"method": "GET", "path": "/worklist", "payload": None}
+        ]
+        assert audit_rows(audit_db) == [
+            ("imaging_worklist_get", "/imaging/worklist", None, 200, 1, None)
+        ]
     finally:
         stop_server(gateway_server, gateway_thread)
         stop_server(mwl_server, mwl_thread)
