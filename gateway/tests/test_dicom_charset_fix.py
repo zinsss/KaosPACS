@@ -196,15 +196,69 @@ def test_already_decoded_korean_str_remains_unchanged_before_reserialization() -
     assert result.dataset.SeriesDescription == original_series_description
 
 
+def test_missing_charset_with_euc_kr_mojibake_is_normalized_to_utf8(
+    tmp_path,
+) -> None:
+    dataset = _dataset()
+    del dataset.SpecificCharacterSet
+    dataset.PatientName = "ÀÌÁø¼º"
+    dataset.StudyDescription = "¼ö°üÀý2¸Å"
+    dataset.SeriesDescription = "AP (B)"
+    identity = {
+        "SOPInstanceUID": str(dataset.SOPInstanceUID),
+        "StudyInstanceUID": str(dataset.StudyInstanceUID),
+        "SeriesInstanceUID": str(dataset.SeriesInstanceUID),
+        "AccessionNumber": str(dataset.AccessionNumber),
+        "PatientID": str(dataset.PatientID),
+        "PixelData": bytes(dataset.PixelData),
+    }
+
+    result = maybe_fix_charset(dataset, enabled=True, mode="iso_ir_149_to_utf8")
+
+    assert result.fix_applied is True
+    assert result.reason == "missing_charset_euc_kr_to_utf8_applied"
+    assert result.original_specific_character_set == []
+    assert result.new_specific_character_set == [UTF8_CHARSET]
+    assert result.dataset.SpecificCharacterSet == UTF8_CHARSET
+    assert str(result.dataset.PatientName) == "이진성"
+    assert result.dataset.StudyDescription == "수관절2매"
+    assert result.dataset.SeriesDescription == "AP (B)"
+    assert str(result.dataset.SOPInstanceUID) == identity["SOPInstanceUID"]
+    assert str(result.dataset.StudyInstanceUID) == identity["StudyInstanceUID"]
+    assert str(result.dataset.SeriesInstanceUID) == identity["SeriesInstanceUID"]
+    assert str(result.dataset.AccessionNumber) == identity["AccessionNumber"]
+    assert str(result.dataset.PatientID) == identity["PatientID"]
+    assert bytes(result.dataset.PixelData) == identity["PixelData"]
+
+    output_path = tmp_path / "missing-charset-fixed.dcm"
+    result.dataset.save_as(output_path, write_like_original=False)
+    reread = dcmread(output_path)
+    assert reread.SpecificCharacterSet == UTF8_CHARSET
+    assert str(reread.PatientName) == "이진성"
+    assert reread.StudyDescription == "수관절2매"
+
+
+def test_missing_charset_with_ascii_text_is_skipped_without_guessing() -> None:
+    dataset = _dataset()
+    del dataset.SpecificCharacterSet
+    dataset.PatientName = "ASCII^ONLY"
+    dataset.StudyDescription = "ASCII STUDY"
+
+    result = maybe_fix_charset(dataset, enabled=True, mode="iso_ir_149_to_utf8")
+
+    assert result.fix_applied is False
+    assert result.reason == "not_target_charset"
+    assert result.error_code == "skipped_not_target_charset"
+    assert not hasattr(result.dataset, "SpecificCharacterSet")
+
+
 def test_non_target_charsets_are_skipped_without_guessing() -> None:
     utf8_dataset = _dataset()
     utf8_dataset.SpecificCharacterSet = "ISO_IR 192"
-    missing_dataset = _dataset()
-    del missing_dataset.SpecificCharacterSet
     unknown_dataset = _dataset()
     unknown_dataset.SpecificCharacterSet = "X_UNKNOWN"
 
-    for dataset in (utf8_dataset, missing_dataset, unknown_dataset):
+    for dataset in (utf8_dataset, unknown_dataset):
         result = maybe_fix_charset(
             dataset,
             enabled=True,

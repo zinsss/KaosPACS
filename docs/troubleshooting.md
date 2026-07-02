@@ -60,10 +60,12 @@ GATEWAY_DICOM_CHARSET_FIX_MODE=iso_ir_149_to_utf8
 ```
 
 Fix reports are written to `/app/data/dicom_charset_fix.jsonl`. Gateway only
-fixes declared `ISO_IR 149` or `ISO 2022 IR 149` acquisition DICOM. It skips
-missing charset, unknown charset, and `ISO_IR 192`. Gateway does not apply
-broad charset guessing, private tag edits, pixel edits, UID edits, PatientID
-edits, AccessionNumber edits, Modality edits, or PHI logging.
+fixes declared `ISO_IR 149` or `ISO 2022 IR 149` acquisition DICOM, plus the
+validated INNOVISION missing-charset EUC-KR display-text pattern. It skips
+missing charset with ASCII/no Korean-like text, unknown charset, and
+`ISO_IR 192`. Gateway does not apply broad charset guessing, private tag edits,
+pixel edits, UID edits, PatientID edits, AccessionNumber edits, Modality edits,
+or PHI logging.
 
 If queue rows appear unexpectedly, verify:
 

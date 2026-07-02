@@ -6,10 +6,10 @@ Korean text has two separate paths in KaosPACS:
 - Modality-produced acquisition DICOM stored by Orthanc.
 
 Keep those paths separate. Worklist text can be UTF-8-safe today. Acquisition
-DICOM charset rewriting must stay guarded and limited to the validated Korean
-`ISO_IR 149` path. The fixer is enabled by default so Gateway normalizes known
-legacy Korean studies before Orthanc storage, and it can be explicitly disabled
-for rollback.
+DICOM charset rewriting must stay guarded and limited to validated Korean
+paths. The fixer is enabled by default so Gateway normalizes known legacy
+Korean studies before Orthanc storage, and it can be explicitly disabled for
+rollback.
 
 ## Worklist Text
 
@@ -35,9 +35,11 @@ modality is verified to support UTF-8 MWL correctly.
 ## Acquisition DICOM
 
 `SpecificCharacterSet=ISO_IR 149` has been observed in Korean modality-created
-DICOM data. Orthanc can receive and store DICOM data, but viewer behavior and
-Korean text display still need evaluation with actual clinical samples and
-target viewers.
+DICOM data. INNOVISION has also produced acquisition DICOM with missing
+`SpecificCharacterSet` while supported display text fields contain EUC-KR bytes
+that pydicom/Orthanc otherwise expose as Latin-1-looking mojibake. Orthanc can
+receive and store DICOM data, but viewer behavior and Korean text display still
+need evaluation with actual clinical samples and target viewers.
 
 ## Current Rule
 
@@ -48,9 +50,15 @@ GATEWAY_DICOM_CHARSET_FIX_ENABLED=true
 GATEWAY_DICOM_CHARSET_FIX_MODE=iso_ir_149_to_utf8
 ```
 
-It remains narrow: it only processes datasets whose `SpecificCharacterSet`
-contains `ISO_IR 149` or `ISO 2022 IR 149`. It skips missing charset, unknown
-charset, and `ISO_IR 192`. It does not guess.
+It remains narrow. It processes:
+
+- datasets whose `SpecificCharacterSet` contains `ISO_IR 149` or
+  `ISO 2022 IR 149`
+- datasets with missing `SpecificCharacterSet` only when approved display text
+  fields match the validated EUC-KR mojibake pattern seen from INNOVISION
+
+It skips missing charset with ASCII/no Korean-like text, unknown charset, and
+`ISO_IR 192`. It does not perform broad guessing.
 
 Rollback is:
 
@@ -91,9 +99,10 @@ store PatientName values, PatientID values, DOB, sex, phone, address,
 diagnosis, physician names, institution names, full datasets, or pixel data.
 
 Gateway does not normalize or rewrite Korean acquisition character sets unless
-the declared charset matches the guarded fixer rule.
+the declared charset matches the guarded fixer rule, or the dataset matches the
+validated missing-charset EUC-KR display-text pattern.
 
-## Guarded ISO_IR 149 Fixer
+## Guarded Korean Fixer
 
 The only supported fixer mode is:
 
@@ -101,8 +110,10 @@ The only supported fixer mode is:
 iso_ir_149_to_utf8
 ```
 
-Gateway processes only datasets whose `SpecificCharacterSet`
-contains `ISO_IR 149` or `ISO 2022 IR 149`. It writes the original received file under
+Gateway processes only datasets whose `SpecificCharacterSet` contains
+`ISO_IR 149` or `ISO 2022 IR 149`, or datasets with missing
+`SpecificCharacterSet` that contain the validated EUC-KR mojibake pattern in
+approved display text fields. It writes the original received file under
 `/app/data/dicom-inbox`, writes a normalized forwarding copy under
 `/app/data/dicom-inbox/forwarded`, sets the forwarding copy
 `SpecificCharacterSet` to `ISO_IR 192`, and forwards that copy to Orthanc.

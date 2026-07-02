@@ -32,7 +32,8 @@ Gateway receives C-STORE as `VIEWREX:104`, stores files in
 `/app/data/dicom-inbox`, records a read-only charset/tag inspection report, and
 forwards datasets to Orthanc on the internal DICOM port. The narrow Korean
 charset fixer is enabled by default. If a dataset declares `ISO_IR 149` or
-`ISO 2022 IR 149`, Gateway writes a normalized forwarding copy under
+`ISO 2022 IR 149`, or matches the validated missing-charset EUC-KR display-text
+pattern, Gateway writes a normalized forwarding copy under
 `/app/data/dicom-inbox/forwarded`; otherwise it forwards the original file. A
 persistent queue foundation can be enabled with
 `GATEWAY_DICOM_QUEUE_ENABLED=true`, which records pending queue rows after

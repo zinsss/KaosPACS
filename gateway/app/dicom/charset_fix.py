@@ -79,7 +79,10 @@ def maybe_fix_charset(
         return _replace(base, reason="mode_off", error_code="skipped_mode_off")
     if mode != "iso_ir_149_to_utf8":
         return _replace(base, reason="unsupported_mode", error_code="skipped_unsupported_mode")
-    if not _contains_iso_ir_149(original_charsets):
+    missing_charset = not original_charsets
+    if not _contains_iso_ir_149(original_charsets) and not (
+        missing_charset and _contains_euc_kr_mojibake_text(dataset)
+    ):
         return _replace(
             base,
             reason="not_target_charset",
@@ -91,6 +94,11 @@ def maybe_fix_charset(
     skipped_keywords: set[str] = set()
     _rewrite_supported_text(working, fixed_keywords, skipped_keywords)
     working.SpecificCharacterSet = UTF8_CHARSET
+    reason = (
+        "missing_charset_euc_kr_to_utf8_applied"
+        if missing_charset
+        else "iso_ir_149_to_utf8_applied"
+    )
 
     return CharsetFixResult(
         dataset=working,
@@ -106,7 +114,7 @@ def maybe_fix_charset(
         fix_applied=True,
         fixed_keywords=sorted(fixed_keywords),
         skipped_keywords=sorted(skipped_keywords),
-        reason="iso_ir_149_to_utf8_applied",
+        reason=reason,
         error_code=None,
     )
 
@@ -202,10 +210,11 @@ def _rewrite_supported_text(
 def _normalize_text_value(value: Any) -> Any:
     if isinstance(value, bytes):
         return value.decode("euc_kr")
-    if isinstance(value, str):
-        return value
     if isinstance(value, PersonName):
-        return value
+        decoded = _decode_latin1_euc_kr_mojibake(str(value))
+        return PersonName(decoded) if decoded != str(value) else value
+    if isinstance(value, str):
+        return _decode_latin1_euc_kr_mojibake(value)
     if isinstance(value, MultiValue):
         return MultiValue(
             value.type_constructor,
@@ -216,6 +225,64 @@ def _normalize_text_value(value: Any) -> Any:
     if isinstance(value, tuple):
         return tuple(_normalize_text_value(item) for item in value)
     return value
+
+
+def _contains_euc_kr_mojibake_text(dataset: Dataset) -> bool:
+    for element in dataset:
+        if element.VR == "SQ":
+            for item in element.value:
+                if isinstance(item, Dataset) and _contains_euc_kr_mojibake_text(item):
+                    return True
+            continue
+
+        keyword = element.keyword
+        if element.tag.is_private:
+            continue
+        if keyword in PROTECTED_KEYWORDS:
+            continue
+        if keyword not in SUPPORTED_TEXT_KEYWORDS:
+            continue
+        if str(element.VR) not in SUPPORTED_VRS:
+            continue
+        if _value_contains_euc_kr_mojibake(element.value):
+            return True
+    return False
+
+
+def _value_contains_euc_kr_mojibake(value: Any) -> bool:
+    if isinstance(value, bytes):
+        return _contains_hangul(_decode_euc_kr_bytes(value))
+    if isinstance(value, PersonName):
+        return _is_latin1_euc_kr_mojibake(str(value))
+    if isinstance(value, str):
+        return _is_latin1_euc_kr_mojibake(value)
+    if isinstance(value, (MultiValue, list, tuple)):
+        return any(_value_contains_euc_kr_mojibake(item) for item in value)
+    return False
+
+
+def _is_latin1_euc_kr_mojibake(value: str) -> bool:
+    decoded = _decode_latin1_euc_kr_mojibake(value)
+    return decoded != value and _contains_hangul(decoded)
+
+
+def _decode_latin1_euc_kr_mojibake(value: str) -> str:
+    try:
+        decoded = value.encode("latin1").decode("euc_kr")
+    except UnicodeError:
+        return value
+    return decoded if _contains_hangul(decoded) else value
+
+
+def _decode_euc_kr_bytes(value: bytes) -> str:
+    try:
+        return value.decode("euc_kr")
+    except UnicodeError:
+        return ""
+
+
+def _contains_hangul(value: str) -> bool:
+    return any("\uac00" <= character <= "\ud7a3" for character in value)
 
 
 def _base_result(

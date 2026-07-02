@@ -111,10 +111,11 @@ GATEWAY_DICOM_CHARSET_FIX_REPORT_PATH=/app/data/dicom_charset_fix.jsonl
 Gateway stores incoming datasets locally, writes a read-only non-PHI
 charset/tag inspection summary, forwards datasets to Orthanc, and then
 matches/completes the MWL item in direct mode. The charset fixer is enabled by
-default for the narrow `iso_ir_149_to_utf8` rule. It only processes declared
-`ISO_IR 149` or `ISO 2022 IR 149` acquisition DICOM. It skips missing charset,
-unknown charset, and `ISO_IR 192`. When a fix applies, Gateway keeps the
-original received file and writes a normalized forwarding copy under
+default for the narrow `iso_ir_149_to_utf8` rule. It processes declared
+`ISO_IR 149` or `ISO 2022 IR 149` acquisition DICOM, and the validated
+INNOVISION missing-charset EUC-KR display-text pattern. It skips missing
+charset with ASCII/no Korean-like text, unknown charset, and `ISO_IR 192`. When
+a fix applies, Gateway keeps the original received file and writes a normalized forwarding copy under
 `/app/data/dicom-inbox/forwarded`. It does not perform broad charset guessing,
 private tag edits, pixel edits, UID edits, PatientID edits, AccessionNumber
 edits, or Modality edits.

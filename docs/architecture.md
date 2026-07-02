@@ -75,14 +75,16 @@ The Gateway Orthanc HTTP client is used for non-PHI operational reachability in
 
 Gateway stores received datasets in `/app/data/dicom-inbox`, performs read-only
 charset/tag inspection, applies the guarded charset fixer by default when the
-declared charset matches `ISO_IR 149` or `ISO 2022 IR 149`, forwards the selected dataset to Orthanc in direct mode,
+declared charset matches `ISO_IR 149` or `ISO 2022 IR 149` or when the dataset
+matches the validated missing-charset EUC-KR display-text pattern, forwards the selected dataset to Orthanc in direct mode,
 then fetches the active MWL worklist and attempts a deterministic match by
 `AccessionNumber`, `RequestedProcedureID`, then `ScheduledProcedureStepID`. If
 the match succeeds and has an accession number, Gateway calls MWL completion. A
 persistent DICOM forwarding queue exists at `/app/data/gateway_queue.sqlite3`;
 queue mode stores locally, enqueues, returns success after enqueue, and lets
 the retry worker forward later. Queue mode does not match studies or call MWL
-completion yet. The charset fixer supports only `ISO_IR 149` / `ISO 2022 IR 149`
+completion yet. The charset fixer supports declared `ISO_IR 149` /
+`ISO 2022 IR 149` and the validated missing-charset EUC-KR display-text pattern
 to `ISO_IR 192` for approved display text fields. Gateway never
 modifies UIDs, pixel data, PatientID, AccessionNumber, Modality, private tags,
 or unknown text tags.
@@ -168,7 +170,7 @@ Business logic belongs outside Orthanc:
 
 - Gateway: modality-facing DICOM Storage SCP, C-STORE association validation,
   local DICOM inbox storage, read-only charset/tag inspection, guarded
-  default-on charset normalization for validated `ISO_IR 149` acquisition DICOM,
+  default-on charset normalization for validated Korean acquisition DICOM,
   forwarding datasets to Orthanc, normalized order event validation, worklist
   create/update/cancel through the MWL API, operator-facing imaging lifecycle
   read API, and MWL completion calls after successful storage/forwarding.
@@ -178,8 +180,9 @@ Business logic belongs outside Orthanc:
   DICOM inspection JSONL summaries under `/app/data/dicom_inspection.jsonl`
   and optional non-PHI charset-fix reports under
   `/app/data/dicom_charset_fix.jsonl`. Charset fixing is enabled by default
-  for the conservative declared `ISO_IR 149` rule. Gateway does not perform
-  broad charset guessing, tag normalization, pixel
+  for the conservative declared `ISO_IR 149` rule and validated missing-charset
+  EUC-KR display-text pattern. Gateway does not perform broad charset guessing,
+  tag normalization, pixel
   edits, or PHI logging. The
   forwarding queue and retry worker are operational infrastructure. Queue mode
   does not call MWL completion; completion is currently part of the direct

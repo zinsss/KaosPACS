@@ -35,7 +35,8 @@ Current runtime:
   study to active MWL entries, and completes the matched worklist item. It
   records a read-only charset/tag inspection summary at
   `/app/data/dicom_inspection.jsonl`. The guarded charset fixer is enabled by
-  default and only supports declared `ISO_IR 149` / `ISO 2022 IR 149` to
+  default and supports declared `ISO_IR 149` / `ISO 2022 IR 149`, plus the
+  validated INNOVISION missing-charset EUC-KR display-text pattern, to
   `ISO_IR 192` for approved display text fields. It does not modify UIDs,
   pixel data, PatientID,
   AccessionNumber, Modality, private tags, or unapproved fields.
@@ -139,9 +140,11 @@ docker compose ps
   default with `GATEWAY_DICOM_CHARSET_FIX_ENABLED=true` and
   `GATEWAY_DICOM_CHARSET_FIX_MODE=iso_ir_149_to_utf8`; reports are written to
   `/app/data/dicom_charset_fix.jsonl`. It applies only to declared Korean
-  acquisition DICOM character sets. When a fix applies, Gateway keeps the
-  original received file in `/app/data/dicom-inbox` and writes the normalized
-  forwarding copy under `/app/data/dicom-inbox/forwarded`. To disable, set
+  acquisition DICOM character sets or the validated missing-charset EUC-KR
+  display-text pattern. Missing charset with plain ASCII text is still skipped;
+  unknown charsets and UTF-8 are also skipped. When a fix applies, Gateway
+  keeps the original received file in `/app/data/dicom-inbox` and writes the
+  normalized forwarding copy under `/app/data/dicom-inbox/forwarded`. To disable, set
   `GATEWAY_DICOM_CHARSET_FIX_ENABLED=false` and
   `GATEWAY_DICOM_CHARSET_FIX_MODE=off`, then restart Gateway. `GATEWAY_DICOM_FORWARD_MODE=direct`
   is the default. Optional
