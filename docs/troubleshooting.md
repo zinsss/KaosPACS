@@ -192,7 +192,7 @@ Document findings before proposing normalization.
 Open the web study browser from a workstation:
 
 ```text
-http://192.168.0.200:8081
+http://192.168.0.200/emr.php
 ```
 
 If the page is unavailable, check the web container and port:
