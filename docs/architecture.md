@@ -161,6 +161,11 @@ Orthanc is storage, index, REST, DICOMweb, and viewer plugin infrastructure. It
 should stay boring. Its DICOM receive path is behind Gateway, not directly
 exposed as the legacy modality endpoint.
 
+KaosPACS Web is a read-only viewer launcher surface. It queries Orthanc REST
+for past studies, proxies Orthanc instance previews as thumbnails, and builds
+Weasis DICOMweb launch links. It does not own workflow state, infer completion,
+write MWL entries, or receive DICOM.
+
 Business logic belongs outside Orthanc:
 
 - Gateway: modality-facing DICOM Storage SCP, C-STORE association validation,
@@ -188,7 +193,9 @@ Business logic belongs outside Orthanc:
   directly with Orthanc. It owns KaosPACS internal expiry for active entries
   whose imaging window passed without DICOM completion, and it must not infer
   source cancellation or deletion from eGHIS or `public.mwl`.
-- Web: browser launch, viewer routing, and EMR-facing PACS screens.
+- Web: read-only Orthanc study browser and Weasis launcher. It displays past
+  studies after Orthanc storage; it is not part of the acquisition or MWL
+  completion path.
 - Migration: read-only ViewRex extraction and additive import tooling.
 
 The ViewRex replacement boundary is the modality and EMR contract, not the old
