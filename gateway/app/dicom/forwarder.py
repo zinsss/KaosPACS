@@ -32,7 +32,7 @@ class DicomForwarder:
 
     def forward_file(self, path: Path) -> ForwardResult:
         try:
-            dataset = dcmread(path)
+            dataset = dcmread(path, force=True)
         except Exception as error:
             LOGGER.error(
                 "DICOM forward read failed exception=%s target_host=%s target_port=%s target_aet=%s",

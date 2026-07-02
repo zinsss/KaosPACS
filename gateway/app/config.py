@@ -36,6 +36,11 @@ DEFAULT_GATEWAY_DICOM_INSPECTION_ENABLED = True
 DEFAULT_GATEWAY_DICOM_INSPECTION_REPORT_PATH = Path(
     "/app/data/dicom_inspection.jsonl"
 )
+DEFAULT_GATEWAY_DICOM_CHARSET_FIX_ENABLED = True
+DEFAULT_GATEWAY_DICOM_CHARSET_FIX_MODE = "iso_ir_149_to_utf8"
+DEFAULT_GATEWAY_DICOM_CHARSET_FIX_REPORT_PATH = Path(
+    "/app/data/dicom_charset_fix.jsonl"
+)
 
 
 @dataclass(frozen=True)
@@ -77,6 +82,13 @@ class GatewayConfig:
     gateway_dicom_inspection_report_path: Path = (
         DEFAULT_GATEWAY_DICOM_INSPECTION_REPORT_PATH
     )
+    gateway_dicom_charset_fix_enabled: bool = (
+        DEFAULT_GATEWAY_DICOM_CHARSET_FIX_ENABLED
+    )
+    gateway_dicom_charset_fix_mode: str = DEFAULT_GATEWAY_DICOM_CHARSET_FIX_MODE
+    gateway_dicom_charset_fix_report_path: Path = (
+        DEFAULT_GATEWAY_DICOM_CHARSET_FIX_REPORT_PATH
+    )
 
     def safe_log_dict(self) -> dict[str, object]:
         values = asdict(self)
@@ -113,6 +125,15 @@ def _forward_mode_from_env(raw: str | None) -> str:
     if mode not in {"direct", "queue"}:
         raise ValueError(
             "GATEWAY_DICOM_FORWARD_MODE must be one of: direct, queue"
+        )
+    return mode
+
+
+def _charset_fix_mode_from_env(raw: str | None) -> str:
+    mode = (raw or DEFAULT_GATEWAY_DICOM_CHARSET_FIX_MODE).strip().lower()
+    if mode not in {"off", "iso_ir_149_to_utf8"}:
+        raise ValueError(
+            "GATEWAY_DICOM_CHARSET_FIX_MODE must be one of: off, iso_ir_149_to_utf8"
         )
     return mode
 
@@ -212,6 +233,19 @@ def load_config(env: Mapping[str, str] | None = None) -> GatewayConfig:
             source.get(
                 "GATEWAY_DICOM_INSPECTION_REPORT_PATH",
                 str(DEFAULT_GATEWAY_DICOM_INSPECTION_REPORT_PATH),
+            )
+        ),
+        gateway_dicom_charset_fix_enabled=_bool_from_env(
+            source.get("GATEWAY_DICOM_CHARSET_FIX_ENABLED"),
+            DEFAULT_GATEWAY_DICOM_CHARSET_FIX_ENABLED,
+        ),
+        gateway_dicom_charset_fix_mode=_charset_fix_mode_from_env(
+            source.get("GATEWAY_DICOM_CHARSET_FIX_MODE")
+        ),
+        gateway_dicom_charset_fix_report_path=Path(
+            source.get(
+                "GATEWAY_DICOM_CHARSET_FIX_REPORT_PATH",
+                str(DEFAULT_GATEWAY_DICOM_CHARSET_FIX_REPORT_PATH),
             )
         ),
     )
