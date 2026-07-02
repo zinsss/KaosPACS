@@ -231,8 +231,12 @@ Legacy modality
   -> Gateway stores a local copy without modifying the dataset
   -> Gateway forwards study to Orthanc internal backend
   -> Gateway calls POST /worklist/complete
-  -> future KaosPACS Web / Weasis opens study
+  -> KaosPACS Web / Weasis opens stored study
 ```
+
+KaosPACS Web is the operator surface for past stored studies. It reads Orthanc,
+shows preview thumbnails when Orthanc can render one, and opens studies in
+Weasis through Orthanc DICOMweb. It does not alter worklist state.
 
 Current default direct-mode Gateway DICOM flow:
 

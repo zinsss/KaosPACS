@@ -136,3 +136,27 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+
+  web:
+    build:
+      context: ./web
+    container_name: kaospacs-web
+    restart: unless-stopped
+    depends_on:
+      orthanc:
+        condition: service_healthy
+    ports:
+      - "${WEB_HTTP_BIND:-0.0.0.0}:${WEB_PORT:-8081}:8081"
+    environment:
+      TZ: ${TZ:-Asia/Seoul}
+      WEB_HTTP_HOST: 0.0.0.0
+      WEB_HTTP_PORT: "8081"
+      WEB_ORTHANC_URL: http://orthanc:8042
+      WEB_ORTHANC_PUBLIC_URL: ${WEB_ORTHANC_PUBLIC_URL:-http://192.168.0.200:8042}
+      WEASIS_DICOMWEB_URL: ${WEASIS_DICOMWEB_URL:-http://192.168.0.200:8042/dicom-web}
+      WEB_STUDY_LIMIT: ${WEB_STUDY_LIMIT:-100}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=2).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
