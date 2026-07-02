@@ -3,14 +3,20 @@ from __future__ import annotations
 import html
 import json
 import logging
+import warnings
 from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import parse_qs, quote_plus, urlparse
+from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
 
 from .config import Config, load_config
+from .dicom_upload import create_upload_dicom
 from .orthanc import OrthancClient, StudySummary
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    import cgi
 
 
 LOGGER = logging.getLogger("kaospacs.web")
@@ -40,7 +46,14 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
                 self._thumbnail(parsed.path.removeprefix("/thumbnail/"))
                 return
             if parsed.path in ("/", "/emr.php"):
-                self._index(parsed.query)
+                self._index(parsed.path, parsed.query)
+                return
+            self.send_error(HTTPStatus.NOT_FOUND)
+
+        def do_POST(self) -> None:
+            parsed = urlparse(self.path)
+            if parsed.path == "/emr.php":
+                self._upload(parsed.query)
                 return
             self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -81,21 +94,128 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
             self.end_headers()
             self.wfile.write(body)
 
-        def _index(self, query_string: str) -> None:
+        def _index(self, path: str, query_string: str) -> None:
             params = parse_qs(query_string)
             query = params.get("q", [""])[0]
+            patient_id = params.get("m_patid", [""])[0].strip()
+            upload_status = params.get("upload", [""])[0]
+            upload_message = _upload_status_message(upload_status)
             try:
-                studies = orthanc.studies(query=query, limit=config.study_limit)
-                body = render_index(config, studies, query=query, error="")
+                if path == "/emr.php" and patient_id:
+                    studies = orthanc.studies_for_patient(
+                        patient_id,
+                        query=query,
+                        limit=config.study_limit,
+                    )
+                elif path == "/emr.php":
+                    studies = []
+                else:
+                    studies = orthanc.studies(query=query, limit=config.study_limit)
+                body = render_index(
+                    config,
+                    studies,
+                    query=query,
+                    patient_id=patient_id,
+                    patient_name=_patient_name_from_params(params),
+                    upload_message=upload_message,
+                    error="",
+                )
             except Exception as exc:
                 LOGGER.warning("Orthanc page query failed exception=%s", exc.__class__.__name__)
-                body = render_index(config, [], query=query, error="Orthanc is not reachable.")
+                body = render_index(
+                    config,
+                    [],
+                    query=query,
+                    patient_id=patient_id,
+                    patient_name=_patient_name_from_params(params),
+                    upload_message="",
+                    error="Orthanc is not reachable.",
+                )
             encoded = body.encode("utf-8")
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(encoded)))
             self.end_headers()
             self.wfile.write(encoded)
+
+        def _upload(self, query_string: str) -> None:
+            params = parse_qs(query_string)
+            patient_id = params.get("m_patid", [""])[0].strip()
+            patient_name = _patient_name_from_params(params)
+            if not patient_id:
+                self._redirect_upload(params, "missing_patient")
+                return
+
+            content_length = int(self.headers.get("Content-Length") or "0")
+            if content_length <= 0:
+                self._redirect_upload(params, "missing_file")
+                return
+            if content_length > config.upload_max_bytes:
+                self._redirect_upload(params, "too_large")
+                return
+
+            try:
+                form = cgi.FieldStorage(
+                    fp=self.rfile,
+                    headers=self.headers,
+                    environ={
+                        "REQUEST_METHOD": "POST",
+                        "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+                        "CONTENT_LENGTH": str(content_length),
+                    },
+                )
+                field = form["file"] if "file" in form else None
+                if field is None or not getattr(field, "filename", ""):
+                    self._redirect_upload(params, "missing_file")
+                    return
+                content = field.file.read(config.upload_max_bytes + 1)
+                if not content:
+                    self._redirect_upload(params, "missing_file")
+                    return
+                if len(content) > config.upload_max_bytes:
+                    self._redirect_upload(params, "too_large")
+                    return
+                result = create_upload_dicom(
+                    patient_id=patient_id,
+                    patient_name=patient_name,
+                    filename=field.filename,
+                    content_type=getattr(field, "type", "") or "",
+                    content=content,
+                )
+                orthanc.upload_instance(result.dicom_bytes)
+            except ValueError as exc:
+                LOGGER.info(
+                    "Web upload rejected patient_id=%s reason=%s",
+                    patient_id,
+                    str(exc),
+                )
+                self._redirect_upload(params, str(exc))
+                return
+            except Exception as exc:
+                LOGGER.warning(
+                    "Web upload failed patient_id=%s exception=%s",
+                    patient_id,
+                    exc.__class__.__name__,
+                )
+                self._redirect_upload(params, "failed")
+                return
+
+            LOGGER.info(
+                "Web upload stored patient_id=%s accession_number=%s modality=%s",
+                patient_id,
+                result.accession_number,
+                result.modality,
+            )
+            self._redirect_upload(params, "success")
+
+        def _redirect_upload(self, params: dict[str, list[str]], status: str) -> None:
+            query = {key: values[0] for key, values in params.items() if values}
+            query["upload"] = status
+            location = "/emr.php?" + urlencode(query)
+            self.send_response(HTTPStatus.SEE_OTHER)
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def _json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
             encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -113,12 +233,30 @@ def render_index(
     studies: list[StudySummary],
     *,
     query: str,
+    patient_id: str = "",
+    patient_name: str = "",
+    upload_message: str = "",
     error: str,
 ) -> str:
     rows = "\n".join(_study_card(config, study) for study in studies)
-    if not rows and not error:
+    if not rows and not error and patient_id:
+        rows = (
+            '<div class="empty">No Orthanc studies were found for this patient.</div>'
+        )
+    elif not rows and not error:
         rows = '<div class="empty">No studies found in Orthanc.</div>'
     error_html = f'<div class="error">{html.escape(error)}</div>' if error else ""
+    patient_html = (
+        f'<section class="patient-context">Patient/chart number: '
+        f'<strong>{html.escape(patient_id)}</strong></section>'
+        if patient_id
+        else ""
+    )
+    upload_html = (
+        _upload_form(patient_id, patient_name, query, upload_message)
+        if patient_id
+        else '<div class="notice">No patient/chart number was provided in m_patid.</div>'
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -140,6 +278,8 @@ def render_index(
   </header>
   <main>
     {error_html}
+    {patient_html}
+    {upload_html}
     <section class="summary">{len(studies)} studies</section>
     <section class="grid">{rows}</section>
   </main>
@@ -181,6 +321,37 @@ def _study_card(config: Config, study: StudySummary) -> str:
 </article>"""
 
 
+def _upload_form(
+    patient_id: str,
+    patient_name: str,
+    query: str,
+    upload_message: str,
+) -> str:
+    query_params = {"m_patid": patient_id}
+    if patient_name:
+        query_params["m_patname"] = patient_name
+    if query:
+        query_params["q"] = query
+    action = "/emr.php?" + urlencode(query_params)
+    message = (
+        f'<div class="upload-message">{html.escape(upload_message)}</div>'
+        if upload_message
+        else ""
+    )
+    return f"""
+<section class="upload-panel">
+  <form method="post" action="{html.escape(action)}" enctype="multipart/form-data">
+    <label for="file">Add image or PDF to this patient's PACS</label>
+    <div class="upload-row">
+      <input id="file" name="file" type="file" accept="image/jpeg,image/png,application/pdf" required>
+      <button type="submit">Upload</button>
+    </div>
+    <p>JPG, PNG, and PDF are stored as DICOM in Orthanc for PatientID {html.escape(patient_id)}.</p>
+  </form>
+  {message}
+</section>"""
+
+
 def _study_payload(study: StudySummary, config: Config) -> dict[str, Any]:
     payload = asdict(study)
     payload["thumbnail_url"] = (
@@ -206,6 +377,26 @@ def _safe_limit(raw: str) -> int:
         return 100
 
 
+def _patient_name_from_params(params: dict[str, list[str]]) -> str:
+    for key in ("m_patname", "patient_name", "PatientName"):
+        value = params.get(key, [""])[0].strip()
+        if value:
+            return value
+    return ""
+
+
+def _upload_status_message(status: str) -> str:
+    return {
+        "success": "Upload added to PACS.",
+        "missing_patient": "No patient/chart number was provided.",
+        "missing_file": "Choose a JPG, PNG, or PDF file to upload.",
+        "too_large": "The selected file is too large.",
+        "unsupported_upload_type": "Only JPG, PNG, and PDF files are supported.",
+        "invalid_pdf": "The uploaded PDF file is not valid.",
+        "failed": "Upload failed while saving to PACS.",
+    }.get(status, "")
+
+
 CSS = """
 :root { color-scheme: light; --border:#d8dee8; --text:#152033; --muted:#5f6c7b; --panel:#fff; --bg:#f5f7fa; --blue:#175cd3; }
 * { box-sizing:border-box; }
@@ -219,6 +410,13 @@ button, a { min-height:36px; border-radius:6px; border:1px solid var(--border); 
 button, .primary { background:var(--blue); color:#fff; border-color:var(--blue); }
 main { padding:18px 28px 32px; }
 .summary { color:var(--muted); margin-bottom:12px; }
+.patient-context, .upload-panel { background:#fff; border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:12px; }
+.upload-panel label { display:block; font-weight:700; margin-bottom:8px; }
+.upload-row { display:flex; gap:8px; align-items:center; }
+.upload-row input { min-height:36px; }
+.upload-panel p { font-size:13px; }
+.upload-message { margin-top:8px; color:#0f766e; font-weight:700; }
+.notice { border:1px solid var(--border); background:#fff; border-radius:8px; padding:14px; margin-bottom:12px; }
 .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(360px, 1fr)); gap:12px; }
 .study { display:grid; grid-template-columns:132px minmax(0, 1fr); min-height:172px; background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
 .thumb { width:132px; min-height:172px; background:#101820; display:flex; align-items:center; justify-content:center; color:#aab6c4; }

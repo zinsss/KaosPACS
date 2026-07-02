@@ -186,6 +186,16 @@ http://192.168.0.200:8042/dicom-web
 
 The Weasis URL is controlled by `WEASIS_DICOMWEB_URL`.
 
+If uploads do not appear in PACS, confirm the EMR URL includes `m_patid`.
+Upload is only enabled on patient-context pages such as:
+
+```text
+http://192.168.0.200/emr.php?m_patid=9426
+```
+
+V1 upload accepts only JPG, PNG, and PDF files. Uploaded files are converted to
+DICOM and sent to Orthanc over the internal Docker network.
+
 ## BMD Cannot Query Worklist
 
 OsteoPro BMD normal workflow requires MWL:

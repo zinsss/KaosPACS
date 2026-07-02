@@ -12,6 +12,7 @@ class Config:
     orthanc_public_url: str
     weasis_dicomweb_url: str
     study_limit: int
+    upload_max_bytes: int
 
 
 def load_config() -> Config:
@@ -27,6 +28,7 @@ def load_config() -> Config:
             os.getenv("WEASIS_DICOMWEB_URL", f"{orthanc_public_url}/dicom-web")
         ),
         study_limit=_int_env("WEB_STUDY_LIMIT", 100),
+        upload_max_bytes=_int_env("WEB_UPLOAD_MAX_BYTES", 25 * 1024 * 1024),
     )
 
 

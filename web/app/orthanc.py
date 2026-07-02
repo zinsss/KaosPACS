@@ -42,6 +42,48 @@ class OrthancClient:
         studies = [self._study_payload(item) for item in payload]
         summaries = [self._summary(item) for item in studies]
         summaries = [item for item in summaries if self._matches_query(item, query)]
+        return self._sort_and_limit(summaries, limit)
+
+    def studies_for_patient(
+        self,
+        patient_id: str,
+        *,
+        query: str = "",
+        limit: int = 100,
+    ) -> list[StudySummary]:
+        payload = {
+            "Level": "Study",
+            "Query": {
+                "PatientID": patient_id,
+            },
+        }
+        study_ids = self._post_json("/tools/find", payload)
+        studies = [self._study_payload(item) for item in study_ids]
+        summaries = [
+            self._summary(item)
+            for item in studies
+            if str((item.get("PatientMainDicomTags") or {}).get("PatientID", ""))
+            == patient_id
+        ]
+        summaries = [item for item in summaries if self._matches_query(item, query)]
+        return self._sort_and_limit(summaries, limit)
+
+    def upload_instance(self, dicom_bytes: bytes) -> dict[str, Any]:
+        url = f"{self.base_url}/instances"
+        request = Request(
+            url,
+            data=dicom_bytes,
+            headers={"Content-Type": "application/dicom"},
+            method="POST",
+        )
+        with urlopen(request, timeout=self.timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    @staticmethod
+    def _sort_and_limit(
+        summaries: list[StudySummary],
+        limit: int,
+    ) -> list[StudySummary]:
         summaries.sort(
             key=lambda item: (
                 item.study_date or "",
@@ -106,6 +148,17 @@ class OrthancClient:
     def _json(self, path: str, params: dict[str, str] | None = None) -> Any:
         query = f"?{urlencode(params)}" if params else ""
         with urlopen(f"{self.base_url}{path}{query}", timeout=self.timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def _post_json(self, path: str, payload: dict[str, Any]) -> Any:
+        data = json.dumps(payload).encode("utf-8")
+        request = Request(
+            f"{self.base_url}{path}",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=self.timeout) as response:
             return json.loads(response.read().decode("utf-8"))
 
     @staticmethod

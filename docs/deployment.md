@@ -94,6 +94,17 @@ configured DICOMweb URL, so client workstations must be able to reach Orthanc
 HTTP at `192.168.0.200:8042` and must have Weasis installed and registered for
 the `weasis://` protocol.
 
+When eGHIS opens `http://192.168.0.200/emr.php?m_patid=<chart_no>`, KaosPACS
+Web filters studies to that chart number and shows a file upload control on
+the same patient page. V1 upload accepts JPG, PNG, and PDF only, creates a
+DICOM object with `PatientID=<chart_no>`, and uploads it to Orthanc. It does
+not ask the operator to manually type patient demographics. The upload size
+limit is controlled by:
+
+```text
+WEB_UPLOAD_MAX_BYTES=26214400
+```
+
 Gateway DICOM front-door settings:
 
 ```text
