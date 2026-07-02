@@ -28,8 +28,16 @@ def store_dataset(dataset: Dataset, storage_dir: Path) -> Path:
     storage_dir.mkdir(parents=True, exist_ok=True)
     path = dicom_storage_path(storage_dir, dataset)
     ensure_file_meta(dataset)
-    dataset.save_as(path, write_like_original=False)
+    save_dataset(path, dataset)
     return path
+
+
+def save_dataset(path: Path, dataset: Dataset) -> None:
+    try:
+        dataset.save_as(path, write_like_original=False)
+    except Exception:
+        path.unlink(missing_ok=True)
+        dataset.save_as(path, write_like_original=True)
 
 
 def ensure_file_meta(dataset: Dataset) -> None:

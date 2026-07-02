@@ -164,6 +164,29 @@ def test_store_dataset_repairs_minimal_file_meta(tmp_path) -> None:
     assert stored.SOPInstanceUID == dataset.SOPInstanceUID
 
 
+def test_store_dataset_falls_back_to_original_write_on_strict_failure(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    dataset = _minimal_dataset()
+    original_save_as = Dataset.save_as
+    calls = []
+
+    def fake_save_as(self, filename, write_like_original=True):
+        calls.append(write_like_original)
+        if write_like_original is False:
+            raise ValueError("synthetic strict write failure")
+        return original_save_as(self, filename, write_like_original=write_like_original)
+
+    monkeypatch.setattr(Dataset, "save_as", fake_save_as)
+
+    path = store_dataset(dataset, tmp_path)
+    stored = dcmread(path, force=True)
+
+    assert calls == [False, True]
+    assert stored.SOPInstanceUID == dataset.SOPInstanceUID
+
+
 def test_handle_store_accepts_minimal_event_file_meta(tmp_path) -> None:
     dataset = _minimal_dataset()
     event_file_meta = FileMetaDataset()
