@@ -238,6 +238,17 @@ KaosPACS Web is the operator surface for past stored studies. It reads Orthanc,
 shows preview thumbnails when Orthanc can render one, and opens studies in
 Weasis through Orthanc DICOMweb. It does not alter worklist state.
 
+For patient-context web launch, eGHIS opens:
+
+```text
+/emr.php?m_patid=<chart_no>
+```
+
+KaosPACS Web uses `m_patid` as the Orthanc/DICOM `PatientID`, shows only that
+patient's studies, and lets the operator upload JPG, PNG, or PDF files into
+Orthanc as DICOM for that same patient. V1 upload intentionally does not have a
+separate upload page or manual patient demographic entry.
+
 Current default direct-mode Gateway DICOM flow:
 
 ```text

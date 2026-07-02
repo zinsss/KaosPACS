@@ -155,6 +155,7 @@ services:
       WEB_ORTHANC_PUBLIC_URL: ${WEB_ORTHANC_PUBLIC_URL:-http://192.168.0.200:8042}
       WEASIS_DICOMWEB_URL: ${WEASIS_DICOMWEB_URL:-http://192.168.0.200:8042/dicom-web}
       WEB_STUDY_LIMIT: ${WEB_STUDY_LIMIT:-100}
+      WEB_UPLOAD_MAX_BYTES: ${WEB_UPLOAD_MAX_BYTES:-26214400}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=2).read()"]
       interval: 10s
