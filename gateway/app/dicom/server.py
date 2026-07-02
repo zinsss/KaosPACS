@@ -10,6 +10,13 @@ from pynetdicom.presentation import AllStoragePresentationContexts
 
 from app.clients.mwl import MwlApiClient, MwlHttpError, MwlUnavailableError
 from app.config import GatewayConfig
+from app.dicom.charset_fix import (
+    CharsetFixResult,
+    append_charset_fix_report,
+    failure_result,
+    log_charset_fix_result,
+    maybe_fix_charset,
+)
 from app.dicom.completion import CompletionResult, complete_matched_worklist
 from app.dicom.forwarder import DicomForwarder
 from app.dicom.inspection import (
@@ -19,7 +26,7 @@ from app.dicom.inspection import (
 )
 from app.dicom.matcher import MatchResult, match_dataset_to_worklist
 from app.dicom.queue import enqueue_stored_dataset
-from app.dicom.storage import store_dataset
+from app.dicom.storage import store_dataset, store_encoded_dataset
 from app.services.audit import record_gateway_event
 
 
@@ -78,6 +85,9 @@ def handle_store(
     forward_mode: str = "direct",
     inspection_enabled: bool = True,
     inspection_report_path: Path | None = None,
+    charset_fix_enabled: bool = True,
+    charset_fix_mode: str = "iso_ir_149_to_utf8",
+    charset_fix_report_path: Path | None = None,
 ) -> int:
     dataset = event.dataset.copy()
     dataset.file_meta = event.file_meta
@@ -85,10 +95,34 @@ def handle_store(
     try:
         path = store_dataset(dataset, storage_dir)
     except Exception as error:
+        LOGGER.warning(
+            "C-STORE strict write failed, trying encoded fallback sop_instance_uid=%s exception=%s",
+            _text(getattr(dataset, "SOPInstanceUID", "")),
+            error.__class__.__name__,
+        )
+        try:
+            path = store_encoded_dataset(event, dataset, storage_dir)
+        except Exception as fallback_error:
+            LOGGER.error(
+                "C-STORE write failed sop_instance_uid=%s exception=%s",
+                _text(getattr(dataset, "SOPInstanceUID", "")),
+                fallback_error.__class__.__name__,
+            )
+            _audit_dicom_event(
+                audit_db,
+                dataset,
+                event_type="dicom_store_received",
+                status_code=WRITE_FAILURE_STATUS,
+                success=False,
+                error_code="write_failed",
+            )
+            return WRITE_FAILURE_STATUS
+
+    if path is None:
         LOGGER.error(
             "C-STORE write failed sop_instance_uid=%s exception=%s",
             _text(getattr(dataset, "SOPInstanceUID", "")),
-            error.__class__.__name__,
+            "UnknownError",
         )
         _audit_dicom_event(
             audit_db,
@@ -125,6 +159,15 @@ def handle_store(
         inspection_enabled=inspection_enabled,
         inspection_report_path=inspection_report_path,
     )
+    forwarding_dataset, forwarding_path = _fix_after_inspection(
+        dataset,
+        path,
+        storage_dir,
+        audit_db,
+        charset_fix_enabled=charset_fix_enabled,
+        charset_fix_mode=charset_fix_mode,
+        charset_fix_report_path=charset_fix_report_path,
+    )
     if forward_mode == "queue":
         if not queue_enabled:
             LOGGER.warning(
@@ -138,33 +181,43 @@ def handle_store(
                 forward_mode,
             )
             return WRITE_FAILURE_STATUS
-        queue_id = _enqueue_after_store(queue_db, dataset, path, mode=forward_mode)
+        queue_id = _enqueue_after_store(
+            queue_db,
+            forwarding_dataset,
+            forwarding_path,
+            mode=forward_mode,
+        )
         if queue_id is None:
             return WRITE_FAILURE_STATUS
         return SUCCESS_STATUS
 
     if queue_enabled and queue_db is not None:
-        _enqueue_after_store(queue_db, dataset, path, mode=forward_mode)
+        _enqueue_after_store(
+            queue_db,
+            forwarding_dataset,
+            forwarding_path,
+            mode=forward_mode,
+        )
 
     if forwarder is None:
-        _match_after_success(dataset, mwl_client, audit_db)
+        _match_after_success(forwarding_dataset, mwl_client, audit_db)
         return SUCCESS_STATUS
 
-    forward_result = forwarder.forward_file(path)
+    forward_result = forwarder.forward_file(forwarding_path)
     if forward_result.success:
         _audit_dicom_event(
             audit_db,
-            dataset,
+            forwarding_dataset,
             event_type="dicom_forward_success",
             status_code=forward_result.status_code,
             success=True,
         )
-        _match_after_success(dataset, mwl_client, audit_db)
+        _match_after_success(forwarding_dataset, mwl_client, audit_db)
         return SUCCESS_STATUS
 
     _audit_dicom_event(
         audit_db,
-        dataset,
+        forwarding_dataset,
         event_type="dicom_forward_failed",
         status_code=forward_result.status_code,
         success=False,
@@ -335,6 +388,86 @@ def _inspect_after_store(
         )
 
 
+def _fix_after_inspection(
+    dataset: Any,
+    original_path: Path,
+    storage_dir: Path,
+    audit_db: Path | None,
+    *,
+    charset_fix_enabled: bool,
+    charset_fix_mode: str,
+    charset_fix_report_path: Path | None,
+) -> tuple[Any, Path]:
+    try:
+        result = maybe_fix_charset(
+            dataset,
+            enabled=charset_fix_enabled,
+            mode=charset_fix_mode,
+        )
+        forwarding_path = original_path
+        if result.fix_applied:
+            forwarding_path = store_dataset(result.dataset, storage_dir / "forwarded")
+        _record_charset_fix_result(audit_db, charset_fix_report_path, result)
+        return result.dataset, forwarding_path
+    except Exception as error:
+        LOGGER.warning(
+            "DICOM charset fix failed sop_instance_uid=%s study_instance_uid=%s "
+            "accession_number=%s modality=%s exception=%s",
+            _text(getattr(dataset, "SOPInstanceUID", "")),
+            _text(getattr(dataset, "StudyInstanceUID", "")),
+            _text(getattr(dataset, "AccessionNumber", "")),
+            _text(getattr(dataset, "Modality", "")),
+            error.__class__.__name__,
+        )
+        result = failure_result(
+            dataset,
+            enabled=charset_fix_enabled,
+            mode=charset_fix_mode,
+        )
+        _record_charset_fix_result(audit_db, charset_fix_report_path, result)
+        return dataset, original_path
+
+
+def _record_charset_fix_result(
+    audit_db: Path | None,
+    report_path: Path | None,
+    result: CharsetFixResult,
+) -> None:
+    try:
+        log_charset_fix_result(result)
+        if report_path is not None:
+            append_charset_fix_report(report_path, result)
+    except Exception as error:
+        LOGGER.warning(
+            "DICOM charset fix report write failed sop_instance_uid=%s "
+            "study_instance_uid=%s accession_number=%s modality=%s exception=%s",
+            result.sop_instance_uid,
+            result.study_instance_uid,
+            result.accession_number,
+            result.modality,
+            error.__class__.__name__,
+        )
+    _audit_dicom_charset_fix(audit_db, result)
+
+
+def _audit_dicom_charset_fix(
+    audit_db: Path | None,
+    result: CharsetFixResult,
+) -> None:
+    if audit_db is None:
+        return
+    record_gateway_event(
+        audit_db,
+        event_type="dicom_charset_fix_checked",
+        request_path="/dicom/c-store",
+        accession_number=result.accession_number or None,
+        matched_by=None,
+        status_code=None,
+        success=result.error_code != "charset_fix_failed",
+        error_code=result.error_code,
+    )
+
+
 def _audit_dicom_inspection(
     audit_db: Path | None,
     accession_number: str | None,
@@ -440,6 +573,9 @@ class GatewayDicomServer:
         forward_mode: str = "direct",
         inspection_enabled: bool = True,
         inspection_report_path: Path | None = None,
+        charset_fix_enabled: bool = True,
+        charset_fix_mode: str = "iso_ir_149_to_utf8",
+        charset_fix_report_path: Path | None = None,
     ) -> None:
         self.bind = bind
         self.port = port
@@ -453,6 +589,9 @@ class GatewayDicomServer:
         self.forward_mode = forward_mode
         self.inspection_enabled = inspection_enabled
         self.inspection_report_path = inspection_report_path
+        self.charset_fix_enabled = charset_fix_enabled
+        self.charset_fix_mode = charset_fix_mode
+        self.charset_fix_report_path = charset_fix_report_path
         self._server: Any | None = None
 
     def start(self) -> "GatewayDicomServer":
@@ -495,6 +634,9 @@ class GatewayDicomServer:
             forward_mode=self.forward_mode,
             inspection_enabled=self.inspection_enabled,
             inspection_report_path=self.inspection_report_path,
+            charset_fix_enabled=self.charset_fix_enabled,
+            charset_fix_mode=self.charset_fix_mode,
+            charset_fix_report_path=self.charset_fix_report_path,
         )
 
 
@@ -538,4 +680,7 @@ def start_dicom_listener(config: GatewayConfig) -> GatewayDicomServer | None:
         forward_mode=config.gateway_dicom_forward_mode,
         inspection_enabled=config.gateway_dicom_inspection_enabled,
         inspection_report_path=config.gateway_dicom_inspection_report_path,
+        charset_fix_enabled=config.gateway_dicom_charset_fix_enabled,
+        charset_fix_mode=config.gateway_dicom_charset_fix_mode,
+        charset_fix_report_path=config.gateway_dicom_charset_fix_report_path,
     ).start()

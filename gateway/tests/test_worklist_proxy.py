@@ -672,6 +672,11 @@ def test_status_with_token_returns_operational_metadata(tmp_path) -> None:
                 "enabled": True,
                 "report_path": "/app/data/dicom_inspection.jsonl",
             },
+            "charset_fix": {
+                "enabled": True,
+                "mode": "iso_ir_149_to_utf8",
+                "report_path": "/app/data/dicom_charset_fix.jsonl",
+            },
             "mode": "production-front-door",
         }
         assert body["ownership"]["storage_scp"] == {

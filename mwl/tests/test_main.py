@@ -1,12 +1,16 @@
 import json
 import sqlite3
 import sys
+from io import BytesIO
 from datetime import datetime, timezone
 from http.client import HTTPConnection
 from pathlib import Path
 
-from pydicom.dataset import Dataset
+from pydicom.dataset import Dataset, FileMetaDataset
+from pydicom.filereader import dcmread
+from pydicom.filewriter import dcmwrite
 from pydicom.sequence import Sequence
+from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -149,6 +153,41 @@ def test_filters_multiple_entries_by_modality_and_station():
     assert matches[0].PatientID == "KAOSMWL002"
 
 
+def test_blank_station_query_falls_back_to_calling_ae():
+    xray = Dataset()
+    xray_step = Dataset()
+    xray_step.Modality = "CR"
+    xray_step.ScheduledStationAETitle = "INNOVISION"
+    xray.ScheduledProcedureStepSequence = Sequence([xray_step])
+
+    bmd = Dataset()
+    bmd_step = Dataset()
+    bmd_step.Modality = "BMD"
+    bmd_step.ScheduledStationAETitle = "BMD"
+    bmd.ScheduledProcedureStepSequence = Sequence([bmd_step])
+
+    query = Dataset()
+    query.ScheduledProcedureStepSequence = Sequence([Dataset()])
+
+    assert matches_query(query, xray, calling_ae="INNOVISION")
+    assert not matches_query(query, bmd, calling_ae="INNOVISION")
+
+
+def test_explicit_station_query_overrides_calling_ae():
+    bmd = Dataset()
+    bmd_step = Dataset()
+    bmd_step.Modality = "BMD"
+    bmd_step.ScheduledStationAETitle = "BMD"
+    bmd.ScheduledProcedureStepSequence = Sequence([bmd_step])
+
+    query = Dataset()
+    query_step = Dataset()
+    query_step.ScheduledStationAETitle = "BMD"
+    query.ScheduledProcedureStepSequence = Sequence([query_step])
+
+    assert matches_query(query, bmd, calling_ae="INNOVISION")
+
+
 def test_filters_by_accession_number():
     path = Path(__file__).resolve().parents[1] / "config" / "worklist.json"
     items = load_worklist_datasets(path, now=NOW)
@@ -181,12 +220,37 @@ def test_valid_entry_is_returned(tmp_path):
     assert datasets[0].PatientID == "VALID001"
 
 
-def test_missing_specific_character_set_defaults_to_utf8(tmp_path):
+def test_mwl_dicom_character_set_defaults_to_legacy_korean(tmp_path):
     entry = valid_entry()
     entry.pop("SpecificCharacterSet")
     path = write_worklist(tmp_path, [entry])
 
     datasets = load_worklist_datasets(path, now=NOW)
+
+    assert len(datasets) == 1
+    assert datasets[0].SpecificCharacterSet == "ISO 2022 IR 149"
+
+
+def test_mwl_dicom_character_set_overrides_json_entry(tmp_path):
+    path = write_worklist(
+        tmp_path,
+        [valid_entry(SpecificCharacterSet="ISO_IR 192")],
+    )
+
+    datasets = load_worklist_datasets(path, now=NOW)
+
+    assert len(datasets) == 1
+    assert datasets[0].SpecificCharacterSet == "ISO 2022 IR 149"
+
+
+def test_mwl_dicom_character_set_can_be_configured_to_utf8(tmp_path):
+    path = write_worklist(tmp_path, [valid_entry(SpecificCharacterSet="ISO 2022 IR 149")])
+
+    datasets = load_worklist_datasets(
+        path,
+        now=NOW,
+        dicom_character_set="ISO_IR 192",
+    )
 
     assert len(datasets) == 1
     assert datasets[0].SpecificCharacterSet == "ISO_IR 192"
@@ -210,11 +274,51 @@ def test_korean_text_is_preserved_in_mwl_dataset(tmp_path):
     datasets = load_worklist_datasets(path, now=NOW)
 
     assert len(datasets) == 1
-    assert str(datasets[0].SpecificCharacterSet) == "ISO_IR 192"
+    assert str(datasets[0].SpecificCharacterSet) == "ISO 2022 IR 149"
     assert str(datasets[0].PatientName) == "홍길동"
     assert (
         str(datasets[0].ScheduledProcedureStepSequence[0].ScheduledProcedureStepDescription)
         == "골밀도 검사"
+    )
+
+
+def test_korean_mwl_dataset_encodes_as_euc_kr_for_legacy_charset(tmp_path):
+    path = write_worklist(
+        tmp_path,
+        [
+            valid_entry(
+                PatientName="이진성",
+                PatientID="7435",
+                AccessionNumber="11",
+                StudyDescription="골밀도 검사",
+                RequestedProcedureDescription="골밀도 검사",
+                ScheduledProcedureStepDescription="골밀도검사",
+            )
+        ],
+    )
+
+    dataset = load_worklist_datasets(path, now=NOW)[0]
+    dataset.file_meta = FileMetaDataset()
+    dataset.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    dataset.file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.31"
+    dataset.file_meta.MediaStorageSOPInstanceUID = generate_uid()
+    dataset.SOPClassUID = dataset.file_meta.MediaStorageSOPClassUID
+    dataset.SOPInstanceUID = dataset.file_meta.MediaStorageSOPInstanceUID
+
+    buffer = BytesIO()
+    dcmwrite(buffer, dataset, write_like_original=False)
+    raw = buffer.getvalue()
+
+    assert "이진성".encode("euc_kr") in raw
+    assert "이진성".encode("utf-8") not in raw
+
+    buffer.seek(0)
+    reread = dcmread(buffer)
+    assert reread.SpecificCharacterSet == "ISO 2022 IR 149"
+    assert str(reread.PatientName) == "이진성"
+    assert (
+        str(reread.ScheduledProcedureStepSequence[0].ScheduledProcedureStepDescription)
+        == "골밀도검사"
     )
 
 

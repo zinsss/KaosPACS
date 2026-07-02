@@ -37,6 +37,7 @@ Deployment defaults preserve:
 - `ORTHANC_INTERNAL_DICOM_PORT=11112`
 - `MWL_AET=VIEWREX_WL`
 - `MWL_PORT=105`
+- `MWL_DICOM_CHARACTER_SET=ISO 2022 IR 149`
 - `MWL_API_PORT=8055`
 - `PACS_HOST_IP=192.168.0.200`
 
@@ -58,6 +59,10 @@ cross-machine KaosEghis-PACS integration, set `GATEWAY_HTTP_BIND=0.0.0.0`, keep
 `GATEWAY_API_TOKEN` configured, and restrict access to trusted clinic hosts
 with the firewall. The MWL HTTP API remains published on host loopback only at
 `127.0.0.1:8055`; do not expose MWL API on the LAN.
+
+MWL JSON/API traffic remains UTF-8. The DICOM MWL C-FIND response charset is
+controlled separately by `MWL_DICOM_CHARACTER_SET`; the clinic default is
+`ISO 2022 IR 149` for legacy Korean BMD compatibility.
 
 Useful endpoints:
 
@@ -98,12 +103,22 @@ GATEWAY_FORWARDING_AET=KAOSPACS_GW
 GATEWAY_DICOM_FORWARD_TIMEOUT_SECONDS=10
 GATEWAY_DICOM_INSPECTION_ENABLED=true
 GATEWAY_DICOM_INSPECTION_REPORT_PATH=/app/data/dicom_inspection.jsonl
+GATEWAY_DICOM_CHARSET_FIX_ENABLED=true
+GATEWAY_DICOM_CHARSET_FIX_MODE=iso_ir_149_to_utf8
+GATEWAY_DICOM_CHARSET_FIX_REPORT_PATH=/app/data/dicom_charset_fix.jsonl
 ```
 
 Gateway stores incoming datasets locally, writes a read-only non-PHI
-charset/tag inspection summary, forwards datasets unchanged to Orthanc, and
-then matches/completes the MWL item in direct mode. It does not perform charset
-fixes, tag normalization, pixel edits, or metadata rewriting.
+charset/tag inspection summary, forwards datasets to Orthanc, and then
+matches/completes the MWL item in direct mode. The charset fixer is enabled by
+default for the narrow `iso_ir_149_to_utf8` rule. It processes declared
+`ISO_IR 149` or `ISO 2022 IR 149` acquisition DICOM, and the validated
+INNOVISION missing-charset EUC-KR display-text pattern. It skips missing
+charset with ASCII/no Korean-like text, unknown charset, and `ISO_IR 192`. When
+a fix applies, Gateway keeps the original received file and writes a normalized forwarding copy under
+`/app/data/dicom-inbox/forwarded`. It does not perform broad charset guessing,
+private tag edits, pixel edits, UID edits, PatientID edits, AccessionNumber
+edits, or Modality edits.
 
 Inspection reports are JSONL records under the Gateway data mount:
 
@@ -115,6 +130,23 @@ Inspection reports are JSONL records under the Gateway data mount:
 They include DICOM identifiers, declared character set, transfer syntax, text
 tag presence, text VR counts, and review reasons. They must not include patient
 names, patient IDs, DOB, sex, diagnosis, full datasets, or pixel data.
+
+Charset fix reports are JSONL records under the Gateway data mount:
+
+```text
+/app/data/dicom_charset_fix.jsonl
+/srv/docker/kaospacs/gateway/dicom_charset_fix.jsonl
+```
+
+They contain fixed/skipped keyword names and status only, not old or new text
+values. To disable charset fixing:
+
+```bash
+# set these in .env
+# GATEWAY_DICOM_CHARSET_FIX_ENABLED=false
+# GATEWAY_DICOM_CHARSET_FIX_MODE=off
+docker compose up -d gateway
+```
 
 Orthanc internal DICOM settings:
 

@@ -28,7 +28,7 @@ DEFAULT_WORKLIST_SEED_PATH = Path("/app/config/worklist.json")
 DEFAULT_WORKLIST_PATH = Path("/app/data/worklist.json")
 DEFAULT_AUDIT_DB_PATH = Path("/app/data/mwl_audit.sqlite3")
 DEFAULT_TIMEZONE = "Asia/Seoul"
-DEFAULT_SPECIFIC_CHARACTER_SET = "ISO_IR 192"
+DEFAULT_DICOM_CHARACTER_SET = "ISO 2022 IR 149"
 EXPIRE_REASON_WITHOUT_IMAGING = "expired_without_imaging"
 REQUIRED_FIELDS = (
     "PatientID",
@@ -486,11 +486,12 @@ def _load_worklist(path: Path, now: datetime | None = None) -> list[dict[str, An
     return normalized
 
 
-def _entry_to_dataset(entry: dict[str, Any]) -> Dataset:
+def _entry_to_dataset(
+    entry: dict[str, Any],
+    dicom_character_set: str = DEFAULT_DICOM_CHARACTER_SET,
+) -> Dataset:
     dataset = Dataset()
-    dataset.SpecificCharacterSet = (
-        _text(entry.get("SpecificCharacterSet")) or DEFAULT_SPECIFIC_CHARACTER_SET
-    )
+    dataset.SpecificCharacterSet = dicom_character_set
     dataset.PatientName = _text(entry.get("PatientName"))
     dataset.PatientID = _text(entry.get("PatientID"))
     dataset.PatientBirthDate = _text(entry.get("PatientBirthDate"))
@@ -521,10 +522,14 @@ def load_worklist_datasets(
     path: Path = DEFAULT_WORKLIST_PATH,
     now: datetime | None = None,
     audit_db_path: Path | None = None,
+    dicom_character_set: str = DEFAULT_DICOM_CHARACTER_SET,
 ) -> list[Dataset]:
     if audit_db_path is not None:
         expire_worklist_file(path, audit_db_path=audit_db_path, now=now)
-    return [_entry_to_dataset(entry) for entry in _load_worklist(path, now=now)]
+    return [
+        _entry_to_dataset(entry, dicom_character_set=dicom_character_set)
+        for entry in _load_worklist(path, now=now)
+    ]
 
 
 def _dataset_value(dataset: Dataset, keyword: str) -> str:
@@ -538,7 +543,7 @@ def _query_step(identifier: Dataset) -> Dataset:
     return Dataset()
 
 
-def matches_query(identifier: Dataset, item: Dataset) -> bool:
+def matches_query(identifier: Dataset, item: Dataset, calling_ae: str = "") -> bool:
     requested_patient_id = _dataset_value(identifier, "PatientID")
     if requested_patient_id and requested_patient_id != _dataset_value(item, "PatientID"):
         return False
@@ -555,6 +560,8 @@ def matches_query(identifier: Dataset, item: Dataset) -> bool:
         return False
 
     requested_station = _dataset_value(requested_step, "ScheduledStationAETitle")
+    if not requested_station:
+        requested_station = calling_ae
     if requested_station and requested_station != _dataset_value(item_step, "ScheduledStationAETitle"):
         return False
 
@@ -569,7 +576,11 @@ def _assoc_context(event: evt.Event) -> tuple[str, str, str]:
     return remote_ip, calling_ae, called_ae
 
 
-def make_handle_find(worklist_path: Path, audit_db_path: Path | None = None):
+def make_handle_find(
+    worklist_path: Path,
+    audit_db_path: Path | None = None,
+    dicom_character_set: str = DEFAULT_DICOM_CHARACTER_SET,
+):
     def handle_find(event: evt.Event):
         identifier = event.identifier
         remote_ip, calling_ae, called_ae = _assoc_context(event)
@@ -580,13 +591,21 @@ def make_handle_find(worklist_path: Path, audit_db_path: Path | None = None):
         requested_station = _dataset_value(query_step, "ScheduledStationAETitle")
 
         try:
-            datasets = load_worklist_datasets(worklist_path, audit_db_path=audit_db_path)
+            datasets = load_worklist_datasets(
+                worklist_path,
+                audit_db_path=audit_db_path,
+                dicom_character_set=dicom_character_set,
+            )
         except Exception:
             LOGGER.exception("Failed to load worklist path=%s", worklist_path)
             yield 0xA700, None
             return
 
-        matches = [dataset for dataset in datasets if matches_query(identifier, dataset)]
+        matches = [
+            dataset
+            for dataset in datasets
+            if matches_query(identifier, dataset, calling_ae=calling_ae)
+        ]
         LOGGER.info(
             "C-FIND query remote_ip=%s calling_ae=%s called_ae=%s patient_id=%r accession=%r modality=%r station_aet=%r loaded=%s matches=%s",
             remote_ip,
@@ -874,6 +893,7 @@ def start_server(
     port: int,
     worklist_path: Path,
     audit_db_path: Path | None = None,
+    dicom_character_set: str = DEFAULT_DICOM_CHARACTER_SET,
     block: bool = True,
 ):
     ae = AE(ae_title=ae_title)
@@ -881,16 +901,24 @@ def start_server(
     ae.add_supported_context(Verification)
 
     LOGGER.info(
-        "Starting KaosPACS MWL SCP ae_title=%s port=%s worklist=%s",
+        "Starting KaosPACS MWL SCP ae_title=%s port=%s worklist=%s dicom_character_set=%s",
         ae_title,
         port,
         worklist_path,
+        dicom_character_set,
     )
     return ae.start_server(
         ("", port),
         block=block,
         evt_handlers=[
-            (evt.EVT_C_FIND, make_handle_find(worklist_path, audit_db_path)),
+            (
+                evt.EVT_C_FIND,
+                make_handle_find(
+                    worklist_path,
+                    audit_db_path,
+                    dicom_character_set=dicom_character_set,
+                ),
+            ),
             (evt.EVT_C_ECHO, handle_echo),
         ],
     )
@@ -909,6 +937,10 @@ def main() -> None:
     seed_path = Path(os.getenv("WORKLIST_SEED_PATH", str(DEFAULT_WORKLIST_SEED_PATH)))
     worklist_path = Path(os.getenv("WORKLIST_PATH", str(DEFAULT_WORKLIST_PATH)))
     audit_db_path = Path(os.getenv("MWL_AUDIT_DB", str(DEFAULT_AUDIT_DB_PATH)))
+    dicom_character_set = os.getenv(
+        "MWL_DICOM_CHARACTER_SET",
+        DEFAULT_DICOM_CHARACTER_SET,
+    ) or DEFAULT_DICOM_CHARACTER_SET
     LOGGER.info("Runtime timestamp=%s", datetime.now().isoformat(timespec="seconds"))
     initialize_worklist_from_seed(worklist_path=worklist_path, seed_path=seed_path)
     start_api_server(
@@ -922,6 +954,7 @@ def main() -> None:
         port=port,
         worklist_path=worklist_path,
         audit_db_path=audit_db_path,
+        dicom_character_set=dicom_character_set,
     )
 
 

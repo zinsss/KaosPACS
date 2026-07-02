@@ -9,8 +9,8 @@ worklist SCP. Orthanc uses PostgreSQL for metadata/index storage while DICOM
 binaries stay on host file storage.
 
 KaosPACS remains EMR-agnostic. eGHIS integration, polling, routing, web launch,
-Weasis launch coordination, charset fixing, and ViewRex database migration
-remain separate future work.
+Weasis launch coordination, broad charset fixing, and ViewRex database
+migration remain separate future work.
 
 ## Architecture Stage
 
@@ -31,11 +31,15 @@ Current runtime:
   `127.0.0.1`, while cross-machine KaosEghis-PACS integration should bind
   `0.0.0.0` with bearer-token auth and firewall restriction.
 - Gateway receives production C-STORE as `VIEWREX:104`, stores a local copy
-  under `/app/data/dicom-inbox`, forwards the unchanged dataset to Orthanc,
-  matches the study to active MWL entries, and completes the matched worklist
-  item. It records a read-only charset/tag inspection summary at
-  `/app/data/dicom_inspection.jsonl`. It does not perform charset fixes, tag
-  normalization, pixel edits, or metadata rewriting.
+  under `/app/data/dicom-inbox`, forwards the dataset to Orthanc, matches the
+  study to active MWL entries, and completes the matched worklist item. It
+  records a read-only charset/tag inspection summary at
+  `/app/data/dicom_inspection.jsonl`. The guarded charset fixer is enabled by
+  default and supports declared `ISO_IR 149` / `ISO 2022 IR 149`, plus the
+  validated INNOVISION missing-charset EUC-KR display-text pattern, to
+  `ISO_IR 192` for approved display text fields. It does not modify UIDs,
+  pixel data, PatientID,
+  AccessionNumber, Modality, private tags, or unapproved fields.
 - Gateway can protect workflow endpoints with `GATEWAY_API_TOKEN` bearer-token
   authentication. `/health` remains unauthenticated.
 - Gateway writes a minimal workflow audit DB at
@@ -116,6 +120,8 @@ docker compose ps
 - Gateway production DICOM SCP: `192.168.0.200:104`, AET `VIEWREX`
 - Orthanc internal DICOM backend: `orthanc:11112`, AET `VIEWREX`
 - MWL SCP: `192.168.0.200:105`, AET `VIEWREX_WL`
+- MWL DICOM charset: `ISO 2022 IR 149` by default for legacy Korean BMD
+  compatibility. JSON/API worklist data remains UTF-8.
 - MWL local API: `http://127.0.0.1:8055/health`
 - Gateway health: `http://127.0.0.1:8060/health`
 - Gateway protected status: `http://127.0.0.1:8060/status`
@@ -127,11 +133,20 @@ docker compose ps
 - Gateway protected admin API:
   - `POST http://127.0.0.1:8060/admin/worklist/prune`
 - Gateway DICOM front door: enabled by default as `VIEWREX:104`. It stores
-  received DICOM objects under `/app/data/dicom-inbox`, forwards them unchanged
-  to Orthanc at `orthanc:11112`, and does not perform charset fixes or tag
-  edits. It appends non-PHI charset/tag inspection summaries to
+  received DICOM objects under `/app/data/dicom-inbox` and forwards them to
+  Orthanc at `orthanc:11112`. It appends non-PHI charset/tag inspection summaries to
   `/app/data/dicom_inspection.jsonl` when
-  `GATEWAY_DICOM_INSPECTION_ENABLED=true`. `GATEWAY_DICOM_FORWARD_MODE=direct`
+  `GATEWAY_DICOM_INSPECTION_ENABLED=true`. The charset fixer is enabled by
+  default with `GATEWAY_DICOM_CHARSET_FIX_ENABLED=true` and
+  `GATEWAY_DICOM_CHARSET_FIX_MODE=iso_ir_149_to_utf8`; reports are written to
+  `/app/data/dicom_charset_fix.jsonl`. It applies only to declared Korean
+  acquisition DICOM character sets or the validated missing-charset EUC-KR
+  display-text pattern. Missing charset with plain ASCII text is still skipped;
+  unknown charsets and UTF-8 are also skipped. When a fix applies, Gateway
+  keeps the original received file in `/app/data/dicom-inbox` and writes the
+  normalized forwarding copy under `/app/data/dicom-inbox/forwarded`. To disable, set
+  `GATEWAY_DICOM_CHARSET_FIX_ENABLED=false` and
+  `GATEWAY_DICOM_CHARSET_FIX_MODE=off`, then restart Gateway. `GATEWAY_DICOM_FORWARD_MODE=direct`
   is the default. Optional
   `GATEWAY_DICOM_FORWARD_MODE=queue` stores locally, enqueues, returns success
   after enqueue, and lets the retry worker forward later. Queue mode does not
@@ -165,9 +180,10 @@ host loopback only and must not be exposed on the LAN.
 state only. It must not expose worklist entries, patient demographics, chart
 numbers, accession numbers, diagnosis, EMR notes, tokens, or request payloads.
 It also reports Gateway DICOM ownership, forwarding target, inspection report
-path, and queue state. Gateway DICOM queue status is operational only and
-reports counts by queue state plus retry worker enabled/running state; it does
-not expose patient demographics or dataset contents.
+path, charset-fix setting/report path, and queue state. Gateway DICOM queue
+status is operational only and reports counts by queue state plus retry worker
+enabled/running state; it does not expose patient demographics or dataset
+contents.
 
 `GET /imaging/worklist` is the operator-facing imaging lifecycle endpoint for
 KaosEghis-PACS UI. It reads the current MWL JSON through Gateway, derives
