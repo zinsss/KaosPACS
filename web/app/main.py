@@ -39,7 +39,7 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
             if parsed.path.startswith("/thumbnail/"):
                 self._thumbnail(parsed.path.removeprefix("/thumbnail/"))
                 return
-            if parsed.path == "/":
+            if parsed.path in ("/", "/emr.php"):
                 self._index(parsed.query)
                 return
             self.send_error(HTTPStatus.NOT_FOUND)

@@ -117,7 +117,7 @@ docker compose ps
 ## Test Endpoints
 
 - Orthanc HTTP: `http://192.168.0.200:8042`
-- KaosPACS Web: `http://192.168.0.200:8081`
+- KaosPACS Web: `http://192.168.0.200/emr.php`
 - Gateway production DICOM SCP: `192.168.0.200:104`, AET `VIEWREX`
 - Orthanc internal DICOM backend: `orthanc:11112`, AET `VIEWREX`
 - MWL SCP: `192.168.0.200:105`, AET `VIEWREX_WL`

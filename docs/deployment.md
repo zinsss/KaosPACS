@@ -69,7 +69,7 @@ GET http://127.0.0.1:8060/imaging/worklist
 POST http://127.0.0.1:8060/orders/upsert
 POST http://127.0.0.1:8060/orders/cancel
 POST http://127.0.0.1:8060/admin/worklist/prune
-http://192.168.0.200:8081
+http://192.168.0.200/emr.php
 ```
 
 Production order integrations should send normalized order events to Gateway,
@@ -82,14 +82,14 @@ configured by:
 
 ```text
 WEB_HTTP_BIND=0.0.0.0
-WEB_PORT=8081
+WEB_PORT=80
 WEB_ORTHANC_PUBLIC_URL=http://192.168.0.200:8042
 WEASIS_DICOMWEB_URL=http://192.168.0.200:8042/dicom-web
 WEB_STUDY_LIMIT=100
 ```
 
 The web container talks to Orthanc internally at `http://orthanc:8042`.
-Browsers open `http://192.168.0.200:8081`. The Weasis buttons use the
+Browsers open `http://192.168.0.200/emr.php`. The Weasis buttons use the
 configured DICOMweb URL, so client workstations must be able to reach Orthanc
 HTTP at `192.168.0.200:8042` and must have Weasis installed and registered for
 the `weasis://` protocol.
