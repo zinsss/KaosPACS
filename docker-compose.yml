@@ -68,6 +68,7 @@ services:
       TZ: ${TZ:-Asia/Seoul}
       MWL_AET: ${MWL_AET:-VIEWREX_WL}
       MWL_PORT: "105"
+      MWL_DICOM_CHARACTER_SET: ${MWL_DICOM_CHARACTER_SET:-ISO 2022 IR 149}
       MWL_API_HOST: "0.0.0.0"
       MWL_API_PORT: "8055"
       MWL_AUDIT_DB: /app/data/mwl_audit.sqlite3

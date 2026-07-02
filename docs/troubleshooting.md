@@ -149,8 +149,16 @@ the workflow will not match the legacy configuration.
 
 ## Korean Text Display Issue
 
-Gateway and MWL preserve Korean order/worklist text as UTF-8 JSON, and MWL
-DICOM responses default to `SpecificCharacterSet=ISO_IR 192`.
+Gateway and MWL preserve Korean order/worklist text as UTF-8 JSON. MWL DICOM
+C-FIND responses use `MWL_DICOM_CHARACTER_SET`, which defaults to:
+
+```text
+SpecificCharacterSet=ISO 2022 IR 149
+```
+
+This is the legacy Korean DICOM character set used for BMD compatibility. If a
+modality is verified to support UTF-8 MWL correctly, set
+`MWL_DICOM_CHARACTER_SET=ISO_IR 192` and redeploy MWL.
 
 `SpecificCharacterSet=ISO_IR 149` has also been observed in
 modality-produced acquisition DICOM. The current runtime reports those samples

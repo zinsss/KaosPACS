@@ -21,14 +21,16 @@ MWL writes runtime JSON with UTF-8 text preserved and returns JSON responses as:
 application/json; charset=utf-8
 ```
 
-MWL DICOM responses default to:
+MWL DICOM C-FIND responses default to the legacy Korean character set expected
+by the BMD workflow:
 
 ```text
-SpecificCharacterSet = ISO_IR 192
+SpecificCharacterSet = ISO 2022 IR 149
 ```
 
-`ISO_IR 192` is DICOM UTF-8. It is used unless a worklist entry explicitly
-provides another `SpecificCharacterSet`.
+The runtime JSON remains UTF-8; the MWL service converts the outgoing DICOM
+response according to `MWL_DICOM_CHARACTER_SET`. Use `ISO_IR 192` only if a
+modality is verified to support UTF-8 MWL correctly.
 
 ## Acquisition DICOM
 

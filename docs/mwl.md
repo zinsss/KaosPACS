@@ -40,6 +40,18 @@ KaosEghis-PACS is responsible for reading eGHIS with read-only access,
 normalizing orders, and sending worklist events to Gateway. In production,
 Gateway validates those events and updates MWL through the KaosPACS MWL API.
 
+The JSON and HTTP API stay UTF-8. DICOM C-FIND responses use the configured MWL
+DICOM character set:
+
+```text
+MWL_DICOM_CHARACTER_SET=ISO 2022 IR 149
+```
+
+This legacy Korean setting is the clinic default for BMD compatibility. It
+causes outgoing MWL DICOM values to be encoded consistently with
+`SpecificCharacterSet=ISO 2022 IR 149`. Set `MWL_DICOM_CHARACTER_SET=ISO_IR 192`
+only for modalities that are verified to handle UTF-8 MWL correctly.
+
 The checked-in sample contains fictional test entries including:
 
 ```text

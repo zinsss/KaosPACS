@@ -119,6 +119,8 @@ docker compose ps
 - Gateway production DICOM SCP: `192.168.0.200:104`, AET `VIEWREX`
 - Orthanc internal DICOM backend: `orthanc:11112`, AET `VIEWREX`
 - MWL SCP: `192.168.0.200:105`, AET `VIEWREX_WL`
+- MWL DICOM charset: `ISO 2022 IR 149` by default for legacy Korean BMD
+  compatibility. JSON/API worklist data remains UTF-8.
 - MWL local API: `http://127.0.0.1:8055/health`
 - Gateway health: `http://127.0.0.1:8060/health`
 - Gateway protected status: `http://127.0.0.1:8060/status`

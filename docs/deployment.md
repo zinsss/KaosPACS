@@ -37,6 +37,7 @@ Deployment defaults preserve:
 - `ORTHANC_INTERNAL_DICOM_PORT=11112`
 - `MWL_AET=VIEWREX_WL`
 - `MWL_PORT=105`
+- `MWL_DICOM_CHARACTER_SET=ISO 2022 IR 149`
 - `MWL_API_PORT=8055`
 - `PACS_HOST_IP=192.168.0.200`
 
@@ -58,6 +59,10 @@ cross-machine KaosEghis-PACS integration, set `GATEWAY_HTTP_BIND=0.0.0.0`, keep
 `GATEWAY_API_TOKEN` configured, and restrict access to trusted clinic hosts
 with the firewall. The MWL HTTP API remains published on host loopback only at
 `127.0.0.1:8055`; do not expose MWL API on the LAN.
+
+MWL JSON/API traffic remains UTF-8. The DICOM MWL C-FIND response charset is
+controlled separately by `MWL_DICOM_CHARACTER_SET`; the clinic default is
+`ISO 2022 IR 149` for legacy Korean BMD compatibility.
 
 Useful endpoints:
 
