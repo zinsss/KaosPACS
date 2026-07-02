@@ -158,6 +158,44 @@ Compare behavior in:
 
 Document findings before proposing normalization.
 
+## KaosPACS Web Or Weasis Does Not Open
+
+Open the web study browser from a workstation:
+
+```text
+http://192.168.0.200/emr.php
+```
+
+If the page is unavailable, check the web container and port:
+
+```bash
+docker compose ps web
+docker compose logs web
+```
+
+If thumbnails do not appear, verify Orthanc is healthy and has stored studies.
+KaosPACS Web proxies Orthanc instance previews from `http://orthanc:8042`.
+
+If the Weasis button does nothing, verify Weasis is installed on the
+workstation and registered for the `weasis://` protocol. If Weasis opens but
+does not load images, confirm the workstation can reach:
+
+```text
+http://192.168.0.200:8042/dicom-web
+```
+
+The Weasis URL is controlled by `WEASIS_DICOMWEB_URL`.
+
+If uploads do not appear in PACS, confirm the EMR URL includes `m_patid`.
+Upload is only enabled on patient-context pages such as:
+
+```text
+http://192.168.0.200/emr.php?m_patid=9426
+```
+
+V1 upload accepts only JPG, PNG, and PDF files. Uploaded files are converted to
+DICOM and sent to Orthanc over the internal Docker network.
+
 ## BMD Cannot Query Worklist
 
 OsteoPro BMD normal workflow requires MWL:

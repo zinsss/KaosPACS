@@ -69,12 +69,41 @@ GET http://127.0.0.1:8060/imaging/worklist
 POST http://127.0.0.1:8060/orders/upsert
 POST http://127.0.0.1:8060/orders/cancel
 POST http://127.0.0.1:8060/admin/worklist/prune
+http://192.168.0.200/emr.php
 ```
 
 Production order integrations should send normalized order events to Gateway,
 and Gateway calls the internal MWL API. Raw Gateway `/worklist` endpoints
 remain internal/development helpers. Gateway receives production DICOM studies
 on `VIEWREX:104`; it does not poll eGHIS.
+
+KaosPACS Web is a read-only study browser for past Orthanc studies. It is
+configured by:
+
+```text
+WEB_HTTP_BIND=0.0.0.0
+WEB_PORT=80
+WEB_ORTHANC_PUBLIC_URL=http://192.168.0.200:8042
+WEASIS_DICOMWEB_URL=http://192.168.0.200:8042/dicom-web
+WEB_STUDY_LIMIT=100
+```
+
+The web container talks to Orthanc internally at `http://orthanc:8042`.
+Browsers open `http://192.168.0.200/emr.php`. The Weasis buttons use the
+configured DICOMweb URL, so client workstations must be able to reach Orthanc
+HTTP at `192.168.0.200:8042` and must have Weasis installed and registered for
+the `weasis://` protocol.
+
+When eGHIS opens `http://192.168.0.200/emr.php?m_patid=<chart_no>`, KaosPACS
+Web filters studies to that chart number and shows a file upload control on
+the same patient page. V1 upload accepts JPG, PNG, and PDF only, creates a
+DICOM object with `PatientID=<chart_no>`, and uploads it to Orthanc. It does
+not ask the operator to manually type patient demographics. The upload size
+limit is controlled by:
+
+```text
+WEB_UPLOAD_MAX_BYTES=26214400
+```
 
 Gateway DICOM front-door settings:
 

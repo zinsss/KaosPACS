@@ -4,13 +4,14 @@ KaosPACS is a Docker-based PACS replacement stack for an expired proprietary
 ViewRex PACS system used with eGHIS EMR and legacy imaging devices.
 
 The current scope runs Gateway as the production DICOM Storage SCP front door,
-Orthanc as the internal storage/index/viewer backend, and MWL as the dedicated
-worklist SCP. Orthanc uses PostgreSQL for metadata/index storage while DICOM
-binaries stay on host file storage.
+Orthanc as the internal storage/index/viewer backend, MWL as the dedicated
+worklist SCP, and KaosPACS Web as a small past-study browser. Orthanc uses
+PostgreSQL for metadata/index storage while DICOM binaries stay on host file
+storage.
 
-KaosPACS remains EMR-agnostic. eGHIS integration, polling, routing, web launch,
-Weasis launch coordination, charset fixing, and ViewRex database migration
-remain separate future work.
+KaosPACS remains EMR-agnostic. eGHIS integration, polling, advanced routing,
+broad charset fixing, and ViewRex database migration remain separate future
+work.
 
 ## Architecture Stage
 
@@ -47,6 +48,9 @@ Current runtime:
   configured retry-based forwarding.
 - Gateway is the single workflow and storage integration boundary.
 - Orthanc is the internal storage, index, REST, DICOMweb, and viewer backend.
+- KaosPACS Web reads Orthanc, shows thumbnails for stored studies, and provides
+  Weasis launch links through Orthanc DICOMweb. It is read-only and does not
+  alter MWL state.
 - KaosEghis-PACS will remain the EMR-aware adapter that reads eGHIS with
   read-only access, normalizes orders, and sends worklist events to Gateway.
   It should not call MWL directly in production, call Orthanc directly, or
@@ -113,6 +117,7 @@ docker compose ps
 ## Test Endpoints
 
 - Orthanc HTTP: `http://192.168.0.200:8042`
+- KaosPACS Web: `http://192.168.0.200/emr.php`
 - Gateway production DICOM SCP: `192.168.0.200:104`, AET `VIEWREX`
 - Orthanc internal DICOM backend: `orthanc:11112`, AET `VIEWREX`
 - MWL SCP: `192.168.0.200:105`, AET `VIEWREX_WL`
@@ -126,6 +131,14 @@ docker compose ps
   - `POST http://127.0.0.1:8060/orders/cancel`
 - Gateway protected admin API:
   - `POST http://127.0.0.1:8060/admin/worklist/prune`
+- KaosPACS Web reads Orthanc over Docker internal HTTP and generates
+  `weasis://` links that ask Weasis to load studies from
+  `http://192.168.0.200:8042/dicom-web`. Workstations need Weasis installed
+  and registered for the `weasis://` protocol. When eGHIS opens
+  `/emr.php?m_patid=<chart_no>`, Web scopes the page to that PatientID and
+  allows JPG, PNG, or PDF upload directly into Orthanc as DICOM for that
+  patient. V1 upload does not ask the operator to manually enter patient
+  demographics.
 - Gateway DICOM front door: enabled by default as `VIEWREX:104`. It stores
   received DICOM objects under `/app/data/dicom-inbox`, forwards them unchanged
   to Orthanc at `orthanc:11112`, and does not perform charset fixes or tag
