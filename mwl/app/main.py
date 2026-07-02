@@ -543,7 +543,7 @@ def _query_step(identifier: Dataset) -> Dataset:
     return Dataset()
 
 
-def matches_query(identifier: Dataset, item: Dataset) -> bool:
+def matches_query(identifier: Dataset, item: Dataset, calling_ae: str = "") -> bool:
     requested_patient_id = _dataset_value(identifier, "PatientID")
     if requested_patient_id and requested_patient_id != _dataset_value(item, "PatientID"):
         return False
@@ -560,6 +560,8 @@ def matches_query(identifier: Dataset, item: Dataset) -> bool:
         return False
 
     requested_station = _dataset_value(requested_step, "ScheduledStationAETitle")
+    if not requested_station:
+        requested_station = calling_ae
     if requested_station and requested_station != _dataset_value(item_step, "ScheduledStationAETitle"):
         return False
 
@@ -599,7 +601,11 @@ def make_handle_find(
             yield 0xA700, None
             return
 
-        matches = [dataset for dataset in datasets if matches_query(identifier, dataset)]
+        matches = [
+            dataset
+            for dataset in datasets
+            if matches_query(identifier, dataset, calling_ae=calling_ae)
+        ]
         LOGGER.info(
             "C-FIND query remote_ip=%s calling_ae=%s called_ae=%s patient_id=%r accession=%r modality=%r station_aet=%r loaded=%s matches=%s",
             remote_ip,

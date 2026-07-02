@@ -153,6 +153,41 @@ def test_filters_multiple_entries_by_modality_and_station():
     assert matches[0].PatientID == "KAOSMWL002"
 
 
+def test_blank_station_query_falls_back_to_calling_ae():
+    xray = Dataset()
+    xray_step = Dataset()
+    xray_step.Modality = "CR"
+    xray_step.ScheduledStationAETitle = "INNOVISION"
+    xray.ScheduledProcedureStepSequence = Sequence([xray_step])
+
+    bmd = Dataset()
+    bmd_step = Dataset()
+    bmd_step.Modality = "BMD"
+    bmd_step.ScheduledStationAETitle = "BMD"
+    bmd.ScheduledProcedureStepSequence = Sequence([bmd_step])
+
+    query = Dataset()
+    query.ScheduledProcedureStepSequence = Sequence([Dataset()])
+
+    assert matches_query(query, xray, calling_ae="INNOVISION")
+    assert not matches_query(query, bmd, calling_ae="INNOVISION")
+
+
+def test_explicit_station_query_overrides_calling_ae():
+    bmd = Dataset()
+    bmd_step = Dataset()
+    bmd_step.Modality = "BMD"
+    bmd_step.ScheduledStationAETitle = "BMD"
+    bmd.ScheduledProcedureStepSequence = Sequence([bmd_step])
+
+    query = Dataset()
+    query_step = Dataset()
+    query_step.ScheduledStationAETitle = "BMD"
+    query.ScheduledProcedureStepSequence = Sequence([query_step])
+
+    assert matches_query(query, bmd, calling_ae="INNOVISION")
+
+
 def test_filters_by_accession_number():
     path = Path(__file__).resolve().parents[1] / "config" / "worklist.json"
     items = load_worklist_datasets(path, now=NOW)

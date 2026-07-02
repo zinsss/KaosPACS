@@ -75,6 +75,10 @@ The service supports:
 - Per-entry validation with warning logs for invalid entries
 - Query matching by PatientID, AccessionNumber, Modality, and
   ScheduledStationAETitle; blank query fields are wildcards
+- Calling AE fallback for broad modality queries: if a modality leaves
+  `ScheduledStationAETitle` blank, MWL uses the DICOM association calling AE as
+  the station filter. This keeps broad INNOVISION queries from receiving BMD
+  worklist items.
 - C-FIND query, match, and completion logging
 - Internal expiry of active entries that pass their imaging window without
   completion

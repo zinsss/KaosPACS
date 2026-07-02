@@ -20,7 +20,7 @@ from app.dicom.server import (
     handle_store,
     start_dicom_listener,
 )
-from app.dicom.storage import safe_dicom_filename
+from app.dicom.storage import safe_dicom_filename, store_dataset
 from app.services.audit import init_audit_db
 
 
@@ -143,6 +143,32 @@ class RecordingMwlClient:
 def test_handle_store_forwarding_disabled_stores_locally_only(tmp_path) -> None:
     dataset = _minimal_dataset()
     event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+
+    status = handle_store(event, tmp_path)
+
+    assert status == 0x0000
+    assert (tmp_path / f"{dataset.SOPInstanceUID}.dcm").exists()
+
+
+def test_store_dataset_repairs_minimal_file_meta(tmp_path) -> None:
+    dataset = _minimal_dataset()
+    dataset.file_meta = FileMetaDataset()
+    dataset.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+
+    path = store_dataset(dataset, tmp_path)
+    stored = dcmread(path)
+
+    assert stored.file_meta.MediaStorageSOPClassUID == dataset.SOPClassUID
+    assert stored.file_meta.MediaStorageSOPInstanceUID == dataset.SOPInstanceUID
+    assert stored.file_meta.TransferSyntaxUID == ExplicitVRLittleEndian
+    assert stored.SOPInstanceUID == dataset.SOPInstanceUID
+
+
+def test_handle_store_accepts_minimal_event_file_meta(tmp_path) -> None:
+    dataset = _minimal_dataset()
+    event_file_meta = FileMetaDataset()
+    event_file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": event_file_meta})()
 
     status = handle_store(event, tmp_path)
 

@@ -204,6 +204,17 @@ sudo ss -ltnp | grep ':105'
 
 Confirm the modality is querying called AE `VIEWREX_WL` on port `105`.
 
+## BMD Order Appears On X-Ray Workstation
+
+Some legacy workstations send broad MWL C-FIND queries with blank modality and
+blank `ScheduledStationAETitle`. KaosPACS MWL falls back to the DICOM calling AE
+as the station filter when the query station is blank. INNOVISION should only
+receive entries whose `ScheduledStationAETitle` is `INNOVISION`; BMD should only
+receive entries whose `ScheduledStationAETitle` is `BMD`.
+
+If this regresses, check MWL logs for `calling_ae`, `station_aet`, and
+`matches`.
+
 ## MWL API Not Reachable
 
 The MWL API is intentionally local-only by default:
