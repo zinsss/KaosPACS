@@ -2,9 +2,11 @@ import json
 import logging
 import socket
 import sqlite3
+from io import BytesIO
 from pathlib import Path
 
 from pydicom import dcmread
+from pydicom.filewriter import dcmwrite
 from pydicom.dataset import Dataset, FileMetaDataset
 from pydicom.sequence import Sequence
 from pydicom.uid import ExplicitVRLittleEndian, SecondaryCaptureImageStorage, generate_uid
@@ -197,6 +199,45 @@ def test_handle_store_accepts_minimal_event_file_meta(tmp_path) -> None:
 
     assert status == 0x0000
     assert (tmp_path / f"{dataset.SOPInstanceUID}.dcm").exists()
+
+
+def test_handle_store_uses_encoded_event_fallback_when_dataset_write_fails(
+    tmp_path,
+    monkeypatch,
+    caplog,
+) -> None:
+    caplog.set_level(logging.INFO)
+    dataset = _minimal_dataset()
+    buffer = BytesIO()
+    dcmwrite(buffer, dataset, write_like_original=False)
+    encoded = buffer.getvalue()
+
+    class StoreEvent:
+        file_meta = dataset.file_meta
+
+        def __init__(self, stored_dataset):
+            self.dataset = stored_dataset
+
+        def encoded_dataset(self, include_meta=True):
+            assert include_meta is True
+            return encoded
+
+    def fail_store(_dataset, _storage_dir):
+        raise ValueError("synthetic strict write failure SHOULD^NOTLOG SECRETID")
+
+    monkeypatch.setattr(dicom_server, "store_dataset", fail_store)
+
+    status = handle_store(StoreEvent(dataset), tmp_path)
+    path = tmp_path / f"{dataset.SOPInstanceUID}.dcm"
+    stored = dcmread(path, force=True)
+
+    assert status == 0x0000
+    assert path.exists()
+    assert stored.SOPInstanceUID == dataset.SOPInstanceUID
+    assert "ValueError" in caplog.text
+    assert "synthetic strict write failure" not in caplog.text
+    assert "SHOULD^NOTLOG" not in caplog.text
+    assert "SECRETID" not in caplog.text
 
 
 def test_handle_store_does_not_modify_incoming_dataset_tags(tmp_path) -> None:

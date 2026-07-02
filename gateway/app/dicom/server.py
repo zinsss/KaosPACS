@@ -26,7 +26,7 @@ from app.dicom.inspection import (
 )
 from app.dicom.matcher import MatchResult, match_dataset_to_worklist
 from app.dicom.queue import enqueue_stored_dataset
-from app.dicom.storage import store_dataset
+from app.dicom.storage import store_dataset, store_encoded_dataset
 from app.services.audit import record_gateway_event
 
 
@@ -95,10 +95,34 @@ def handle_store(
     try:
         path = store_dataset(dataset, storage_dir)
     except Exception as error:
+        LOGGER.warning(
+            "C-STORE strict write failed, trying encoded fallback sop_instance_uid=%s exception=%s",
+            _text(getattr(dataset, "SOPInstanceUID", "")),
+            error.__class__.__name__,
+        )
+        try:
+            path = store_encoded_dataset(event, dataset, storage_dir)
+        except Exception as fallback_error:
+            LOGGER.error(
+                "C-STORE write failed sop_instance_uid=%s exception=%s",
+                _text(getattr(dataset, "SOPInstanceUID", "")),
+                fallback_error.__class__.__name__,
+            )
+            _audit_dicom_event(
+                audit_db,
+                dataset,
+                event_type="dicom_store_received",
+                status_code=WRITE_FAILURE_STATUS,
+                success=False,
+                error_code="write_failed",
+            )
+            return WRITE_FAILURE_STATUS
+
+    if path is None:
         LOGGER.error(
             "C-STORE write failed sop_instance_uid=%s exception=%s",
             _text(getattr(dataset, "SOPInstanceUID", "")),
-            error.__class__.__name__,
+            "UnknownError",
         )
         _audit_dicom_event(
             audit_db,

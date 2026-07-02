@@ -32,6 +32,14 @@ def store_dataset(dataset: Dataset, storage_dir: Path) -> Path:
     return path
 
 
+def store_encoded_dataset(event: object, dataset: Dataset, storage_dir: Path) -> Path:
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    path = dicom_storage_path(storage_dir, dataset)
+    encoded_dataset = event.encoded_dataset(include_meta=True)
+    path.write_bytes(encoded_dataset)
+    return path
+
+
 def save_dataset(path: Path, dataset: Dataset) -> None:
     try:
         dataset.save_as(path, write_like_original=False)
