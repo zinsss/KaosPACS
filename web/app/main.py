@@ -340,16 +340,23 @@ def _upload_form(
     )
     return f"""
 <section class="upload-panel">
-  <form method="post" action="{html.escape(action)}" enctype="multipart/form-data">
+  <form method="post" action="{html.escape(action)}" enctype="multipart/form-data" data-paste-upload>
     <label for="file">Add image or PDF to this patient's PACS</label>
+    <div id="paste-zone" class="paste-zone" tabindex="0">
+      <strong>Paste image here</strong>
+      <span>Copy an image or screenshot, click here, then press Ctrl+V. Nothing needs to be saved on the desktop.</span>
+      <div id="paste-preview" class="paste-preview" aria-live="polite"></div>
+      <div id="paste-status" class="paste-status" aria-live="polite"></div>
+    </div>
     <div class="upload-row">
       <input id="file" name="file" type="file" accept="image/jpeg,image/png,application/pdf" required>
       <button type="submit">Upload</button>
     </div>
-    <p>JPG, PNG, and PDF are stored as DICOM in Orthanc for PatientID {html.escape(patient_id)}.</p>
+    <p>Paste images, or choose JPG, PNG, or PDF. Uploads are stored as DICOM in Orthanc for PatientID {html.escape(patient_id)}.</p>
   </form>
   {message}
-</section>"""
+</section>
+<script>{PASTE_SCRIPT}</script>"""
 
 
 def _study_payload(study: StudySummary, config: Config) -> dict[str, Any]:
@@ -416,6 +423,12 @@ main { padding:18px 28px 32px; }
 .upload-row input { min-height:36px; }
 .upload-panel p { font-size:13px; }
 .upload-message { margin-top:8px; color:#0f766e; font-weight:700; }
+.paste-zone { border:1px dashed #9aa8b8; border-radius:8px; padding:12px; margin:8px 0 10px; background:#f8fafc; outline:none; }
+.paste-zone:focus { border-color:var(--blue); box-shadow:0 0 0 3px rgba(23,92,211,.12); }
+.paste-zone strong { display:block; margin-bottom:4px; }
+.paste-zone span, .paste-status { color:var(--muted); font-size:13px; }
+.paste-preview { margin-top:10px; }
+.paste-preview img { display:block; max-width:220px; max-height:160px; object-fit:contain; border:1px solid var(--border); border-radius:6px; background:#111827; }
 .notice { border:1px solid var(--border); background:#fff; border-radius:8px; padding:14px; margin-bottom:12px; }
 .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(360px, 1fr)); gap:12px; }
 .study { display:grid; grid-template-columns:132px minmax(0, 1fr); min-height:172px; background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
@@ -441,6 +454,68 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
   .thumb { width:108px; }
   dl { grid-template-columns:1fr; }
 }
+"""
+
+
+PASTE_SCRIPT = r"""
+(function () {
+  const form = document.querySelector("[data-paste-upload]");
+  if (!form) return;
+  const input = form.querySelector("#file");
+  const zone = form.querySelector("#paste-zone");
+  const preview = form.querySelector("#paste-preview");
+  const status = form.querySelector("#paste-status");
+  if (!input || !zone || !preview || !status) return;
+
+  function setStatus(message) {
+    status.textContent = message;
+  }
+
+  function setPastedFile(file) {
+    if (!window.DataTransfer) {
+      setStatus("This browser cannot attach pasted images. Use the file picker instead.");
+      return;
+    }
+    const name = file.name || "pasted-image.png";
+    const pasted = new File([file], name, { type: file.type || "image/png" });
+    const transfer = new DataTransfer();
+    transfer.items.add(pasted);
+    input.files = transfer.files;
+
+    preview.textContent = "";
+    const image = document.createElement("img");
+    image.alt = "Pasted image preview";
+    image.src = URL.createObjectURL(pasted);
+    image.onload = function () { URL.revokeObjectURL(image.src); };
+    preview.appendChild(image);
+    setStatus("Pasted image is ready. Press Upload to add it to PACS.");
+  }
+
+  function handlePaste(event) {
+    const clipboard = event.clipboardData;
+    if (!clipboard || !clipboard.items) return;
+    for (const item of clipboard.items) {
+      if (item.kind === "file" && item.type && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) {
+          event.preventDefault();
+          setPastedFile(file);
+          return;
+        }
+      }
+    }
+    setStatus("Clipboard does not contain an image.");
+  }
+
+  zone.addEventListener("click", function () { zone.focus(); });
+  zone.addEventListener("paste", handlePaste);
+  document.addEventListener("paste", function (event) {
+    if (document.activeElement === zone) return;
+    if (form.contains(document.activeElement) || document.activeElement === document.body) {
+      handlePaste(event);
+    }
+  });
+})();
 """
 
 

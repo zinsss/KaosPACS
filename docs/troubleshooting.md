@@ -222,7 +222,8 @@ Upload is only enabled on patient-context pages such as:
 http://192.168.0.200/emr.php?m_patid=9426
 ```
 
-V1 upload accepts only JPG, PNG, and PDF files. Uploaded files are converted to
+V1 upload accepts pasted clipboard images, JPG, PNG, and PDF files. Pasted
+images should show a preview before upload. Uploaded content is converted to
 DICOM and sent to Orthanc over the internal Docker network.
 
 ## BMD Cannot Query Worklist

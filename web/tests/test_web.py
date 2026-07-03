@@ -118,6 +118,9 @@ def test_patient_context_page_contains_upload_without_manual_patient_fields() ->
 
     assert "Patient/chart number" in html
     assert "9426" in html
+    assert "Paste image here" in html
+    assert "Nothing needs to be saved on the desktop" in html
+    assert "data-paste-upload" in html
     assert 'type="file"' in html
     assert 'name="file"' in html
     assert "PatientName" not in html

@@ -245,9 +245,11 @@ For patient-context web launch, eGHIS opens:
 ```
 
 KaosPACS Web uses `m_patid` as the Orthanc/DICOM `PatientID`, shows only that
-patient's studies, and lets the operator upload JPG, PNG, or PDF files into
-Orthanc as DICOM for that same patient. V1 upload intentionally does not have a
-separate upload page or manual patient demographic entry.
+patient's studies, and lets the operator paste a clipboard image or upload JPG,
+PNG, or PDF files into Orthanc as DICOM for that same patient. Pasted images
+avoid leaving a temporary patient-sensitive file on the desktop. V1 upload
+intentionally does not have a separate upload page or manual patient
+demographic entry.
 
 Current default direct-mode Gateway DICOM flow:
 
