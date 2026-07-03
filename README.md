@@ -141,11 +141,12 @@ docker compose ps
   `weasis://` links that ask Weasis to load studies from
   `http://192.168.0.200:8042/dicom-web`. Workstations need Weasis installed
   and registered for the `weasis://` protocol. When eGHIS opens
-  `/emr.php?m_patid=<chart_no>`, Web scopes the page to that PatientID and
-  allows pasted images, JPG, PNG, or PDF upload directly into Orthanc as DICOM
-  for that patient. Pasted images can be uploaded without saving a temporary
-  file on the desktop. V1 upload does not ask the operator to manually enter
-  patient demographics.
+  `/emr.php?m_patid=<chart_no>&m_patname=<name>&m_dob=<yyyymmdd>&m_sex=<M|F|O>`,
+  Web scopes the page to that PatientID, displays chart number/name/DOB/sex
+  from the launch context, and allows pasted images, JPG, PNG, or PDF upload
+  directly into Orthanc as DICOM for that patient. Pasted images can be
+  uploaded without saving a temporary file on the desktop. V1 upload does not
+  ask the operator to manually enter patient demographics.
 - Gateway DICOM front door: enabled by default as `VIEWREX:104`. It stores
   received DICOM objects under `/app/data/dicom-inbox` and forwards them to
   Orthanc at `orthanc:11112`. It appends non-PHI charset/tag inspection summaries to

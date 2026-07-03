@@ -241,12 +241,14 @@ Weasis through Orthanc DICOMweb. It does not alter worklist state.
 For patient-context web launch, eGHIS opens:
 
 ```text
-/emr.php?m_patid=<chart_no>
+/emr.php?m_patid=<chart_no>&m_patname=<name>&m_dob=<yyyymmdd>&m_sex=<M|F|O>
 ```
 
-KaosPACS Web uses `m_patid` as the Orthanc/DICOM `PatientID`, shows only that
-patient's studies, and lets the operator paste a clipboard image or upload JPG,
-PNG, or PDF files into Orthanc as DICOM for that same patient. Pasted images
+KaosPACS Web uses `m_patid` as the Orthanc/DICOM `PatientID`, displays the
+provided chart number/name/DOB/sex, shows only that patient's studies, and lets
+the operator paste a clipboard image or upload JPG, PNG, or PDF files into
+Orthanc as DICOM for that same patient. Uploaded DICOM objects include the
+provided name/DOB/sex when present and use safe UTF-8 metadata. Pasted images
 avoid leaving a temporary patient-sensitive file on the desktop. V1 upload
 intentionally does not have a separate upload page or manual patient
 demographic entry.

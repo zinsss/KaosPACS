@@ -33,6 +33,8 @@ def create_upload_dicom(
     filename: str,
     content_type: str,
     content: bytes,
+    patient_birth_date: str = "",
+    patient_sex: str = "",
     now: datetime | None = None,
 ) -> UploadDicomResult:
     normalized_type = _content_type(content_type, filename)
@@ -43,6 +45,8 @@ def create_upload_dicom(
         dataset = _image_dataset(
             patient_id=patient_id,
             patient_name=patient_name,
+            patient_birth_date=patient_birth_date,
+            patient_sex=patient_sex,
             filename=filename,
             content=content,
             now=now,
@@ -53,6 +57,8 @@ def create_upload_dicom(
         dataset = _pdf_dataset(
             patient_id=patient_id,
             patient_name=patient_name,
+            patient_birth_date=patient_birth_date,
+            patient_sex=patient_sex,
             filename=filename,
             content=content,
             now=now,
@@ -74,6 +80,8 @@ def _base_dataset(
     *,
     patient_id: str,
     patient_name: str,
+    patient_birth_date: str,
+    patient_sex: str,
     filename: str,
     now: datetime,
     accession_number: str,
@@ -102,6 +110,12 @@ def _base_dataset(
     dataset.PatientID = patient_id
     if patient_name:
         dataset.PatientName = patient_name
+    normalized_birth_date = _dicom_birth_date(patient_birth_date)
+    if normalized_birth_date:
+        dataset.PatientBirthDate = normalized_birth_date
+    normalized_sex = _dicom_patient_sex(patient_sex)
+    if normalized_sex:
+        dataset.PatientSex = normalized_sex
     dataset.StudyDescription = study_description
     dataset.SeriesDescription = "KaosPACS manual upload"
     dataset.Manufacturer = "KaosPACS"
@@ -114,6 +128,8 @@ def _image_dataset(
     *,
     patient_id: str,
     patient_name: str,
+    patient_birth_date: str,
+    patient_sex: str,
     filename: str,
     content: bytes,
     now: datetime,
@@ -122,6 +138,8 @@ def _image_dataset(
     dataset = _base_dataset(
         patient_id=patient_id,
         patient_name=patient_name,
+        patient_birth_date=patient_birth_date,
+        patient_sex=patient_sex,
         filename=filename,
         now=now,
         accession_number=accession_number,
@@ -152,6 +170,8 @@ def _pdf_dataset(
     *,
     patient_id: str,
     patient_name: str,
+    patient_birth_date: str,
+    patient_sex: str,
     filename: str,
     content: bytes,
     now: datetime,
@@ -162,6 +182,8 @@ def _pdf_dataset(
     dataset = _base_dataset(
         patient_id=patient_id,
         patient_name=patient_name,
+        patient_birth_date=patient_birth_date,
+        patient_sex=patient_sex,
         filename=filename,
         now=now,
         accession_number=accession_number,
@@ -192,3 +214,19 @@ def _content_type(content_type: str, filename: str) -> str:
     if suffix == "pdf":
         return "application/pdf"
     return "application/octet-stream"
+
+
+def _dicom_birth_date(value: str) -> str:
+    digits = "".join(char for char in value if char.isdigit())
+    return digits if len(digits) == 8 else ""
+
+
+def _dicom_patient_sex(value: str) -> str:
+    normalized = value.strip().upper()
+    if normalized in {"M", "MALE"} or value.strip() == "남":
+        return "M"
+    if normalized in {"F", "FEMALE"} or value.strip() == "여":
+        return "F"
+    if normalized in {"O", "OTHER"}:
+        return "O"
+    return ""

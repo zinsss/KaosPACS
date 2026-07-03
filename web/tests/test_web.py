@@ -111,19 +111,29 @@ def test_patient_context_page_contains_upload_without_manual_patient_fields() ->
         [],
         query="",
         patient_id="9426",
-        patient_name="",
+        patient_name="이진성",
+        patient_birth_date="19700101",
+        patient_sex="M",
         upload_message="",
         error="",
     )
 
-    assert "Patient/chart number" in html
+    assert "Chart no." in html
     assert "9426" in html
+    assert "Name" in html
+    assert "이진성" in html
+    assert "DOB" in html
+    assert "19700101" in html
+    assert "Sex" in html
+    assert "M" in html
     assert "Paste image here" in html
     assert "Nothing needs to be saved on the desktop" in html
     assert "data-paste-upload" in html
     assert 'type="file"' in html
     assert 'name="file"' in html
-    assert "PatientName" not in html
+    assert 'name="patient_name"' not in html
+    assert 'name="dob"' not in html
+    assert 'name="sex"' not in html
 
 
 def test_uploaded_png_becomes_secondary_capture_dicom() -> None:
@@ -150,6 +160,30 @@ def test_uploaded_png_becomes_secondary_capture_dicom() -> None:
     assert dataset.Rows == 1
     assert dataset.Columns == 2
     assert dataset.PixelData
+
+
+def test_uploaded_png_can_include_patient_context_demographics() -> None:
+    image = Image.new("RGB", (2, 1), color=(10, 20, 30))
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+
+    result = create_upload_dicom(
+        patient_id="9426",
+        patient_name="이진성",
+        patient_birth_date="1970-01-01",
+        patient_sex="male",
+        filename="photo.png",
+        content_type="image/png",
+        content=buffer.getvalue(),
+        now=datetime(2026, 7, 3, 9, 10, 11),
+    )
+
+    dataset = dcmread(BytesIO(result.dicom_bytes))
+    assert dataset.SpecificCharacterSet == "ISO_IR 192"
+    assert dataset.PatientID == "9426"
+    assert str(dataset.PatientName) == "이진성"
+    assert dataset.PatientBirthDate == "19700101"
+    assert dataset.PatientSex == "M"
 
 
 def test_uploaded_pdf_becomes_encapsulated_pdf_dicom() -> None:

@@ -4,7 +4,7 @@ import html
 import json
 import logging
 import warnings
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -20,6 +20,14 @@ with warnings.catch_warnings():
 
 
 LOGGER = logging.getLogger("kaospacs.web")
+
+
+@dataclass(frozen=True)
+class PatientContext:
+    patient_id: str = ""
+    patient_name: str = ""
+    patient_birth_date: str = ""
+    patient_sex: str = ""
 
 
 def make_weasis_url(dicomweb_url: str, study_instance_uid: str) -> str:
@@ -97,13 +105,13 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
         def _index(self, path: str, query_string: str) -> None:
             params = parse_qs(query_string)
             query = params.get("q", [""])[0]
-            patient_id = params.get("m_patid", [""])[0].strip()
+            patient = _patient_context_from_params(params)
             upload_status = params.get("upload", [""])[0]
             upload_message = _upload_status_message(upload_status)
             try:
-                if path == "/emr.php" and patient_id:
+                if path == "/emr.php" and patient.patient_id:
                     studies = orthanc.studies_for_patient(
-                        patient_id,
+                        patient.patient_id,
                         query=query,
                         limit=config.study_limit,
                     )
@@ -115,8 +123,10 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
                     config,
                     studies,
                     query=query,
-                    patient_id=patient_id,
-                    patient_name=_patient_name_from_params(params),
+                    patient_id=patient.patient_id,
+                    patient_name=patient.patient_name,
+                    patient_birth_date=patient.patient_birth_date,
+                    patient_sex=patient.patient_sex,
                     upload_message=upload_message,
                     error="",
                 )
@@ -126,8 +136,10 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
                     config,
                     [],
                     query=query,
-                    patient_id=patient_id,
-                    patient_name=_patient_name_from_params(params),
+                    patient_id=patient.patient_id,
+                    patient_name=patient.patient_name,
+                    patient_birth_date=patient.patient_birth_date,
+                    patient_sex=patient.patient_sex,
                     upload_message="",
                     error="Orthanc is not reachable.",
                 )
@@ -140,9 +152,8 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
 
         def _upload(self, query_string: str) -> None:
             params = parse_qs(query_string)
-            patient_id = params.get("m_patid", [""])[0].strip()
-            patient_name = _patient_name_from_params(params)
-            if not patient_id:
+            patient = _patient_context_from_params(params)
+            if not patient.patient_id:
                 self._redirect_upload(params, "missing_patient")
                 return
 
@@ -176,8 +187,10 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
                     self._redirect_upload(params, "too_large")
                     return
                 result = create_upload_dicom(
-                    patient_id=patient_id,
-                    patient_name=patient_name,
+                    patient_id=patient.patient_id,
+                    patient_name=patient.patient_name,
+                    patient_birth_date=patient.patient_birth_date,
+                    patient_sex=patient.patient_sex,
                     filename=field.filename,
                     content_type=getattr(field, "type", "") or "",
                     content=content,
@@ -186,7 +199,7 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
             except ValueError as exc:
                 LOGGER.info(
                     "Web upload rejected patient_id=%s reason=%s",
-                    patient_id,
+                    patient.patient_id,
                     str(exc),
                 )
                 self._redirect_upload(params, str(exc))
@@ -194,7 +207,7 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
             except Exception as exc:
                 LOGGER.warning(
                     "Web upload failed patient_id=%s exception=%s",
-                    patient_id,
+                    patient.patient_id,
                     exc.__class__.__name__,
                 )
                 self._redirect_upload(params, "failed")
@@ -202,7 +215,7 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
 
             LOGGER.info(
                 "Web upload stored patient_id=%s accession_number=%s modality=%s",
-                patient_id,
+                patient.patient_id,
                 result.accession_number,
                 result.modality,
             )
@@ -235,6 +248,8 @@ def render_index(
     query: str,
     patient_id: str = "",
     patient_name: str = "",
+    patient_birth_date: str = "",
+    patient_sex: str = "",
     upload_message: str = "",
     error: str,
 ) -> str:
@@ -246,14 +261,25 @@ def render_index(
     elif not rows and not error:
         rows = '<div class="empty">No studies found in Orthanc.</div>'
     error_html = f'<div class="error">{html.escape(error)}</div>' if error else ""
-    patient_html = (
-        f'<section class="patient-context">Patient/chart number: '
-        f'<strong>{html.escape(patient_id)}</strong></section>'
-        if patient_id
-        else ""
+    patient_html = _patient_context_html(
+        PatientContext(
+            patient_id=patient_id,
+            patient_name=patient_name,
+            patient_birth_date=patient_birth_date,
+            patient_sex=patient_sex,
+        )
     )
     upload_html = (
-        _upload_form(patient_id, patient_name, query, upload_message)
+        _upload_form(
+            PatientContext(
+                patient_id=patient_id,
+                patient_name=patient_name,
+                patient_birth_date=patient_birth_date,
+                patient_sex=patient_sex,
+            ),
+            query,
+            upload_message,
+        )
         if patient_id
         else '<div class="notice">No patient/chart number was provided in m_patid.</div>'
     )
@@ -322,14 +348,17 @@ def _study_card(config: Config, study: StudySummary) -> str:
 
 
 def _upload_form(
-    patient_id: str,
-    patient_name: str,
+    patient: PatientContext,
     query: str,
     upload_message: str,
 ) -> str:
-    query_params = {"m_patid": patient_id}
-    if patient_name:
-        query_params["m_patname"] = patient_name
+    query_params = {"m_patid": patient.patient_id}
+    if patient.patient_name:
+        query_params["m_patname"] = patient.patient_name
+    if patient.patient_birth_date:
+        query_params["m_dob"] = patient.patient_birth_date
+    if patient.patient_sex:
+        query_params["m_sex"] = patient.patient_sex
     if query:
         query_params["q"] = query
     action = "/emr.php?" + urlencode(query_params)
@@ -352,7 +381,7 @@ def _upload_form(
       <input id="file" name="file" type="file" accept="image/jpeg,image/png,application/pdf" required>
       <button type="submit">Upload</button>
     </div>
-    <p>Paste images, or choose JPG, PNG, or PDF. Uploads are stored as DICOM in Orthanc for PatientID {html.escape(patient_id)}.</p>
+    <p>Paste images, or choose JPG, PNG, or PDF. Uploads are stored as DICOM in Orthanc for PatientID {html.escape(patient.patient_id)}.</p>
   </form>
   {message}
 </section>
@@ -384,8 +413,49 @@ def _safe_limit(raw: str) -> int:
         return 100
 
 
-def _patient_name_from_params(params: dict[str, list[str]]) -> str:
-    for key in ("m_patname", "patient_name", "PatientName"):
+def _patient_context_html(patient: PatientContext) -> str:
+    if not patient.patient_id:
+        return ""
+    items = (
+        ("Chart no.", patient.patient_id),
+        ("Name", patient.patient_name),
+        ("DOB", patient.patient_birth_date),
+        ("Sex", patient.patient_sex),
+    )
+    fields = "\n".join(
+        "<div>"
+        f"<span>{html.escape(label)}</span>"
+        f"<strong>{html.escape(value or '-')}</strong>"
+        "</div>"
+        for label, value in items
+    )
+    return f'<section class="patient-context">{fields}</section>'
+
+
+def _patient_context_from_params(params: dict[str, list[str]]) -> PatientContext:
+    return PatientContext(
+        patient_id=_first_param(params, ("m_patid", "patient_id", "PatientID")),
+        patient_name=_first_param(
+            params,
+            ("m_patname", "m_name", "patient_name", "PatientName"),
+        ),
+        patient_birth_date=_first_param(
+            params,
+            (
+                "m_dob",
+                "m_patbirth",
+                "m_birthday",
+                "patient_birth_date",
+                "PatientBirthDate",
+                "dob",
+            ),
+        ),
+        patient_sex=_first_param(params, ("m_sex", "patient_sex", "PatientSex", "sex")),
+    )
+
+
+def _first_param(params: dict[str, list[str]], keys: tuple[str, ...]) -> str:
+    for key in keys:
         value = params.get(key, [""])[0].strip()
         if value:
             return value
@@ -418,6 +488,9 @@ button, .primary { background:var(--blue); color:#fff; border-color:var(--blue);
 main { padding:18px 28px 32px; }
 .summary { color:var(--muted); margin-bottom:12px; }
 .patient-context, .upload-panel { background:#fff; border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:12px; }
+.patient-context { display:grid; grid-template-columns:repeat(4, minmax(120px, 1fr)); gap:10px 14px; }
+.patient-context span { display:block; color:var(--muted); font-size:12px; margin-bottom:2px; }
+.patient-context strong { display:block; overflow-wrap:anywhere; }
 .upload-panel label { display:block; font-weight:700; margin-bottom:8px; }
 .upload-row { display:flex; gap:8px; align-items:center; }
 .upload-row input { min-height:36px; }
@@ -453,6 +526,7 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
   .study { grid-template-columns:108px minmax(0, 1fr); }
   .thumb { width:108px; }
   dl { grid-template-columns:1fr; }
+  .patient-context { grid-template-columns:1fr 1fr; }
 }
 """
 

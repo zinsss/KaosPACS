@@ -219,12 +219,15 @@ If uploads do not appear in PACS, confirm the EMR URL includes `m_patid`.
 Upload is only enabled on patient-context pages such as:
 
 ```text
-http://192.168.0.200/emr.php?m_patid=9426
+http://192.168.0.200/emr.php?m_patid=9426&m_patname=%EC%9D%B4%EC%A7%84%EC%84%B1&m_dob=19700101&m_sex=M
 ```
 
 V1 upload accepts pasted clipboard images, JPG, PNG, and PDF files. Pasted
 images should show a preview before upload. Uploaded content is converted to
-DICOM and sent to Orthanc over the internal Docker network.
+DICOM and sent to Orthanc over the internal Docker network. If the launch URL
+includes `m_patname`, `m_dob`, and `m_sex`, Web displays those values and stores
+them in the generated DICOM upload object. The upload page still does not ask
+the operator to manually type patient demographics.
 
 ## BMD Cannot Query Worklist
 
