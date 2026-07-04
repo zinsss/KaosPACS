@@ -112,11 +112,17 @@ controlled by:
 
 ```text
 WEB_UPLOAD_MAX_BYTES=26214400
+WEB_AUTH_USERNAME=kaospacs
+WEB_AUTH_PASSWORD=<random-password>
 ```
 
 Web does not own MWL state, infer completion/expiry, receive modality DICOM, or
 change Gateway receive/forward/charset behavior. Web upload writes generated
 JPG/PNG/PDF-derived DICOM directly to Orthanc for the launched patient context.
+Set `WEB_AUTH_PASSWORD` in `.env` for browser Basic Auth before exposing Web on
+the clinic LAN. Do not commit the production password. Leave
+`WEB_AUTH_PASSWORD` empty only for development. `GET /health` remains open for
+Docker health checks.
 
 Gateway DICOM front-door settings:
 

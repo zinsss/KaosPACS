@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
+import threading
 from datetime import datetime
+from http.server import ThreadingHTTPServer
 from io import BytesIO
 from types import SimpleNamespace
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from unittest.mock import Mock
 
 from PIL import Image
@@ -27,6 +32,8 @@ def test_config_defaults(monkeypatch) -> None:
         "WEASIS_DICOMWEB_URL",
         "WEB_STUDY_LIMIT",
         "WEB_UPLOAD_MAX_BYTES",
+        "WEB_AUTH_USERNAME",
+        "WEB_AUTH_PASSWORD",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -39,6 +46,8 @@ def test_config_defaults(monkeypatch) -> None:
     assert config.weasis_dicomweb_url == "http://192.168.0.200:8042/dicom-web"
     assert config.study_limit == 100
     assert config.upload_max_bytes == 25 * 1024 * 1024
+    assert config.auth_username == "kaospacs"
+    assert config.auth_password == ""
 
 
 def test_config_env_overrides(monkeypatch) -> None:
@@ -49,6 +58,8 @@ def test_config_env_overrides(monkeypatch) -> None:
     monkeypatch.setenv("WEASIS_DICOMWEB_URL", "http://pacs:8042/dicom-web/")
     monkeypatch.setenv("WEB_STUDY_LIMIT", "50")
     monkeypatch.setenv("WEB_UPLOAD_MAX_BYTES", "12345")
+    monkeypatch.setenv("WEB_AUTH_USERNAME", "viewer")
+    monkeypatch.setenv("WEB_AUTH_PASSWORD", "secret")
 
     config = load_config()
 
@@ -59,6 +70,8 @@ def test_config_env_overrides(monkeypatch) -> None:
     assert config.weasis_dicomweb_url == "http://pacs:8042/dicom-web"
     assert config.study_limit == 50
     assert config.upload_max_bytes == 12345
+    assert config.auth_username == "viewer"
+    assert config.auth_password == "secret"
 
 
 def test_weasis_url_uses_dicomweb_study_query() -> None:
@@ -129,6 +142,80 @@ def test_web_request_logging_does_not_include_patient_query_phi(caplog) -> None:
     assert "19700101" not in log_text
     assert "m_sex" not in log_text
     assert "FEMALE" not in log_text
+
+
+def test_web_health_does_not_require_auth() -> None:
+    config = Mock()
+    config.auth_username = "kaospacs"
+    config.auth_password = "secret"
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    server, thread = _start_test_server(config, Mock())
+    try:
+        response = urlopen(f"{_server_url(server)}/health", timeout=3)
+        assert response.status == 200
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_web_protected_page_requires_auth_when_password_configured(caplog) -> None:
+    config = Mock()
+    config.auth_username = "kaospacs"
+    config.auth_password = "secret"
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    orthanc = Mock()
+    orthanc.studies_for_patient.return_value = []
+    server, thread = _start_test_server(config, orthanc)
+    try:
+        url = (
+            f"{_server_url(server)}/emr.php?"
+            "m_patid=CHART9426&m_patname=%EC%9D%B4%EC%A7%84%EC%84%B1"
+            "&m_dob=19700101&m_sex=FEMALE"
+        )
+        caplog.set_level(logging.INFO, logger="kaospacs.web")
+        try:
+            urlopen(url, timeout=3)
+            raise AssertionError("expected unauthorized response")
+        except HTTPError as exc:
+            assert exc.code == 401
+
+        log_text = caplog.text
+        assert "authentication failed" in log_text
+        assert "CHART9426" not in log_text
+        assert "이진성" not in log_text
+        assert "19700101" not in log_text
+        assert "FEMALE" not in log_text
+        assert "Authorization" not in log_text
+        assert "secret" not in log_text
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_web_protected_page_allows_correct_basic_auth(caplog) -> None:
+    config = Mock()
+    config.auth_username = "kaospacs"
+    config.auth_password = "secret"
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    orthanc = Mock()
+    orthanc.studies_for_patient.return_value = []
+    server, thread = _start_test_server(config, orthanc)
+    try:
+        credentials = base64.b64encode(b"kaospacs:secret").decode("ascii")
+        request = Request(
+            f"{_server_url(server)}/emr.php?m_patid=CHART9426",
+            headers={"Authorization": f"Basic {credentials}"},
+        )
+        caplog.set_level(logging.INFO, logger="kaospacs.web")
+        response = urlopen(request, timeout=3)
+
+        assert response.status == 200
+        assert orthanc.studies_for_patient.called
+        assert "secret" not in caplog.text
+        assert "Authorization" not in caplog.text
+    finally:
+        _stop_test_server(server, thread)
 
 
 def test_patient_context_page_contains_upload_without_manual_patient_fields() -> None:
@@ -233,3 +320,21 @@ def test_uploaded_pdf_becomes_encapsulated_pdf_dicom() -> None:
     assert dataset.StudyDescription == "Uploaded PDF"
     assert dataset.MIMETypeOfEncapsulatedDocument == "application/pdf"
     assert dataset.EncapsulatedDocument.startswith(b"%PDF")
+
+
+def _start_test_server(config: Mock, orthanc: Mock) -> tuple[ThreadingHTTPServer, threading.Thread]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), create_handler(config, orthanc))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+def _stop_test_server(server: ThreadingHTTPServer, thread: threading.Thread) -> None:
+    server.shutdown()
+    thread.join(timeout=5)
+    server.server_close()
+
+
+def _server_url(server: ThreadingHTTPServer) -> str:
+    host, port = server.server_address
+    return f"http://{host}:{port}"

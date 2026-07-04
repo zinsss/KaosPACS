@@ -193,6 +193,17 @@ integration, set `GATEWAY_HTTP_BIND=0.0.0.0`, keep `GATEWAY_API_TOKEN` set, and
 restrict access with the clinic firewall. The MWL HTTP API remains published on
 host loopback only and must not be exposed on the LAN.
 
+KaosPACS Web supports browser Basic Auth for operator access:
+
+```text
+WEB_AUTH_USERNAME=kaospacs
+WEB_AUTH_PASSWORD=<random-password>
+```
+
+Set a random local password in `.env` and do not commit it. Leaving
+`WEB_AUTH_PASSWORD` empty disables Web authentication for development only.
+`GET /health` remains unauthenticated for Docker health checks.
+
 `GET /status` is an operational endpoint and is protected when
 `GATEWAY_API_TOKEN` is set. It reports dependency reachability and ownership
 state only. It must not expose worklist entries, patient demographics, chart

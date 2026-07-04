@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import binascii
+import hmac
 import html
 import json
 import logging
@@ -47,6 +50,8 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
             if parsed.path == "/health":
                 self._json({"status": "ok", "service": "web", "version": "0.1"})
                 return
+            if not self._require_auth(parsed.path):
+                return
             if parsed.path == "/api/studies":
                 self._api_studies(parsed.query)
                 return
@@ -60,6 +65,8 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
+            if not self._require_auth(parsed.path):
+                return
             if parsed.path == "/emr.php":
                 self._upload(parsed.query)
                 return
@@ -77,6 +84,34 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
                 parsed.path or "-",
                 client_ip,
             )
+
+        def _require_auth(self, path: str) -> bool:
+            if not config.auth_password:
+                return True
+            if _check_basic_auth(
+                self.headers.get("Authorization", ""),
+                config.auth_username,
+                config.auth_password,
+            ):
+                LOGGER.info(
+                    "Web authentication success path=%s client_ip=%s",
+                    path or "-",
+                    self.client_address[0] if self.client_address else "-",
+                )
+                return True
+            LOGGER.warning(
+                "Web authentication failed path=%s client_ip=%s",
+                path or "-",
+                self.client_address[0] if self.client_address else "-",
+            )
+            self.send_response(HTTPStatus.UNAUTHORIZED)
+            self.send_header("WWW-Authenticate", 'Basic realm="KaosPACS Web"')
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            body = b'{"error":"unauthorized"}'
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return False
 
         def _api_studies(self, query_string: str) -> None:
             params = parse_qs(query_string)
@@ -467,6 +502,24 @@ def _first_param(params: dict[str, list[str]], keys: tuple[str, ...]) -> str:
         if value:
             return value
     return ""
+
+
+def _check_basic_auth(header: str, expected_username: str, expected_password: str) -> bool:
+    if not expected_password or not header.startswith("Basic "):
+        return False
+    try:
+        decoded = base64.b64decode(header.removeprefix("Basic "), validate=True).decode(
+            "utf-8"
+        )
+    except (binascii.Error, UnicodeDecodeError):
+        return False
+    username, separator, password = decoded.partition(":")
+    if not separator:
+        return False
+    return hmac.compare_digest(username, expected_username) and hmac.compare_digest(
+        password,
+        expected_password,
+    )
 
 
 def _upload_status_message(status: str) -> str:

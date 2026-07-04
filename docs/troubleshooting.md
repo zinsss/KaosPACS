@@ -229,6 +229,18 @@ includes `m_patname`, `m_dob`, and `m_sex`, Web displays those values and stores
 them in the generated DICOM upload object. The upload page still does not ask
 the operator to manually type patient demographics.
 
+If the browser shows a login prompt, use the local Web Basic Auth credentials
+configured in `.env`:
+
+```text
+WEB_AUTH_USERNAME
+WEB_AUTH_PASSWORD
+```
+
+If Web is reachable without a password on the clinic LAN, confirm
+`WEB_AUTH_PASSWORD` is set and restart the web service. `GET /health` remains
+open by design.
+
 ## BMD Cannot Query Worklist
 
 OsteoPro BMD normal workflow requires MWL:

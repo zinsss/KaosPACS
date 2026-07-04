@@ -172,6 +172,8 @@ Orthanc instance previews as thumbnails, builds Weasis DICOMweb launch links,
 and writes generated JPG/PNG/PDF-derived DICOM directly to Orthanc for the
 launched patient context. It does not own MWL state, infer completion/expiry,
 receive modality DICOM, or change Gateway receive/forward/charset behavior.
+When `WEB_AUTH_PASSWORD` is set, browser access is protected with Basic Auth;
+`GET /health` remains unauthenticated for container health checks.
 
 Business logic belongs outside Orthanc:
 
