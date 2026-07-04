@@ -74,12 +74,55 @@ GET http://127.0.0.1:8060/imaging/worklist
 POST http://127.0.0.1:8060/orders/upsert
 POST http://127.0.0.1:8060/orders/cancel
 POST http://127.0.0.1:8060/admin/worklist/prune
+http://192.168.0.200/emr.php
 ```
 
 Production order integrations should send normalized order events to Gateway,
 and Gateway calls the internal MWL API. Raw Gateway `/worklist` endpoints
 remain internal/development helpers. Gateway receives production DICOM studies
 on `VIEWREX:104`; it does not poll eGHIS.
+
+KaosPACS Web is an Orthanc study browser, Weasis launcher, and patient-context
+document upload surface. It is configured by:
+
+```text
+WEB_HTTP_BIND=0.0.0.0
+WEB_PORT=80
+WEB_ORTHANC_PUBLIC_URL=http://192.168.0.200:8042
+WEASIS_DICOMWEB_URL=http://192.168.0.200:8042/dicom-web
+WEB_STUDY_LIMIT=100
+```
+
+The web container talks to Orthanc internally at `http://orthanc:8042`.
+Browsers open `http://192.168.0.200/emr.php`. The Weasis buttons use the
+configured DICOMweb URL, so client workstations must be able to reach Orthanc
+HTTP at `192.168.0.200:8042` and must have Weasis installed and registered for
+the `weasis://` protocol.
+
+When eGHIS opens
+`http://192.168.0.200/emr.php?m_patid=<chart_no>&m_patname=<name>&m_dob=<yyyymmdd>&m_sex=<M|F|O>`,
+KaosPACS Web filters studies to that chart number, displays chart
+number/name/DOB/sex from the launch context, and shows a file upload control on
+the same patient page. V1 upload accepts pasted clipboard images, JPG, PNG, and
+PDF only, creates a DICOM object with `PatientID=<chart_no>` plus the supplied
+name/DOB/sex when present, and uploads it to Orthanc. Pasted clipboard images
+do not need to be saved as temporary desktop files. It does not ask the
+operator to manually type patient demographics. The upload size limit is
+controlled by:
+
+```text
+WEB_UPLOAD_MAX_BYTES=26214400
+WEB_AUTH_USERNAME=kaospacs
+WEB_AUTH_PASSWORD=<random-password>
+```
+
+Web does not own MWL state, infer completion/expiry, receive modality DICOM, or
+change Gateway receive/forward/charset behavior. Web upload writes generated
+JPG/PNG/PDF-derived DICOM directly to Orthanc for the launched patient context.
+Set `WEB_AUTH_PASSWORD` in `.env` for browser Basic Auth before exposing Web on
+the clinic LAN. Do not commit the production password. Leave
+`WEB_AUTH_PASSWORD` empty only for development. `GET /health` remains open for
+Docker health checks.
 
 Gateway DICOM front-door settings:
 

@@ -59,9 +59,10 @@ Default host path:
 ```
 
 Modalities should not send directly to Orthanc. Gateway receives studies,
-stores a temporary copy, forwards the unchanged dataset to Orthanc, and calls
-the MWL completion endpoint after successful receive/forward/storage and MWL
-matching.
+stores the original received DICOM, inspects charset, applies guarded Korean
+charset normalization when enabled and matched, forwards the selected original
+or normalized copy to Orthanc, and calls the MWL completion endpoint after
+successful receive/forward/storage and MWL matching.
 
 ## Viewer Assumptions
 
@@ -69,4 +70,7 @@ The selected Orthanc image is expected to include common plugins such as
 DICOMweb and Stone Web Viewer. Initial configuration enables DICOMweb and
 requests Stone Web Viewer support when the plugin is available.
 
-Weasis launching is future KaosPACS Web scope, not part of this initial stack.
+KaosPACS Web is an Orthanc study browser, Weasis launcher, and patient-context
+document upload surface. It reads Orthanc studies, provides Weasis DICOMweb
+launch links, and writes generated JPG/PNG/PDF-derived DICOM directly to
+Orthanc for patient-context uploads.

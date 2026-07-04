@@ -187,6 +187,60 @@ Compare behavior in:
 
 Document findings before proposing normalization.
 
+## KaosPACS Web Or Weasis Does Not Open
+
+Open the web study browser from a workstation:
+
+```text
+http://192.168.0.200/emr.php
+```
+
+If the page is unavailable, check the web container and port:
+
+```bash
+docker compose ps web
+docker compose logs web
+```
+
+If thumbnails do not appear, verify Orthanc is healthy and has stored studies.
+KaosPACS Web proxies Orthanc instance previews from `http://orthanc:8042`.
+
+If the Weasis button does nothing, verify Weasis is installed on the
+workstation and registered for the `weasis://` protocol. If Weasis opens but
+does not load images, confirm the workstation can reach:
+
+```text
+http://192.168.0.200:8042/dicom-web
+```
+
+The Weasis URL is controlled by `WEASIS_DICOMWEB_URL`.
+
+If uploads do not appear in PACS, confirm the EMR URL includes `m_patid`.
+Upload is only enabled on patient-context pages such as:
+
+```text
+http://192.168.0.200/emr.php?m_patid=9426&m_patname=%EC%9D%B4%EC%A7%84%EC%84%B1&m_dob=19700101&m_sex=M
+```
+
+V1 upload accepts pasted clipboard images, JPG, PNG, and PDF files. Pasted
+images should show a preview before upload. Uploaded content is converted to
+DICOM and sent to Orthanc over the internal Docker network. If the launch URL
+includes `m_patname`, `m_dob`, and `m_sex`, Web displays those values and stores
+them in the generated DICOM upload object. The upload page still does not ask
+the operator to manually type patient demographics.
+
+If the browser shows a login prompt, use the local Web Basic Auth credentials
+configured in `.env`:
+
+```text
+WEB_AUTH_USERNAME
+WEB_AUTH_PASSWORD
+```
+
+If Web is reachable without a password on the clinic LAN, confirm
+`WEB_AUTH_PASSWORD` is set and restart the web service. `GET /health` remains
+open by design.
+
 ## BMD Cannot Query Worklist
 
 OsteoPro BMD normal workflow requires MWL:

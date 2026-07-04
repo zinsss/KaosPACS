@@ -231,8 +231,29 @@ Legacy modality
   -> Gateway stores a local copy without modifying the dataset
   -> Gateway forwards study to Orthanc internal backend
   -> Gateway calls POST /worklist/complete
-  -> future KaosPACS Web / Weasis opens study
+  -> KaosPACS Web / Weasis opens stored study
 ```
+
+KaosPACS Web is an Orthanc study browser, Weasis launcher, and patient-context
+document upload surface. It reads Orthanc, shows preview thumbnails when
+Orthanc can render one, and opens studies in Weasis through Orthanc DICOMweb.
+It does not own MWL state, infer completion/expiry, receive modality DICOM, or
+change Gateway receive/forward/charset behavior.
+
+For patient-context web launch, eGHIS opens:
+
+```text
+/emr.php?m_patid=<chart_no>&m_patname=<name>&m_dob=<yyyymmdd>&m_sex=<M|F|O>
+```
+
+KaosPACS Web uses `m_patid` as the Orthanc/DICOM `PatientID`, displays the
+provided chart number/name/DOB/sex, shows only that patient's studies, and lets
+the operator paste a clipboard image or upload JPG, PNG, or PDF files into
+Orthanc as DICOM for that same patient. Uploaded DICOM objects include the
+provided name/DOB/sex when present and use safe UTF-8 metadata. Pasted images
+avoid leaving a temporary patient-sensitive file on the desktop. V1 upload
+intentionally does not have a separate upload page or manual patient
+demographic entry.
 
 Current default direct-mode Gateway DICOM flow:
 
