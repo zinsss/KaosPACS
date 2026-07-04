@@ -70,4 +70,7 @@ The selected Orthanc image is expected to include common plugins such as
 DICOMweb and Stone Web Viewer. Initial configuration enables DICOMweb and
 requests Stone Web Viewer support when the plugin is available.
 
-KaosPACS Web reads Orthanc studies and provides Weasis DICOMweb launch links.
+KaosPACS Web is an Orthanc study browser, Weasis launcher, and patient-context
+document upload surface. It reads Orthanc studies, provides Weasis DICOMweb
+launch links, and writes generated JPG/PNG/PDF-derived DICOM directly to
+Orthanc for patient-context uploads.

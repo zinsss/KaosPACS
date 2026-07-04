@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime
 from io import BytesIO
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 from PIL import Image
@@ -12,7 +14,7 @@ from pydicom.uid import EncapsulatedPDFStorage, SecondaryCaptureImageStorage
 
 from app.config import load_config
 from app.dicom_upload import create_upload_dicom
-from app.main import make_weasis_url, render_index
+from app.main import create_handler, make_weasis_url, render_index
 from app.orthanc import StudySummary
 
 
@@ -99,6 +101,34 @@ def test_render_index_escapes_values() -> None:
     assert "2026-07-02" in html
     assert "weasis://?" in html
     assert "<script>alert(1)</script>" not in html
+
+
+def test_web_request_logging_does_not_include_patient_query_phi(caplog) -> None:
+    Handler = create_handler(Mock(), Mock())
+    fake_handler = SimpleNamespace(
+        command="GET",
+        path="/emr.php?m_patid=CHART9426&m_patname=%EC%9D%B4%EC%A7%84%EC%84%B1&m_dob=19700101&m_sex=FEMALE",
+        client_address=("10.0.0.5", 58123),
+    )
+
+    caplog.set_level(logging.INFO, logger="kaospacs.web")
+    Handler.log_message(
+        fake_handler,
+        '"GET /emr.php?m_patid=CHART9426&m_patname=이진성&m_dob=19700101&m_sex=FEMALE HTTP/1.1" 200 -',
+    )
+
+    log_text = caplog.text
+    assert "method=GET" in log_text
+    assert "path=/emr.php" in log_text
+    assert "client_ip=10.0.0.5" in log_text
+    assert "m_patid" not in log_text
+    assert "CHART9426" not in log_text
+    assert "m_patname" not in log_text
+    assert "이진성" not in log_text
+    assert "m_dob" not in log_text
+    assert "19700101" not in log_text
+    assert "m_sex" not in log_text
+    assert "FEMALE" not in log_text
 
 
 def test_patient_context_page_contains_upload_without_manual_patient_fields() -> None:

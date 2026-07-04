@@ -52,9 +52,11 @@ Current runtime:
   configured retry-based forwarding.
 - Gateway is the single workflow and storage integration boundary.
 - Orthanc is the internal storage, index, REST, DICOMweb, and viewer backend.
-- KaosPACS Web reads Orthanc, shows thumbnails for stored studies, and provides
-  Weasis launch links through Orthanc DICOMweb. It is read-only and does not
-  alter MWL state.
+- KaosPACS Web is an Orthanc study browser, Weasis launcher, and
+  patient-context document upload surface. It does not own MWL state, infer
+  completion/expiry, receive modality DICOM, or change Gateway
+  receive/forward/charset behavior. Web uploads write generated JPG/PNG/PDF-
+  derived DICOM directly to Orthanc.
 - KaosEghis-PACS will remain the EMR-aware adapter that reads eGHIS with
   read-only access, normalizes orders, and sends worklist events to Gateway.
   It should not call MWL directly in production, call Orthanc directly, or
@@ -137,8 +139,9 @@ docker compose ps
   - `POST http://127.0.0.1:8060/orders/cancel`
 - Gateway protected admin API:
   - `POST http://127.0.0.1:8060/admin/worklist/prune`
-- KaosPACS Web reads Orthanc over Docker internal HTTP and generates
-  `weasis://` links that ask Weasis to load studies from
+- KaosPACS Web is an Orthanc study browser, Weasis launcher, and
+  patient-context document upload surface. It reads Orthanc over Docker
+  internal HTTP and generates `weasis://` links that ask Weasis to load studies from
   `http://192.168.0.200:8042/dicom-web`. Workstations need Weasis installed
   and registered for the `weasis://` protocol. When eGHIS opens
   `/emr.php?m_patid=<chart_no>&m_patname=<name>&m_dob=<yyyymmdd>&m_sex=<M|F|O>`,

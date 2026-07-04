@@ -82,8 +82,8 @@ and Gateway calls the internal MWL API. Raw Gateway `/worklist` endpoints
 remain internal/development helpers. Gateway receives production DICOM studies
 on `VIEWREX:104`; it does not poll eGHIS.
 
-KaosPACS Web is a read-only study browser for past Orthanc studies. It is
-configured by:
+KaosPACS Web is an Orthanc study browser, Weasis launcher, and patient-context
+document upload surface. It is configured by:
 
 ```text
 WEB_HTTP_BIND=0.0.0.0
@@ -113,6 +113,10 @@ controlled by:
 ```text
 WEB_UPLOAD_MAX_BYTES=26214400
 ```
+
+Web does not own MWL state, infer completion/expiry, receive modality DICOM, or
+change Gateway receive/forward/charset behavior. Web upload writes generated
+JPG/PNG/PDF-derived DICOM directly to Orthanc for the launched patient context.
 
 Gateway DICOM front-door settings:
 

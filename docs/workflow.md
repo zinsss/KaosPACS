@@ -234,9 +234,11 @@ Legacy modality
   -> KaosPACS Web / Weasis opens stored study
 ```
 
-KaosPACS Web is the operator surface for past stored studies. It reads Orthanc,
-shows preview thumbnails when Orthanc can render one, and opens studies in
-Weasis through Orthanc DICOMweb. It does not alter worklist state.
+KaosPACS Web is an Orthanc study browser, Weasis launcher, and patient-context
+document upload surface. It reads Orthanc, shows preview thumbnails when
+Orthanc can render one, and opens studies in Weasis through Orthanc DICOMweb.
+It does not own MWL state, infer completion/expiry, receive modality DICOM, or
+change Gateway receive/forward/charset behavior.
 
 For patient-context web launch, eGHIS opens:
 

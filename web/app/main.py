@@ -66,7 +66,17 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
             self.send_error(HTTPStatus.NOT_FOUND)
 
         def log_message(self, fmt: str, *args: Any) -> None:
-            LOGGER.info("Web %s", fmt % args)
+            parsed = urlparse(getattr(self, "path", ""))
+            client_ip = "-"
+            client_address = getattr(self, "client_address", None)
+            if client_address:
+                client_ip = str(client_address[0])
+            LOGGER.info(
+                "Web request method=%s path=%s client_ip=%s",
+                getattr(self, "command", "-"),
+                parsed.path or "-",
+                client_ip,
+            )
 
         def _api_studies(self, query_string: str) -> None:
             params = parse_qs(query_string)
@@ -198,24 +208,21 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
                 orthanc.upload_instance(result.dicom_bytes)
             except ValueError as exc:
                 LOGGER.info(
-                    "Web upload rejected patient_id=%s reason=%s",
-                    patient.patient_id,
+                    "Web upload rejected event=upload_rejected reason=%s",
                     str(exc),
                 )
                 self._redirect_upload(params, str(exc))
                 return
             except Exception as exc:
                 LOGGER.warning(
-                    "Web upload failed patient_id=%s exception=%s",
-                    patient.patient_id,
+                    "Web upload failed event=upload_failed exception=%s",
                     exc.__class__.__name__,
                 )
                 self._redirect_upload(params, "failed")
                 return
 
             LOGGER.info(
-                "Web upload stored patient_id=%s accession_number=%s modality=%s",
-                patient.patient_id,
+                "Web upload stored event=upload_stored accession_number=%s modality=%s",
                 result.accession_number,
                 result.modality,
             )
