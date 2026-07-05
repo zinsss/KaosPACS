@@ -248,10 +248,13 @@ For patient-context web launch, eGHIS opens:
 
 KaosPACS Web uses `m_patid` as the Orthanc/DICOM `PatientID`, displays the
 provided chart number/name/DOB/sex, shows only that patient's studies, and lets
-the operator paste a clipboard image or upload JPG, PNG, or PDF files into
-Orthanc as DICOM for that same patient. Uploaded DICOM objects include the
-provided name/DOB/sex when present and use safe UTF-8 metadata. Pasted images
-avoid leaving a temporary patient-sensitive file on the desktop. V1 upload
+the operator paste one or more clipboard images or upload JPG, PNG, or PDF
+files into Orthanc as DICOM for that same patient. Pasted images are queued
+before upload in paste order, can be removed or reordered with Move up/Move
+down, and each pasted image becomes a separate DICOM Secondary Capture object.
+Uploaded DICOM objects include the provided name/DOB/sex when present and use
+safe UTF-8 metadata. PDF upload remains file-picker only. Pasted images avoid
+leaving a temporary patient-sensitive file on the desktop. V1 upload
 intentionally does not have a separate upload page or manual patient
 demographic entry.
 

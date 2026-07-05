@@ -222,12 +222,15 @@ Upload is only enabled on patient-context pages such as:
 http://192.168.0.200/emr.php?m_patid=9426&m_patname=%EC%9D%B4%EC%A7%84%EC%84%B1&m_dob=19700101&m_sex=M
 ```
 
-V1 upload accepts pasted clipboard images, JPG, PNG, and PDF files. Pasted
-images should show a preview before upload. Uploaded content is converted to
-DICOM and sent to Orthanc over the internal Docker network. If the launch URL
-includes `m_patname`, `m_dob`, and `m_sex`, Web displays those values and stores
-them in the generated DICOM upload object. The upload page still does not ask
-the operator to manually type patient demographics.
+V1 upload accepts repeated pasted clipboard images, JPG, PNG, and PDF files.
+Pasted images should appear as queued preview items before upload. Use Remove
+to drop an item, Clear all to empty the queue, and Move up/Move down to adjust
+the upload order. Each queued pasted image is converted to a separate DICOM
+Secondary Capture object and sent to Orthanc over the internal Docker network.
+PDF upload remains file-picker only. If the launch URL includes `m_patname`,
+`m_dob`, and `m_sex`, Web displays those values and stores them in the
+generated DICOM upload object. The upload page still does not ask the operator
+to manually type patient demographics.
 
 If the browser shows a login prompt, use the local Web Basic Auth credentials
 configured in `.env`:

@@ -35,11 +35,13 @@ def create_upload_dicom(
     content: bytes,
     patient_birth_date: str = "",
     patient_sex: str = "",
+    upload_index: int = 1,
+    upload_count: int = 1,
     now: datetime | None = None,
 ) -> UploadDicomResult:
     normalized_type = _content_type(content_type, filename)
     now = now or datetime.now()
-    accession_number = f"UP{now.strftime('%y%m%d%H%M%S')}"
+    accession_number = _upload_accession_number(now, upload_index, upload_count)
 
     if normalized_type in SUPPORTED_IMAGE_TYPES:
         dataset = _image_dataset(
@@ -51,6 +53,8 @@ def create_upload_dicom(
             content=content,
             now=now,
             accession_number=accession_number,
+            upload_index=upload_index,
+            upload_count=upload_count,
         )
         description = "Uploaded image"
     elif normalized_type in SUPPORTED_PDF_TYPES:
@@ -63,6 +67,8 @@ def create_upload_dicom(
             content=content,
             now=now,
             accession_number=accession_number,
+            upload_index=upload_index,
+            upload_count=upload_count,
         )
         description = "Uploaded PDF"
     else:
@@ -87,6 +93,8 @@ def _base_dataset(
     accession_number: str,
     sop_class_uid: str,
     study_description: str,
+    upload_index: int,
+    upload_count: int,
 ) -> Dataset:
     sop_instance_uid = generate_uid()
     dataset = Dataset()
@@ -120,7 +128,7 @@ def _base_dataset(
     dataset.SeriesDescription = "KaosPACS manual upload"
     dataset.Manufacturer = "KaosPACS"
     dataset.ConversionType = "WSD"
-    dataset.ImageComments = f"Uploaded through KaosPACS Web: {filename[:180]}"
+    dataset.ImageComments = _upload_comment(upload_index, upload_count)
     return dataset
 
 
@@ -134,6 +142,8 @@ def _image_dataset(
     content: bytes,
     now: datetime,
     accession_number: str,
+    upload_index: int,
+    upload_count: int,
 ) -> Dataset:
     dataset = _base_dataset(
         patient_id=patient_id,
@@ -145,6 +155,8 @@ def _image_dataset(
         accession_number=accession_number,
         sop_class_uid=SecondaryCaptureImageStorage,
         study_description="Uploaded image",
+        upload_index=upload_index,
+        upload_count=upload_count,
     )
     image = Image.open(io.BytesIO(content))
     if image.mode not in ("L", "RGB"):
@@ -176,6 +188,8 @@ def _pdf_dataset(
     content: bytes,
     now: datetime,
     accession_number: str,
+    upload_index: int,
+    upload_count: int,
 ) -> Dataset:
     if not content.startswith(b"%PDF"):
         raise ValueError("invalid_pdf")
@@ -189,6 +203,8 @@ def _pdf_dataset(
         accession_number=accession_number,
         sop_class_uid=EncapsulatedPDFStorage,
         study_description="Uploaded PDF",
+        upload_index=upload_index,
+        upload_count=upload_count,
     )
     dataset.MIMETypeOfEncapsulatedDocument = "application/pdf"
     dataset.EncapsulatedDocument = content
@@ -214,6 +230,19 @@ def _content_type(content_type: str, filename: str) -> str:
     if suffix == "pdf":
         return "application/pdf"
     return "application/octet-stream"
+
+
+def _upload_accession_number(now: datetime, upload_index: int, upload_count: int) -> str:
+    base = f"UP{now.strftime('%y%m%d%H%M%S')}"
+    if upload_count <= 1:
+        return base
+    return f"{base}{min(max(upload_index, 1), 99):02d}"
+
+
+def _upload_comment(upload_index: int, upload_count: int) -> str:
+    if upload_count <= 1:
+        return "Uploaded through KaosPACS Web"
+    return f"Uploaded through KaosPACS Web. Upload item {upload_index} of {upload_count}."
 
 
 def _dicom_birth_date(value: str) -> str:

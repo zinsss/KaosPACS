@@ -146,8 +146,11 @@ docker compose ps
   and registered for the `weasis://` protocol. When eGHIS opens
   `/emr.php?m_patid=<chart_no>&m_patname=<name>&m_dob=<yyyymmdd>&m_sex=<M|F|O>`,
   Web scopes the page to that PatientID, displays chart number/name/DOB/sex
-  from the launch context, and allows pasted images, JPG, PNG, or PDF upload
-  directly into Orthanc as DICOM for that patient. Pasted images can be
+  from the launch context, and allows repeated pasted screenshots/images, JPG,
+  PNG, or PDF upload directly into Orthanc as DICOM for that patient. Pasted
+  images are queued before upload, can be removed or reordered with Move
+  up/Move down, and each pasted image becomes a separate DICOM Secondary
+  Capture object. PDF upload remains file-picker only. Pasted images can be
   uploaded without saving a temporary file on the desktop. V1 upload does not
   ask the operator to manually enter patient demographics.
 - Gateway DICOM front door: enabled by default as `VIEWREX:104`. It stores

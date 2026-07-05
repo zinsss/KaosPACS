@@ -103,12 +103,14 @@ When eGHIS opens
 `http://192.168.0.200/emr.php?m_patid=<chart_no>&m_patname=<name>&m_dob=<yyyymmdd>&m_sex=<M|F|O>`,
 KaosPACS Web filters studies to that chart number, displays chart
 number/name/DOB/sex from the launch context, and shows a file upload control on
-the same patient page. V1 upload accepts pasted clipboard images, JPG, PNG, and
-PDF only, creates a DICOM object with `PatientID=<chart_no>` plus the supplied
-name/DOB/sex when present, and uploads it to Orthanc. Pasted clipboard images
-do not need to be saved as temporary desktop files. It does not ask the
-operator to manually type patient demographics. The upload size limit is
-controlled by:
+the same patient page. V1 upload accepts repeated pasted clipboard images, JPG,
+PNG, and PDF only, creates DICOM objects with `PatientID=<chart_no>` plus the
+supplied name/DOB/sex when present, and uploads them to Orthanc. Pasted images
+are queued before upload in paste order, can be removed or reordered with Move
+up/Move down, and each pasted image becomes a separate DICOM Secondary Capture
+object. PDF upload remains file-picker only. Pasted clipboard images do not
+need to be saved as temporary desktop files. It does not ask the operator to
+manually type patient demographics. The upload size limit is controlled by:
 
 ```text
 WEB_UPLOAD_MAX_BYTES=26214400

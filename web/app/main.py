@@ -33,6 +33,13 @@ class PatientContext:
     patient_sex: str = ""
 
 
+@dataclass(frozen=True)
+class UploadSummary:
+    uploaded_count: int = 0
+    failed_count: int = 0
+    first_error: str = ""
+
+
 def make_weasis_url(dicomweb_url: str, study_instance_uid: str) -> str:
     command = (
         f'$dicom:rs --url "{dicomweb_url.rstrip("/")}" '
@@ -152,7 +159,11 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
             query = params.get("q", [""])[0]
             patient = _patient_context_from_params(params)
             upload_status = params.get("upload", [""])[0]
-            upload_message = _upload_status_message(upload_status)
+            upload_message = _upload_status_message(
+                upload_status,
+                params.get("uploaded_count", [""])[0],
+                params.get("failed_count", [""])[0],
+            )
             try:
                 if path == "/emr.php" and patient.patient_id:
                     studies = orthanc.studies_for_patient(
@@ -221,26 +232,11 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
                     },
                 )
                 field = form["file"] if "file" in form else None
-                if field is None or not getattr(field, "filename", ""):
+                fields = _file_fields(field)
+                if not fields:
                     self._redirect_upload(params, "missing_file")
                     return
-                content = field.file.read(config.upload_max_bytes + 1)
-                if not content:
-                    self._redirect_upload(params, "missing_file")
-                    return
-                if len(content) > config.upload_max_bytes:
-                    self._redirect_upload(params, "too_large")
-                    return
-                result = create_upload_dicom(
-                    patient_id=patient.patient_id,
-                    patient_name=patient.patient_name,
-                    patient_birth_date=patient.patient_birth_date,
-                    patient_sex=patient.patient_sex,
-                    filename=field.filename,
-                    content_type=getattr(field, "type", "") or "",
-                    content=content,
-                )
-                orthanc.upload_instance(result.dicom_bytes)
+                summary = self._store_upload_fields(patient, fields)
             except ValueError as exc:
                 LOGGER.info(
                     "Web upload rejected event=upload_rejected reason=%s",
@@ -257,15 +253,86 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
                 return
 
             LOGGER.info(
-                "Web upload stored event=upload_stored accession_number=%s modality=%s",
-                result.accession_number,
-                result.modality,
+                "Web upload batch complete event=upload_batch_complete uploaded_count=%s failed_count=%s",
+                summary.uploaded_count,
+                summary.failed_count,
             )
-            self._redirect_upload(params, "success")
+            self._redirect_upload(
+                params,
+                _upload_redirect_status(summary),
+                summary.uploaded_count,
+                summary.failed_count,
+            )
 
-        def _redirect_upload(self, params: dict[str, list[str]], status: str) -> None:
+        def _store_upload_fields(
+            self,
+            patient: PatientContext,
+            fields: list[cgi.FieldStorage],
+        ) -> UploadSummary:
+            uploaded_count = 0
+            failed_count = 0
+            first_error = ""
+            upload_count = len(fields)
+            for index, field in enumerate(fields, start=1):
+                try:
+                    content = field.file.read(config.upload_max_bytes + 1)
+                    if not content:
+                        raise ValueError("missing_file")
+                    if len(content) > config.upload_max_bytes:
+                        raise ValueError("too_large")
+                    result = create_upload_dicom(
+                        patient_id=patient.patient_id,
+                        patient_name=patient.patient_name,
+                        patient_birth_date=patient.patient_birth_date,
+                        patient_sex=patient.patient_sex,
+                        filename=getattr(field, "filename", "") or f"upload-{index}.png",
+                        content_type=getattr(field, "type", "") or "",
+                        content=content,
+                        upload_index=index,
+                        upload_count=upload_count,
+                    )
+                    orthanc.upload_instance(result.dicom_bytes)
+                    uploaded_count += 1
+                    LOGGER.info(
+                        "Web upload stored event=upload_stored accession_number=%s modality=%s upload_index=%s upload_count=%s",
+                        result.accession_number,
+                        result.modality,
+                        index,
+                        upload_count,
+                    )
+                except ValueError as exc:
+                    failed_count += 1
+                    first_error = first_error or str(exc)
+                    LOGGER.info(
+                        "Web upload item rejected event=upload_item_rejected reason=%s upload_index=%s upload_count=%s",
+                        str(exc),
+                        index,
+                        upload_count,
+                    )
+                except Exception as exc:
+                    failed_count += 1
+                    first_error = first_error or "failed"
+                    LOGGER.warning(
+                        "Web upload item failed event=upload_item_failed exception=%s upload_index=%s upload_count=%s",
+                        exc.__class__.__name__,
+                        index,
+                        upload_count,
+                    )
+            return UploadSummary(uploaded_count, failed_count, first_error)
+
+        def _redirect_upload(
+            self,
+            params: dict[str, list[str]],
+            status: str,
+            uploaded_count: int = 0,
+            failed_count: int = 0,
+        ) -> None:
             query = {key: values[0] for key, values in params.items() if values}
             query["upload"] = status
+            if uploaded_count:
+                query["uploaded_count"] = str(uploaded_count)
+            if failed_count:
+                query["failed_count"] = str(failed_count)
             location = "/emr.php?" + urlencode(query)
             self.send_response(HTTPStatus.SEE_OTHER)
             self.send_header("Location", location)
@@ -415,15 +482,19 @@ def _upload_form(
     <label for="file">Add image or PDF to this patient's PACS</label>
     <div id="paste-zone" class="paste-zone" tabindex="0">
       <strong>Paste image here</strong>
-      <span>Copy an image or screenshot, click here, then press Ctrl+V. Nothing needs to be saved on the desktop.</span>
-      <div id="paste-preview" class="paste-preview" aria-live="polite"></div>
+      <span>Copy one or more images or screenshots, click here, then press Ctrl+V. Nothing needs to be saved on the desktop.</span>
       <div id="paste-status" class="paste-status" aria-live="polite"></div>
     </div>
+    <div class="paste-queue-bar">
+      <strong>Queued pasted images</strong>
+      <button type="button" id="paste-clear" class="secondary">Clear all</button>
+    </div>
+    <div id="paste-queue" class="paste-queue" aria-live="polite"></div>
     <div class="upload-row">
-      <input id="file" name="file" type="file" accept="image/jpeg,image/png,application/pdf" required>
+      <input id="file" name="file" type="file" accept="image/jpeg,image/png,application/pdf" multiple required>
       <button type="submit">Upload</button>
     </div>
-    <p>Paste images, or choose JPG, PNG, or PDF. Uploads are stored as DICOM in Orthanc for PatientID {html.escape(patient.patient_id)}.</p>
+    <p>Paste one or more images, or choose JPG, PNG, or PDF. Each queued pasted image is stored as a separate DICOM in Orthanc for PatientID {html.escape(patient.patient_id)}. PDF upload remains file-picker only.</p>
   </form>
   {message}
 </section>
@@ -504,6 +575,15 @@ def _first_param(params: dict[str, list[str]], keys: tuple[str, ...]) -> str:
     return ""
 
 
+def _file_fields(field: Any) -> list[cgi.FieldStorage]:
+    fields = field if isinstance(field, list) else [field]
+    return [
+        item
+        for item in fields
+        if item is not None and getattr(item, "filename", "") and getattr(item, "file", None)
+    ]
+
+
 def _check_basic_auth(header: str, expected_username: str, expected_password: str) -> bool:
     if not expected_password or not header.startswith("Basic "):
         return False
@@ -522,8 +602,22 @@ def _check_basic_auth(header: str, expected_username: str, expected_password: st
     )
 
 
-def _upload_status_message(status: str) -> str:
-    return {
+def _upload_redirect_status(summary: UploadSummary) -> str:
+    if summary.uploaded_count and summary.failed_count:
+        return "partial"
+    if summary.uploaded_count:
+        return "success"
+    return summary.first_error or "failed"
+
+
+def _upload_status_message(status: str, uploaded_count: str = "", failed_count: str = "") -> str:
+    uploaded = _safe_count(uploaded_count)
+    failed = _safe_count(failed_count)
+    if status == "success" and uploaded > 1:
+        return f"Upload added {uploaded} items to PACS."
+    if status == "partial":
+        return f"Upload added {uploaded} items to PACS; {failed} items failed."
+    messages = {
         "success": "Upload added to PACS.",
         "missing_patient": "No patient/chart number was provided.",
         "missing_file": "Choose a JPG, PNG, or PDF file to upload.",
@@ -531,7 +625,15 @@ def _upload_status_message(status: str) -> str:
         "unsupported_upload_type": "Only JPG, PNG, and PDF files are supported.",
         "invalid_pdf": "The uploaded PDF file is not valid.",
         "failed": "Upload failed while saving to PACS.",
-    }.get(status, "")
+    }
+    return messages.get(status, "")
+
+
+def _safe_count(raw: str) -> int:
+    try:
+        return max(int(raw), 0)
+    except ValueError:
+        return 0
 
 
 CSS = """
@@ -560,8 +662,16 @@ main { padding:18px 28px 32px; }
 .paste-zone:focus { border-color:var(--blue); box-shadow:0 0 0 3px rgba(23,92,211,.12); }
 .paste-zone strong { display:block; margin-bottom:4px; }
 .paste-zone span, .paste-status { color:var(--muted); font-size:13px; }
-.paste-preview { margin-top:10px; }
-.paste-preview img { display:block; max-width:220px; max-height:160px; object-fit:contain; border:1px solid var(--border); border-radius:6px; background:#111827; }
+.paste-queue-bar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:8px 0; }
+.paste-queue-bar strong { font-size:14px; }
+.paste-queue { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:10px; margin-bottom:10px; }
+.paste-item { border:1px solid var(--border); border-radius:8px; background:#f8fafc; padding:8px; }
+.paste-item img { display:block; width:100%; height:120px; object-fit:contain; border:1px solid var(--border); border-radius:6px; background:#111827; }
+.paste-item-header { display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:7px; font-size:13px; }
+.paste-actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:7px; }
+.paste-actions button, .secondary { min-height:30px; font-size:13px; padding:5px 8px; }
+.paste-actions button:last-child { grid-column:1 / -1; }
+.secondary { background:#fff; color:var(--text); border-color:var(--border); }
 .notice { border:1px solid var(--border); background:#fff; border-radius:8px; padding:14px; margin-bottom:12px; }
 .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(360px, 1fr)); gap:12px; }
 .study { display:grid; grid-template-columns:132px minmax(0, 1fr); min-height:172px; background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
@@ -597,32 +707,125 @@ PASTE_SCRIPT = r"""
   if (!form) return;
   const input = form.querySelector("#file");
   const zone = form.querySelector("#paste-zone");
-  const preview = form.querySelector("#paste-preview");
+  const queue = form.querySelector("#paste-queue");
+  const clear = form.querySelector("#paste-clear");
   const status = form.querySelector("#paste-status");
-  if (!input || !zone || !preview || !status) return;
+  if (!input || !zone || !queue || !clear || !status) return;
+  const pastedFiles = [];
+  const objectUrls = new Map();
+  let syncingInput = false;
 
   function setStatus(message) {
     status.textContent = message;
   }
 
-  function setPastedFile(file) {
+  function syncInputFiles() {
     if (!window.DataTransfer) {
       setStatus("This browser cannot attach pasted images. Use the file picker instead.");
       return;
     }
-    const name = file.name || "pasted-image.png";
-    const pasted = new File([file], name, { type: file.type || "image/png" });
     const transfer = new DataTransfer();
-    transfer.items.add(pasted);
+    pastedFiles.forEach(function (file) { transfer.items.add(file); });
+    syncingInput = true;
     input.files = transfer.files;
+    syncingInput = false;
+  }
 
-    preview.textContent = "";
-    const image = document.createElement("img");
-    image.alt = "Pasted image preview";
-    image.src = URL.createObjectURL(pasted);
-    image.onload = function () { URL.revokeObjectURL(image.src); };
-    preview.appendChild(image);
-    setStatus("Pasted image is ready. Press Upload to add it to PACS.");
+  function revokeUrl(file) {
+    const url = objectUrls.get(file);
+    if (url) {
+      URL.revokeObjectURL(url);
+      objectUrls.delete(file);
+    }
+  }
+
+  function renderQueue() {
+    queue.textContent = "";
+    pastedFiles.forEach(function (file, index) {
+      let url = objectUrls.get(file);
+      if (!url) {
+        url = URL.createObjectURL(file);
+        objectUrls.set(file, url);
+      }
+
+      const item = document.createElement("div");
+      item.className = "paste-item";
+
+      const header = document.createElement("div");
+      header.className = "paste-item-header";
+      const title = document.createElement("strong");
+      title.textContent = "Item " + (index + 1);
+      const size = document.createElement("span");
+      size.textContent = Math.ceil(file.size / 1024) + " KB";
+      header.appendChild(title);
+      header.appendChild(size);
+
+      const image = document.createElement("img");
+      image.alt = "Queued pasted image " + (index + 1);
+      image.src = url;
+
+      const actions = document.createElement("div");
+      actions.className = "paste-actions";
+      const up = actionButton("Move up", function () { moveItem(index, -1); });
+      const down = actionButton("Move down", function () { moveItem(index, 1); });
+      const remove = actionButton("Remove", function () { removeItem(index); });
+      up.disabled = index === 0;
+      down.disabled = index === pastedFiles.length - 1;
+      actions.appendChild(up);
+      actions.appendChild(down);
+      actions.appendChild(remove);
+
+      item.appendChild(header);
+      item.appendChild(image);
+      item.appendChild(actions);
+      queue.appendChild(item);
+    });
+    clear.disabled = pastedFiles.length === 0;
+    if (pastedFiles.length > 0) {
+      setStatus(pastedFiles.length + " pasted image" + (pastedFiles.length === 1 ? "" : "s") + " queued. Press Upload to add them to PACS.");
+    }
+  }
+
+  function actionButton(label, onClick) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary";
+    button.textContent = label;
+    button.addEventListener("click", onClick);
+    return button;
+  }
+
+  function moveItem(index, direction) {
+    const next = index + direction;
+    if (next < 0 || next >= pastedFiles.length) return;
+    const current = pastedFiles[index];
+    pastedFiles[index] = pastedFiles[next];
+    pastedFiles[next] = current;
+    syncInputFiles();
+    renderQueue();
+  }
+
+  function removeItem(index) {
+    const removed = pastedFiles.splice(index, 1)[0];
+    if (removed) revokeUrl(removed);
+    syncInputFiles();
+    renderQueue();
+    if (pastedFiles.length === 0) setStatus("Paste images, or use the file picker.");
+  }
+
+  function clearQueue() {
+    pastedFiles.splice(0).forEach(revokeUrl);
+    if (window.DataTransfer) input.files = new DataTransfer().files;
+    renderQueue();
+    setStatus("Pasted image queue cleared.");
+  }
+
+  function addPastedFile(file) {
+    const name = "pasted-image-" + String(pastedFiles.length + 1).padStart(2, "0") + ".png";
+    const pasted = new File([file], name, { type: file.type || "image/png" });
+    pastedFiles.push(pasted);
+    syncInputFiles();
+    renderQueue();
   }
 
   function handlePaste(event) {
@@ -633,7 +836,7 @@ PASTE_SCRIPT = r"""
         const file = item.getAsFile();
         if (file) {
           event.preventDefault();
-          setPastedFile(file);
+          addPastedFile(file);
           return;
         }
       }
@@ -643,12 +846,21 @@ PASTE_SCRIPT = r"""
 
   zone.addEventListener("click", function () { zone.focus(); });
   zone.addEventListener("paste", handlePaste);
+  clear.addEventListener("click", clearQueue);
+  input.addEventListener("change", function () {
+    if (syncingInput || pastedFiles.length === 0) return;
+    pastedFiles.splice(0).forEach(revokeUrl);
+    queue.textContent = "";
+    clear.disabled = true;
+    setStatus("File picker selection will be uploaded.");
+  });
   document.addEventListener("paste", function (event) {
     if (document.activeElement === zone) return;
     if (form.contains(document.activeElement) || document.activeElement === document.body) {
       handlePaste(event);
     }
   });
+  clear.disabled = true;
 })();
 """
 
