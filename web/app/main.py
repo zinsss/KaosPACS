@@ -11,7 +11,9 @@ from dataclasses import asdict, dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, quote, quote_plus, urlencode, urlparse
+from urllib.request import Request, urlopen
 
 from .config import Config, load_config
 from .dicom_upload import create_upload_dicom
@@ -23,6 +25,13 @@ with warnings.catch_warnings():
 
 
 LOGGER = logging.getLogger("kaospacs.web")
+
+AIO_DISCLAIMER = (
+    "KaosPACS AI Opinion\n\n"
+    "NOT official YHSHFM Report.\n"
+    "ONLY for AI Testing and Assistance.\n"
+    "Clinical Correlation and Physician review required."
+)
 
 
 @dataclass(frozen=True)
@@ -40,6 +49,47 @@ class UploadSummary:
     first_error: str = ""
 
 
+class AioClient:
+    def __init__(self, base_url: str, timeout: float = 5.0) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    def study_report(self, study_instance_uid: str) -> dict[str, Any]:
+        return self._json("GET", f"/api/aio/study/{quote(study_instance_uid, safe='')}")
+
+    def infer(self, orthanc_study_id: str) -> dict[str, Any]:
+        return self._json("POST", f"/api/aio/infer/{quote(orthanc_study_id, safe='')}")
+
+    def mark_reviewed(self, report_id: str) -> dict[str, Any]:
+        return self._json(
+            "POST",
+            f"/api/aio/report/{quote(report_id, safe='')}/review",
+            {
+                "physician_review_status": "approved",
+                "reviewed_by": "KaosPACS-Web",
+            },
+        )
+
+    def _json(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        data = json.dumps(payload).encode("utf-8") if payload is not None else None
+        request = Request(
+            f"{self.base_url}{path}",
+            data=data,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            method=method,
+        )
+        with urlopen(request, timeout=self.timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+
 def make_weasis_url(dicomweb_url: str, study_instance_uid: str) -> str:
     command = (
         f'$dicom:rs --url "{dicomweb_url.rstrip("/")}" '
@@ -48,7 +98,13 @@ def make_weasis_url(dicomweb_url: str, study_instance_uid: str) -> str:
     return "weasis://?" + quote_plus(command)
 
 
-def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPRequestHandler]:
+def create_handler(
+    config: Config,
+    orthanc: OrthancClient,
+    aio: AioClient | None = None,
+) -> type[BaseHTTPRequestHandler]:
+    aio_client = aio or AioClient(config.kaospacs_aio_url)
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "KaosPACSWeb/0.1"
 
@@ -61,6 +117,9 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
                 return
             if parsed.path == "/api/studies":
                 self._api_studies(parsed.query)
+                return
+            if parsed.path.startswith("/api/aio/study/"):
+                self._api_aio_study(parsed.path.removeprefix("/api/aio/study/"))
                 return
             if parsed.path.startswith("/thumbnail/"):
                 self._thumbnail(parsed.path.removeprefix("/thumbnail/"))
@@ -76,6 +135,13 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
                 return
             if parsed.path == "/emr.php":
                 self._upload(parsed.query)
+                return
+            if parsed.path.startswith("/api/aio/infer/"):
+                self._api_aio_infer(parsed.path.removeprefix("/api/aio/infer/"))
+                return
+            if parsed.path.startswith("/api/aio/report/") and parsed.path.endswith("/review"):
+                report_id = parsed.path.removeprefix("/api/aio/report/").removesuffix("/review")
+                self._api_aio_review(report_id)
                 return
             self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -136,6 +202,36 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
                     "count": len(studies),
                 }
             )
+
+        def _api_aio_study(self, study_instance_uid: str) -> None:
+            if not study_instance_uid:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            try:
+                self._json(aio_client.study_report(study_instance_uid))
+            except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+                LOGGER.warning("AIO study lookup failed exception=%s", exc.__class__.__name__)
+                self._json({"error": "aio_unavailable"}, HTTPStatus.BAD_GATEWAY)
+
+        def _api_aio_infer(self, orthanc_study_id: str) -> None:
+            if not orthanc_study_id:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            try:
+                self._json(aio_client.infer(orthanc_study_id), HTTPStatus.CREATED)
+            except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+                LOGGER.warning("AIO infer failed exception=%s", exc.__class__.__name__)
+                self._json({"error": "aio_unavailable"}, HTTPStatus.BAD_GATEWAY)
+
+        def _api_aio_review(self, report_id: str) -> None:
+            if not report_id:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            try:
+                self._json(aio_client.mark_reviewed(report_id))
+            except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+                LOGGER.warning("AIO review failed exception=%s", exc.__class__.__name__)
+                self._json({"error": "aio_unavailable"}, HTTPStatus.BAD_GATEWAY)
 
         def _thumbnail(self, instance_id: str) -> None:
             if not instance_id:
@@ -417,7 +513,8 @@ def render_index(
     {upload_html}
     <section class="summary">{len(studies)} studies</section>
     <section class="grid">{rows}</section>
-  </main>
+</main>
+<script>{AIO_PANEL_SCRIPT}</script>
 </body>
 </html>"""
 
@@ -452,8 +549,24 @@ def _study_card(config: Config, study: StudySummary) -> str:
       <a class="primary" href="{html.escape(weasis_url)}">Open with Weasis</a>
       <a href="{html.escape(orthanc_url)}" target="_blank" rel="noreferrer">Orthanc</a>
     </div>
+    {_aio_panel(study)}
   </div>
 </article>"""
+
+
+def _aio_panel(study: StudySummary) -> str:
+    return f"""
+    <section class="aio-panel"
+      data-aio-panel
+      data-study-instance-uid="{html.escape(study.study_instance_uid, quote=True)}"
+      data-orthanc-study-id="{html.escape(study.orthanc_id, quote=True)}">
+      <h3>KaosPACS AI Opinion</h3>
+      <pre class="aio-disclaimer">{html.escape(AIO_DISCLAIMER)}</pre>
+      <div class="aio-content" aria-live="polite">
+        <p>No AI Opinion yet</p>
+        <button type="button" data-aio-run>Run AI Opinion</button>
+      </div>
+    </section>"""
 
 
 def _upload_form(
@@ -686,6 +799,16 @@ dl { display:grid; grid-template-columns:1fr 1fr; gap:7px 12px; margin:0; }
 dt { color:var(--muted); font-size:12px; }
 dd { margin:2px 0 0; overflow-wrap:anywhere; }
 .actions { display:flex; gap:8px; margin-top:13px; flex-wrap:wrap; }
+.aio-panel { margin-top:13px; border:1px solid var(--border); border-radius:8px; background:#f8fafc; padding:10px; }
+.aio-panel h3 { margin:0 0 8px; font-size:15px; line-height:1.25; letter-spacing:0; }
+.aio-disclaimer { margin:0 0 9px; padding:8px; border:1px solid #f2c94c; border-radius:6px; background:#fff8db; color:#4a3412; font:700 12px/1.35 system-ui, -apple-system, Segoe UI, sans-serif; white-space:pre-wrap; }
+.aio-content p { margin:0 0 8px; }
+.aio-fields { display:grid; grid-template-columns:1fr; gap:6px; margin:0 0 9px; }
+.aio-field { display:grid; grid-template-columns:120px minmax(0, 1fr); gap:8px; font-size:13px; }
+.aio-field span { color:var(--muted); }
+.aio-field strong { font-weight:600; overflow-wrap:anywhere; }
+.aio-controls { display:flex; gap:8px; flex-wrap:wrap; }
+.aio-controls button[disabled] { opacity:.55; cursor:not-allowed; }
 .empty, .error { border:1px solid var(--border); background:#fff; border-radius:8px; padding:18px; }
 .error { border-color:#ef9a9a; color:#9f1239; }
 @media (max-width: 720px) {
@@ -698,6 +821,151 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
   dl { grid-template-columns:1fr; }
   .patient-context { grid-template-columns:1fr 1fr; }
 }
+"""
+
+
+AIO_PANEL_SCRIPT = r"""
+(function () {
+  const panels = document.querySelectorAll("[data-aio-panel]");
+  if (!panels.length) return;
+
+  function loadPanel(panel) {
+    const studyInstanceUid = panel.dataset.studyInstanceUid || "";
+    if (!studyInstanceUid) return;
+    fetch("/api/aio/study/" + encodeURIComponent(studyInstanceUid), {
+      headers: { "Accept": "application/json" }
+    })
+      .then(function (response) {
+        if (!response.ok) throw new Error("AIO lookup failed");
+        return response.json();
+      })
+      .then(function (payload) {
+        const reports = Array.isArray(payload.reports) ? payload.reports : [];
+        if (reports.length === 0) {
+          renderNoReport(panel);
+          return;
+        }
+        renderReport(panel, reports[0]);
+      })
+      .catch(function () {
+        renderUnavailable(panel);
+      });
+  }
+
+  function renderNoReport(panel) {
+    const content = panel.querySelector(".aio-content");
+    content.textContent = "";
+    const message = document.createElement("p");
+    message.textContent = "No AI Opinion yet";
+    const run = document.createElement("button");
+    run.type = "button";
+    run.textContent = "Run AI Opinion";
+    run.addEventListener("click", function () { runOpinion(panel, run); });
+    content.appendChild(message);
+    content.appendChild(run);
+  }
+
+  function runOpinion(panel, button) {
+    const orthancStudyId = panel.dataset.orthancStudyId || "";
+    if (!orthancStudyId) return;
+    button.disabled = true;
+    button.textContent = "Running AI Opinion";
+    fetch("/api/aio/infer/" + encodeURIComponent(orthancStudyId), {
+      method: "POST",
+      headers: { "Accept": "application/json" }
+    })
+      .then(function (response) {
+        if (!response.ok) throw new Error("AIO infer failed");
+        return response.json();
+      })
+      .then(function (report) {
+        renderReport(panel, report);
+      })
+      .catch(function () {
+        renderUnavailable(panel);
+      });
+  }
+
+  function renderReport(panel, report) {
+    const disclaimer = panel.querySelector(".aio-disclaimer");
+    if (disclaimer && report.disclaimer_text) {
+      disclaimer.textContent = report.disclaimer_text;
+    }
+
+    const content = panel.querySelector(".aio-content");
+    content.textContent = "";
+    const fields = document.createElement("div");
+    fields.className = "aio-fields";
+    fields.appendChild(field("status", report.status));
+    fields.appendChild(field("ai_domain", report.ai_domain));
+    fields.appendChild(field("model_name", report.model_name || "-"));
+    fields.appendChild(field("model_version", report.model_version || "-"));
+    fields.appendChild(field("summary", report.summary || "-"));
+    fields.appendChild(field("routing reason", routingReason(report)));
+    fields.appendChild(field("physician_review_status", report.physician_review_status || "-"));
+    fields.appendChild(field("disclaimer_text", report.disclaimer_text || "-"));
+
+    const controls = document.createElement("div");
+    controls.className = "aio-controls";
+    const reviewed = document.createElement("button");
+    reviewed.type = "button";
+    reviewed.textContent = "Mark reviewed";
+    reviewed.disabled = report.physician_review_status === "approved";
+    reviewed.addEventListener("click", function () {
+      reviewed.disabled = true;
+      fetch("/api/aio/report/" + encodeURIComponent(report.id) + "/review", {
+        method: "POST",
+        headers: { "Accept": "application/json" }
+      })
+        .then(function (response) {
+          if (!response.ok) throw new Error("AIO review failed");
+          return response.json();
+        })
+        .then(function (updated) { renderReport(panel, updated); })
+        .catch(function () {
+          reviewed.disabled = false;
+        });
+    });
+
+    const reject = document.createElement("button");
+    reject.type = "button";
+    reject.textContent = "Reject/Hide";
+    reject.disabled = true;
+    reject.title = "TODO: enable when the AIO API supports hide/reject workflow semantics.";
+
+    controls.appendChild(reviewed);
+    controls.appendChild(reject);
+    content.appendChild(fields);
+    content.appendChild(controls);
+  }
+
+  function renderUnavailable(panel) {
+    const content = panel.querySelector(".aio-content");
+    content.textContent = "";
+    const message = document.createElement("p");
+    message.textContent = "AI Opinion service is unavailable.";
+    content.appendChild(message);
+  }
+
+  function field(label, value) {
+    const row = document.createElement("div");
+    row.className = "aio-field";
+    const key = document.createElement("span");
+    key.textContent = label;
+    const val = document.createElement("strong");
+    val.textContent = value == null || value === "" ? "-" : String(value);
+    row.appendChild(key);
+    row.appendChild(val);
+    return row;
+  }
+
+  function routingReason(report) {
+    if (!report || !report.routing_json) return "-";
+    return report.routing_json.reason || "-";
+  }
+
+  panels.forEach(loadPanel);
+})();
 """
 
 

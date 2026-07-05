@@ -19,7 +19,7 @@ from pydicom.uid import EncapsulatedPDFStorage, SecondaryCaptureImageStorage
 
 from app.config import load_config
 from app.dicom_upload import create_upload_dicom
-from app.main import create_handler, make_weasis_url, render_index
+from app.main import AIO_DISCLAIMER, create_handler, make_weasis_url, render_index
 from app.orthanc import StudySummary
 
 
@@ -30,6 +30,7 @@ def test_config_defaults(monkeypatch) -> None:
         "WEB_ORTHANC_URL",
         "WEB_ORTHANC_PUBLIC_URL",
         "WEASIS_DICOMWEB_URL",
+        "KAOSPACS_AIO_URL",
         "WEB_STUDY_LIMIT",
         "WEB_UPLOAD_MAX_BYTES",
         "WEB_AUTH_USERNAME",
@@ -44,6 +45,7 @@ def test_config_defaults(monkeypatch) -> None:
     assert config.orthanc_url == "http://orthanc:8042"
     assert config.orthanc_public_url == "http://192.168.0.200:8042"
     assert config.weasis_dicomweb_url == "http://192.168.0.200:8042/dicom-web"
+    assert config.kaospacs_aio_url == "http://127.0.0.1:8056"
     assert config.study_limit == 100
     assert config.upload_max_bytes == 25 * 1024 * 1024
     assert config.auth_username == "kaospacs"
@@ -56,6 +58,7 @@ def test_config_env_overrides(monkeypatch) -> None:
     monkeypatch.setenv("WEB_ORTHANC_URL", "http://orthanc.local:8042/")
     monkeypatch.setenv("WEB_ORTHANC_PUBLIC_URL", "http://pacs:8042/")
     monkeypatch.setenv("WEASIS_DICOMWEB_URL", "http://pacs:8042/dicom-web/")
+    monkeypatch.setenv("KAOSPACS_AIO_URL", "http://aio:8056/")
     monkeypatch.setenv("WEB_STUDY_LIMIT", "50")
     monkeypatch.setenv("WEB_UPLOAD_MAX_BYTES", "12345")
     monkeypatch.setenv("WEB_AUTH_USERNAME", "viewer")
@@ -68,6 +71,7 @@ def test_config_env_overrides(monkeypatch) -> None:
     assert config.orthanc_url == "http://orthanc.local:8042"
     assert config.orthanc_public_url == "http://pacs:8042"
     assert config.weasis_dicomweb_url == "http://pacs:8042/dicom-web"
+    assert config.kaospacs_aio_url == "http://aio:8056"
     assert config.study_limit == 50
     assert config.upload_max_bytes == 12345
     assert config.auth_username == "viewer"
@@ -113,7 +117,71 @@ def test_render_index_escapes_values() -> None:
     assert "&lt;b&gt;NAME&lt;/b&gt;" in html
     assert "2026-07-02" in html
     assert "weasis://?" in html
+    assert "KaosPACS AI Opinion" in html
+    assert "NOT official YHSHFM Report." in html
+    assert "ONLY for AI Testing and Assistance." in html
+    assert "Clinical Correlation and Physician review required." in html
+    assert 'data-study-instance-uid="1.2.3"' in html
+    assert 'data-orthanc-study-id="orthanc-id"' in html
+    assert "No AI Opinion yet" in html
+    assert "Run AI Opinion" in html
+    assert "diagnosis" not in html.lower()
     assert "<script>alert(1)</script>" not in html
+
+
+def test_aio_proxy_endpoints_call_aio_client() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    aio = Mock()
+    aio.study_report.return_value = {
+        "study_instance_uid": "1.2.3",
+        "reports": [],
+        "disclaimer_text": AIO_DISCLAIMER,
+    }
+    aio.infer.return_value = {
+        "id": "report-1",
+        "status": "completed",
+        "disclaimer_text": AIO_DISCLAIMER,
+    }
+    aio.mark_reviewed.return_value = {
+        "id": "report-1",
+        "physician_review_status": "approved",
+        "disclaimer_text": AIO_DISCLAIMER,
+    }
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, Mock(), aio),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        response = urlopen(f"{_server_url(server)}/api/aio/study/1.2.3", timeout=3)
+        assert response.status == 200
+        payload = json.loads(response.read().decode("utf-8"))
+        assert payload["disclaimer_text"] == AIO_DISCLAIMER
+        aio.study_report.assert_called_once_with("1.2.3")
+
+        infer = Request(
+            f"{_server_url(server)}/api/aio/infer/orthanc-id",
+            data=b"",
+            method="POST",
+        )
+        response = urlopen(infer, timeout=3)
+        assert response.status == 201
+        aio.infer.assert_called_once_with("orthanc-id")
+
+        review = Request(
+            f"{_server_url(server)}/api/aio/report/report-1/review",
+            data=b"",
+            method="POST",
+        )
+        response = urlopen(review, timeout=3)
+        assert response.status == 200
+        aio.mark_reviewed.assert_called_once_with("report-1")
+    finally:
+        _stop_test_server(server, thread)
 
 
 def test_web_request_logging_does_not_include_patient_query_phi(caplog) -> None:
