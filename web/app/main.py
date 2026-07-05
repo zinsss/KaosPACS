@@ -11,7 +11,9 @@ from dataclasses import asdict, dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, quote, quote_plus, urlencode, urlparse
+from urllib.request import Request, urlopen
 
 from .config import Config, load_config
 from .dicom_upload import create_upload_dicom
@@ -24,6 +26,13 @@ with warnings.catch_warnings():
 
 LOGGER = logging.getLogger("kaospacs.web")
 
+AIO_DISCLAIMER = (
+    "KaosPACS AI Opinion\n\n"
+    "NOT official YHSHFM Report.\n"
+    "ONLY for AI Testing and Assistance.\n"
+    "Clinical Correlation and Physician review required."
+)
+
 
 @dataclass(frozen=True)
 class PatientContext:
@@ -31,6 +40,54 @@ class PatientContext:
     patient_name: str = ""
     patient_birth_date: str = ""
     patient_sex: str = ""
+
+
+@dataclass(frozen=True)
+class UploadSummary:
+    uploaded_count: int = 0
+    failed_count: int = 0
+    first_error: str = ""
+
+
+class AioClient:
+    def __init__(self, base_url: str, timeout: float = 5.0) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    def study_report(self, study_instance_uid: str) -> dict[str, Any]:
+        return self._json("GET", f"/api/aio/study/{quote(study_instance_uid, safe='')}")
+
+    def infer(self, orthanc_study_id: str) -> dict[str, Any]:
+        return self._json("POST", f"/api/aio/infer/{quote(orthanc_study_id, safe='')}")
+
+    def mark_reviewed(self, report_id: str) -> dict[str, Any]:
+        return self._json(
+            "POST",
+            f"/api/aio/report/{quote(report_id, safe='')}/review",
+            {
+                "physician_review_status": "approved",
+                "reviewed_by": "KaosPACS-Web",
+            },
+        )
+
+    def _json(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        data = json.dumps(payload).encode("utf-8") if payload is not None else None
+        request = Request(
+            f"{self.base_url}{path}",
+            data=data,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            method=method,
+        )
+        with urlopen(request, timeout=self.timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
 
 
 def make_weasis_url(dicomweb_url: str, study_instance_uid: str) -> str:
@@ -41,7 +98,13 @@ def make_weasis_url(dicomweb_url: str, study_instance_uid: str) -> str:
     return "weasis://?" + quote_plus(command)
 
 
-def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPRequestHandler]:
+def create_handler(
+    config: Config,
+    orthanc: OrthancClient,
+    aio: AioClient | None = None,
+) -> type[BaseHTTPRequestHandler]:
+    aio_client = aio or AioClient(config.kaospacs_aio_url)
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "KaosPACSWeb/0.1"
 
@@ -54,6 +117,9 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
                 return
             if parsed.path == "/api/studies":
                 self._api_studies(parsed.query)
+                return
+            if parsed.path.startswith("/api/aio/study/"):
+                self._api_aio_study(parsed.path.removeprefix("/api/aio/study/"))
                 return
             if parsed.path.startswith("/thumbnail/"):
                 self._thumbnail(parsed.path.removeprefix("/thumbnail/"))
@@ -69,6 +135,13 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
                 return
             if parsed.path == "/emr.php":
                 self._upload(parsed.query)
+                return
+            if parsed.path.startswith("/api/aio/infer/"):
+                self._api_aio_infer(parsed.path.removeprefix("/api/aio/infer/"))
+                return
+            if parsed.path.startswith("/api/aio/report/") and parsed.path.endswith("/review"):
+                report_id = parsed.path.removeprefix("/api/aio/report/").removesuffix("/review")
+                self._api_aio_review(report_id)
                 return
             self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -130,6 +203,36 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
                 }
             )
 
+        def _api_aio_study(self, study_instance_uid: str) -> None:
+            if not study_instance_uid:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            try:
+                self._json(aio_client.study_report(study_instance_uid))
+            except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+                LOGGER.warning("AIO study lookup failed exception=%s", exc.__class__.__name__)
+                self._json({"error": "aio_unavailable"}, HTTPStatus.BAD_GATEWAY)
+
+        def _api_aio_infer(self, orthanc_study_id: str) -> None:
+            if not orthanc_study_id:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            try:
+                self._json(aio_client.infer(orthanc_study_id), HTTPStatus.CREATED)
+            except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+                LOGGER.warning("AIO infer failed exception=%s", exc.__class__.__name__)
+                self._json({"error": "aio_unavailable"}, HTTPStatus.BAD_GATEWAY)
+
+        def _api_aio_review(self, report_id: str) -> None:
+            if not report_id:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            try:
+                self._json(aio_client.mark_reviewed(report_id))
+            except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+                LOGGER.warning("AIO review failed exception=%s", exc.__class__.__name__)
+                self._json({"error": "aio_unavailable"}, HTTPStatus.BAD_GATEWAY)
+
         def _thumbnail(self, instance_id: str) -> None:
             if not instance_id:
                 self.send_error(HTTPStatus.NOT_FOUND)
@@ -152,7 +255,11 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
             query = params.get("q", [""])[0]
             patient = _patient_context_from_params(params)
             upload_status = params.get("upload", [""])[0]
-            upload_message = _upload_status_message(upload_status)
+            upload_message = _upload_status_message(
+                upload_status,
+                params.get("uploaded_count", [""])[0],
+                params.get("failed_count", [""])[0],
+            )
             try:
                 if path == "/emr.php" and patient.patient_id:
                     studies = orthanc.studies_for_patient(
@@ -221,26 +328,11 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
                     },
                 )
                 field = form["file"] if "file" in form else None
-                if field is None or not getattr(field, "filename", ""):
+                fields = _file_fields(field)
+                if not fields:
                     self._redirect_upload(params, "missing_file")
                     return
-                content = field.file.read(config.upload_max_bytes + 1)
-                if not content:
-                    self._redirect_upload(params, "missing_file")
-                    return
-                if len(content) > config.upload_max_bytes:
-                    self._redirect_upload(params, "too_large")
-                    return
-                result = create_upload_dicom(
-                    patient_id=patient.patient_id,
-                    patient_name=patient.patient_name,
-                    patient_birth_date=patient.patient_birth_date,
-                    patient_sex=patient.patient_sex,
-                    filename=field.filename,
-                    content_type=getattr(field, "type", "") or "",
-                    content=content,
-                )
-                orthanc.upload_instance(result.dicom_bytes)
+                summary = self._store_upload_fields(patient, fields)
             except ValueError as exc:
                 LOGGER.info(
                     "Web upload rejected event=upload_rejected reason=%s",
@@ -257,15 +349,86 @@ def create_handler(config: Config, orthanc: OrthancClient) -> type[BaseHTTPReque
                 return
 
             LOGGER.info(
-                "Web upload stored event=upload_stored accession_number=%s modality=%s",
-                result.accession_number,
-                result.modality,
+                "Web upload batch complete event=upload_batch_complete uploaded_count=%s failed_count=%s",
+                summary.uploaded_count,
+                summary.failed_count,
             )
-            self._redirect_upload(params, "success")
+            self._redirect_upload(
+                params,
+                _upload_redirect_status(summary),
+                summary.uploaded_count,
+                summary.failed_count,
+            )
 
-        def _redirect_upload(self, params: dict[str, list[str]], status: str) -> None:
+        def _store_upload_fields(
+            self,
+            patient: PatientContext,
+            fields: list[cgi.FieldStorage],
+        ) -> UploadSummary:
+            uploaded_count = 0
+            failed_count = 0
+            first_error = ""
+            upload_count = len(fields)
+            for index, field in enumerate(fields, start=1):
+                try:
+                    content = field.file.read(config.upload_max_bytes + 1)
+                    if not content:
+                        raise ValueError("missing_file")
+                    if len(content) > config.upload_max_bytes:
+                        raise ValueError("too_large")
+                    result = create_upload_dicom(
+                        patient_id=patient.patient_id,
+                        patient_name=patient.patient_name,
+                        patient_birth_date=patient.patient_birth_date,
+                        patient_sex=patient.patient_sex,
+                        filename=getattr(field, "filename", "") or f"upload-{index}.png",
+                        content_type=getattr(field, "type", "") or "",
+                        content=content,
+                        upload_index=index,
+                        upload_count=upload_count,
+                    )
+                    orthanc.upload_instance(result.dicom_bytes)
+                    uploaded_count += 1
+                    LOGGER.info(
+                        "Web upload stored event=upload_stored accession_number=%s modality=%s upload_index=%s upload_count=%s",
+                        result.accession_number,
+                        result.modality,
+                        index,
+                        upload_count,
+                    )
+                except ValueError as exc:
+                    failed_count += 1
+                    first_error = first_error or str(exc)
+                    LOGGER.info(
+                        "Web upload item rejected event=upload_item_rejected reason=%s upload_index=%s upload_count=%s",
+                        str(exc),
+                        index,
+                        upload_count,
+                    )
+                except Exception as exc:
+                    failed_count += 1
+                    first_error = first_error or "failed"
+                    LOGGER.warning(
+                        "Web upload item failed event=upload_item_failed exception=%s upload_index=%s upload_count=%s",
+                        exc.__class__.__name__,
+                        index,
+                        upload_count,
+                    )
+            return UploadSummary(uploaded_count, failed_count, first_error)
+
+        def _redirect_upload(
+            self,
+            params: dict[str, list[str]],
+            status: str,
+            uploaded_count: int = 0,
+            failed_count: int = 0,
+        ) -> None:
             query = {key: values[0] for key, values in params.items() if values}
             query["upload"] = status
+            if uploaded_count:
+                query["uploaded_count"] = str(uploaded_count)
+            if failed_count:
+                query["failed_count"] = str(failed_count)
             location = "/emr.php?" + urlencode(query)
             self.send_response(HTTPStatus.SEE_OTHER)
             self.send_header("Location", location)
@@ -350,7 +513,8 @@ def render_index(
     {upload_html}
     <section class="summary">{len(studies)} studies</section>
     <section class="grid">{rows}</section>
-  </main>
+</main>
+<script>{AIO_PANEL_SCRIPT}</script>
 </body>
 </html>"""
 
@@ -385,8 +549,24 @@ def _study_card(config: Config, study: StudySummary) -> str:
       <a class="primary" href="{html.escape(weasis_url)}">Open with Weasis</a>
       <a href="{html.escape(orthanc_url)}" target="_blank" rel="noreferrer">Orthanc</a>
     </div>
+    {_aio_panel(study)}
   </div>
 </article>"""
+
+
+def _aio_panel(study: StudySummary) -> str:
+    return f"""
+    <section class="aio-panel"
+      data-aio-panel
+      data-study-instance-uid="{html.escape(study.study_instance_uid, quote=True)}"
+      data-orthanc-study-id="{html.escape(study.orthanc_id, quote=True)}">
+      <h3>KaosPACS AI Opinion</h3>
+      <pre class="aio-disclaimer">{html.escape(AIO_DISCLAIMER)}</pre>
+      <div class="aio-content" aria-live="polite">
+        <p>No AI Opinion yet</p>
+        <button type="button" data-aio-run>Run AI Opinion</button>
+      </div>
+    </section>"""
 
 
 def _upload_form(
@@ -415,15 +595,19 @@ def _upload_form(
     <label for="file">Add image or PDF to this patient's PACS</label>
     <div id="paste-zone" class="paste-zone" tabindex="0">
       <strong>Paste image here</strong>
-      <span>Copy an image or screenshot, click here, then press Ctrl+V. Nothing needs to be saved on the desktop.</span>
-      <div id="paste-preview" class="paste-preview" aria-live="polite"></div>
+      <span>Copy one or more images or screenshots, click here, then press Ctrl+V. Nothing needs to be saved on the desktop.</span>
       <div id="paste-status" class="paste-status" aria-live="polite"></div>
     </div>
+    <div class="paste-queue-bar">
+      <strong>Queued pasted images</strong>
+      <button type="button" id="paste-clear" class="secondary">Clear all</button>
+    </div>
+    <div id="paste-queue" class="paste-queue" aria-live="polite"></div>
     <div class="upload-row">
-      <input id="file" name="file" type="file" accept="image/jpeg,image/png,application/pdf" required>
+      <input id="file" name="file" type="file" accept="image/jpeg,image/png,application/pdf" multiple required>
       <button type="submit">Upload</button>
     </div>
-    <p>Paste images, or choose JPG, PNG, or PDF. Uploads are stored as DICOM in Orthanc for PatientID {html.escape(patient.patient_id)}.</p>
+    <p>Paste one or more images, or choose JPG, PNG, or PDF. Each queued pasted image is stored as a separate DICOM in Orthanc for PatientID {html.escape(patient.patient_id)}. PDF upload remains file-picker only.</p>
   </form>
   {message}
 </section>
@@ -504,6 +688,15 @@ def _first_param(params: dict[str, list[str]], keys: tuple[str, ...]) -> str:
     return ""
 
 
+def _file_fields(field: Any) -> list[cgi.FieldStorage]:
+    fields = field if isinstance(field, list) else [field]
+    return [
+        item
+        for item in fields
+        if item is not None and getattr(item, "filename", "") and getattr(item, "file", None)
+    ]
+
+
 def _check_basic_auth(header: str, expected_username: str, expected_password: str) -> bool:
     if not expected_password or not header.startswith("Basic "):
         return False
@@ -522,8 +715,22 @@ def _check_basic_auth(header: str, expected_username: str, expected_password: st
     )
 
 
-def _upload_status_message(status: str) -> str:
-    return {
+def _upload_redirect_status(summary: UploadSummary) -> str:
+    if summary.uploaded_count and summary.failed_count:
+        return "partial"
+    if summary.uploaded_count:
+        return "success"
+    return summary.first_error or "failed"
+
+
+def _upload_status_message(status: str, uploaded_count: str = "", failed_count: str = "") -> str:
+    uploaded = _safe_count(uploaded_count)
+    failed = _safe_count(failed_count)
+    if status == "success" and uploaded > 1:
+        return f"Upload added {uploaded} items to PACS."
+    if status == "partial":
+        return f"Upload added {uploaded} items to PACS; {failed} items failed."
+    messages = {
         "success": "Upload added to PACS.",
         "missing_patient": "No patient/chart number was provided.",
         "missing_file": "Choose a JPG, PNG, or PDF file to upload.",
@@ -531,7 +738,15 @@ def _upload_status_message(status: str) -> str:
         "unsupported_upload_type": "Only JPG, PNG, and PDF files are supported.",
         "invalid_pdf": "The uploaded PDF file is not valid.",
         "failed": "Upload failed while saving to PACS.",
-    }.get(status, "")
+    }
+    return messages.get(status, "")
+
+
+def _safe_count(raw: str) -> int:
+    try:
+        return max(int(raw), 0)
+    except ValueError:
+        return 0
 
 
 CSS = """
@@ -560,8 +775,16 @@ main { padding:18px 28px 32px; }
 .paste-zone:focus { border-color:var(--blue); box-shadow:0 0 0 3px rgba(23,92,211,.12); }
 .paste-zone strong { display:block; margin-bottom:4px; }
 .paste-zone span, .paste-status { color:var(--muted); font-size:13px; }
-.paste-preview { margin-top:10px; }
-.paste-preview img { display:block; max-width:220px; max-height:160px; object-fit:contain; border:1px solid var(--border); border-radius:6px; background:#111827; }
+.paste-queue-bar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:8px 0; }
+.paste-queue-bar strong { font-size:14px; }
+.paste-queue { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:10px; margin-bottom:10px; }
+.paste-item { border:1px solid var(--border); border-radius:8px; background:#f8fafc; padding:8px; }
+.paste-item img { display:block; width:100%; height:120px; object-fit:contain; border:1px solid var(--border); border-radius:6px; background:#111827; }
+.paste-item-header { display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:7px; font-size:13px; }
+.paste-actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:7px; }
+.paste-actions button, .secondary { min-height:30px; font-size:13px; padding:5px 8px; }
+.paste-actions button:last-child { grid-column:1 / -1; }
+.secondary { background:#fff; color:var(--text); border-color:var(--border); }
 .notice { border:1px solid var(--border); background:#fff; border-radius:8px; padding:14px; margin-bottom:12px; }
 .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(360px, 1fr)); gap:12px; }
 .study { display:grid; grid-template-columns:132px minmax(0, 1fr); min-height:172px; background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
@@ -576,6 +799,16 @@ dl { display:grid; grid-template-columns:1fr 1fr; gap:7px 12px; margin:0; }
 dt { color:var(--muted); font-size:12px; }
 dd { margin:2px 0 0; overflow-wrap:anywhere; }
 .actions { display:flex; gap:8px; margin-top:13px; flex-wrap:wrap; }
+.aio-panel { margin-top:13px; border:1px solid var(--border); border-radius:8px; background:#f8fafc; padding:10px; }
+.aio-panel h3 { margin:0 0 8px; font-size:15px; line-height:1.25; letter-spacing:0; }
+.aio-disclaimer { margin:0 0 9px; padding:8px; border:1px solid #f2c94c; border-radius:6px; background:#fff8db; color:#4a3412; font:700 12px/1.35 system-ui, -apple-system, Segoe UI, sans-serif; white-space:pre-wrap; }
+.aio-content p { margin:0 0 8px; }
+.aio-fields { display:grid; grid-template-columns:1fr; gap:6px; margin:0 0 9px; }
+.aio-field { display:grid; grid-template-columns:120px minmax(0, 1fr); gap:8px; font-size:13px; }
+.aio-field span { color:var(--muted); }
+.aio-field strong { font-weight:600; overflow-wrap:anywhere; }
+.aio-controls { display:flex; gap:8px; flex-wrap:wrap; }
+.aio-controls button[disabled] { opacity:.55; cursor:not-allowed; }
 .empty, .error { border:1px solid var(--border); background:#fff; border-radius:8px; padding:18px; }
 .error { border-color:#ef9a9a; color:#9f1239; }
 @media (max-width: 720px) {
@@ -591,38 +824,276 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
 """
 
 
+AIO_PANEL_SCRIPT = r"""
+(function () {
+  const panels = document.querySelectorAll("[data-aio-panel]");
+  if (!panels.length) return;
+
+  function loadPanel(panel) {
+    const studyInstanceUid = panel.dataset.studyInstanceUid || "";
+    if (!studyInstanceUid) return;
+    fetch("/api/aio/study/" + encodeURIComponent(studyInstanceUid), {
+      headers: { "Accept": "application/json" }
+    })
+      .then(function (response) {
+        if (!response.ok) throw new Error("AIO lookup failed");
+        return response.json();
+      })
+      .then(function (payload) {
+        const reports = Array.isArray(payload.reports) ? payload.reports : [];
+        if (reports.length === 0) {
+          renderNoReport(panel);
+          return;
+        }
+        renderReport(panel, reports[0]);
+      })
+      .catch(function () {
+        renderUnavailable(panel);
+      });
+  }
+
+  function renderNoReport(panel) {
+    const content = panel.querySelector(".aio-content");
+    content.textContent = "";
+    const message = document.createElement("p");
+    message.textContent = "No AI Opinion yet";
+    const run = document.createElement("button");
+    run.type = "button";
+    run.textContent = "Run AI Opinion";
+    run.addEventListener("click", function () { runOpinion(panel, run); });
+    content.appendChild(message);
+    content.appendChild(run);
+  }
+
+  function runOpinion(panel, button) {
+    const orthancStudyId = panel.dataset.orthancStudyId || "";
+    if (!orthancStudyId) return;
+    button.disabled = true;
+    button.textContent = "Running AI Opinion";
+    fetch("/api/aio/infer/" + encodeURIComponent(orthancStudyId), {
+      method: "POST",
+      headers: { "Accept": "application/json" }
+    })
+      .then(function (response) {
+        if (!response.ok) throw new Error("AIO infer failed");
+        return response.json();
+      })
+      .then(function (report) {
+        renderReport(panel, report);
+      })
+      .catch(function () {
+        renderUnavailable(panel);
+      });
+  }
+
+  function renderReport(panel, report) {
+    const disclaimer = panel.querySelector(".aio-disclaimer");
+    if (disclaimer && report.disclaimer_text) {
+      disclaimer.textContent = report.disclaimer_text;
+    }
+
+    const content = panel.querySelector(".aio-content");
+    content.textContent = "";
+    const fields = document.createElement("div");
+    fields.className = "aio-fields";
+    fields.appendChild(field("status", report.status));
+    fields.appendChild(field("ai_domain", report.ai_domain));
+    fields.appendChild(field("model_name", report.model_name || "-"));
+    fields.appendChild(field("model_version", report.model_version || "-"));
+    fields.appendChild(field("summary", report.summary || "-"));
+    fields.appendChild(field("routing reason", routingReason(report)));
+    fields.appendChild(field("physician_review_status", report.physician_review_status || "-"));
+    fields.appendChild(field("disclaimer_text", report.disclaimer_text || "-"));
+
+    const controls = document.createElement("div");
+    controls.className = "aio-controls";
+    const reviewed = document.createElement("button");
+    reviewed.type = "button";
+    reviewed.textContent = "Mark reviewed";
+    reviewed.disabled = report.physician_review_status === "approved";
+    reviewed.addEventListener("click", function () {
+      reviewed.disabled = true;
+      fetch("/api/aio/report/" + encodeURIComponent(report.id) + "/review", {
+        method: "POST",
+        headers: { "Accept": "application/json" }
+      })
+        .then(function (response) {
+          if (!response.ok) throw new Error("AIO review failed");
+          return response.json();
+        })
+        .then(function (updated) { renderReport(panel, updated); })
+        .catch(function () {
+          reviewed.disabled = false;
+        });
+    });
+
+    const reject = document.createElement("button");
+    reject.type = "button";
+    reject.textContent = "Reject/Hide";
+    reject.disabled = true;
+    reject.title = "TODO: enable when the AIO API supports hide/reject workflow semantics.";
+
+    controls.appendChild(reviewed);
+    controls.appendChild(reject);
+    content.appendChild(fields);
+    content.appendChild(controls);
+  }
+
+  function renderUnavailable(panel) {
+    const content = panel.querySelector(".aio-content");
+    content.textContent = "";
+    const message = document.createElement("p");
+    message.textContent = "AI Opinion service is unavailable.";
+    content.appendChild(message);
+  }
+
+  function field(label, value) {
+    const row = document.createElement("div");
+    row.className = "aio-field";
+    const key = document.createElement("span");
+    key.textContent = label;
+    const val = document.createElement("strong");
+    val.textContent = value == null || value === "" ? "-" : String(value);
+    row.appendChild(key);
+    row.appendChild(val);
+    return row;
+  }
+
+  function routingReason(report) {
+    if (!report || !report.routing_json) return "-";
+    return report.routing_json.reason || "-";
+  }
+
+  panels.forEach(loadPanel);
+})();
+"""
+
+
 PASTE_SCRIPT = r"""
 (function () {
   const form = document.querySelector("[data-paste-upload]");
   if (!form) return;
   const input = form.querySelector("#file");
   const zone = form.querySelector("#paste-zone");
-  const preview = form.querySelector("#paste-preview");
+  const queue = form.querySelector("#paste-queue");
+  const clear = form.querySelector("#paste-clear");
   const status = form.querySelector("#paste-status");
-  if (!input || !zone || !preview || !status) return;
+  if (!input || !zone || !queue || !clear || !status) return;
+  const pastedFiles = [];
+  const objectUrls = new Map();
+  let syncingInput = false;
 
   function setStatus(message) {
     status.textContent = message;
   }
 
-  function setPastedFile(file) {
+  function syncInputFiles() {
     if (!window.DataTransfer) {
       setStatus("This browser cannot attach pasted images. Use the file picker instead.");
       return;
     }
-    const name = file.name || "pasted-image.png";
-    const pasted = new File([file], name, { type: file.type || "image/png" });
     const transfer = new DataTransfer();
-    transfer.items.add(pasted);
+    pastedFiles.forEach(function (file) { transfer.items.add(file); });
+    syncingInput = true;
     input.files = transfer.files;
+    syncingInput = false;
+  }
 
-    preview.textContent = "";
-    const image = document.createElement("img");
-    image.alt = "Pasted image preview";
-    image.src = URL.createObjectURL(pasted);
-    image.onload = function () { URL.revokeObjectURL(image.src); };
-    preview.appendChild(image);
-    setStatus("Pasted image is ready. Press Upload to add it to PACS.");
+  function revokeUrl(file) {
+    const url = objectUrls.get(file);
+    if (url) {
+      URL.revokeObjectURL(url);
+      objectUrls.delete(file);
+    }
+  }
+
+  function renderQueue() {
+    queue.textContent = "";
+    pastedFiles.forEach(function (file, index) {
+      let url = objectUrls.get(file);
+      if (!url) {
+        url = URL.createObjectURL(file);
+        objectUrls.set(file, url);
+      }
+
+      const item = document.createElement("div");
+      item.className = "paste-item";
+
+      const header = document.createElement("div");
+      header.className = "paste-item-header";
+      const title = document.createElement("strong");
+      title.textContent = "Item " + (index + 1);
+      const size = document.createElement("span");
+      size.textContent = Math.ceil(file.size / 1024) + " KB";
+      header.appendChild(title);
+      header.appendChild(size);
+
+      const image = document.createElement("img");
+      image.alt = "Queued pasted image " + (index + 1);
+      image.src = url;
+
+      const actions = document.createElement("div");
+      actions.className = "paste-actions";
+      const up = actionButton("Move up", function () { moveItem(index, -1); });
+      const down = actionButton("Move down", function () { moveItem(index, 1); });
+      const remove = actionButton("Remove", function () { removeItem(index); });
+      up.disabled = index === 0;
+      down.disabled = index === pastedFiles.length - 1;
+      actions.appendChild(up);
+      actions.appendChild(down);
+      actions.appendChild(remove);
+
+      item.appendChild(header);
+      item.appendChild(image);
+      item.appendChild(actions);
+      queue.appendChild(item);
+    });
+    clear.disabled = pastedFiles.length === 0;
+    if (pastedFiles.length > 0) {
+      setStatus(pastedFiles.length + " pasted image" + (pastedFiles.length === 1 ? "" : "s") + " queued. Press Upload to add them to PACS.");
+    }
+  }
+
+  function actionButton(label, onClick) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary";
+    button.textContent = label;
+    button.addEventListener("click", onClick);
+    return button;
+  }
+
+  function moveItem(index, direction) {
+    const next = index + direction;
+    if (next < 0 || next >= pastedFiles.length) return;
+    const current = pastedFiles[index];
+    pastedFiles[index] = pastedFiles[next];
+    pastedFiles[next] = current;
+    syncInputFiles();
+    renderQueue();
+  }
+
+  function removeItem(index) {
+    const removed = pastedFiles.splice(index, 1)[0];
+    if (removed) revokeUrl(removed);
+    syncInputFiles();
+    renderQueue();
+    if (pastedFiles.length === 0) setStatus("Paste images, or use the file picker.");
+  }
+
+  function clearQueue() {
+    pastedFiles.splice(0).forEach(revokeUrl);
+    if (window.DataTransfer) input.files = new DataTransfer().files;
+    renderQueue();
+    setStatus("Pasted image queue cleared.");
+  }
+
+  function addPastedFile(file) {
+    const name = "pasted-image-" + String(pastedFiles.length + 1).padStart(2, "0") + ".png";
+    const pasted = new File([file], name, { type: file.type || "image/png" });
+    pastedFiles.push(pasted);
+    syncInputFiles();
+    renderQueue();
   }
 
   function handlePaste(event) {
@@ -633,7 +1104,7 @@ PASTE_SCRIPT = r"""
         const file = item.getAsFile();
         if (file) {
           event.preventDefault();
-          setPastedFile(file);
+          addPastedFile(file);
           return;
         }
       }
@@ -643,12 +1114,21 @@ PASTE_SCRIPT = r"""
 
   zone.addEventListener("click", function () { zone.focus(); });
   zone.addEventListener("paste", handlePaste);
+  clear.addEventListener("click", clearQueue);
+  input.addEventListener("change", function () {
+    if (syncingInput || pastedFiles.length === 0) return;
+    pastedFiles.splice(0).forEach(revokeUrl);
+    queue.textContent = "";
+    clear.disabled = true;
+    setStatus("File picker selection will be uploaded.");
+  });
   document.addEventListener("paste", function (event) {
     if (document.activeElement === zone) return;
     if (form.contains(document.activeElement) || document.activeElement === document.body) {
       handlePaste(event);
     }
   });
+  clear.disabled = true;
 })();
 """
 

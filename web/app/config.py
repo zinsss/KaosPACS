@@ -11,6 +11,7 @@ class Config:
     orthanc_url: str
     orthanc_public_url: str
     weasis_dicomweb_url: str
+    kaospacs_aio_url: str
     study_limit: int
     upload_max_bytes: int
     auth_username: str
@@ -28,6 +29,9 @@ def load_config() -> Config:
         orthanc_public_url=orthanc_public_url,
         weasis_dicomweb_url=_strip_slash(
             os.getenv("WEASIS_DICOMWEB_URL", f"{orthanc_public_url}/dicom-web")
+        ),
+        kaospacs_aio_url=_strip_slash(
+            os.getenv("KAOSPACS_AIO_URL", "http://127.0.0.1:8056")
         ),
         study_limit=_int_env("WEB_STUDY_LIMIT", 100),
         upload_max_bytes=_int_env("WEB_UPLOAD_MAX_BYTES", 25 * 1024 * 1024),
