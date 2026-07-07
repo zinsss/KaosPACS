@@ -861,8 +861,6 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
 .aio-score-list li { display:grid; grid-template-columns:minmax(0, 1fr) 64px; gap:8px; align-items:center; font-size:13px; }
 .aio-score-list strong { font-weight:600; overflow-wrap:anywhere; }
 .aio-score-list span { text-align:right; font-variant-numeric:tabular-nums; color:#0f766e; font-weight:700; }
-.aio-controls { display:flex; gap:8px; flex-wrap:wrap; }
-.aio-controls button[disabled] { opacity:.55; cursor:not-allowed; }
 .empty, .error { border:1px solid var(--border); background:#fff; border-radius:8px; padding:18px; }
 .error { border-color:#ef9a9a; color:#9f1239; }
 @media (max-width: 720px) {
@@ -948,43 +946,12 @@ AIO_PANEL_SCRIPT = r"""
 
     const content = panel.querySelector(".aio-content");
     content.textContent = "";
-    const controls = document.createElement("div");
-    controls.className = "aio-controls";
-    const reviewed = document.createElement("button");
-    reviewed.type = "button";
-    reviewed.textContent = "Mark reviewed";
-    reviewed.disabled = report.physician_review_status === "approved";
-    reviewed.addEventListener("click", function () {
-      reviewed.disabled = true;
-      fetch("/api/aio/report/" + encodeURIComponent(report.id) + "/review", {
-        method: "POST",
-        headers: { "Accept": "application/json" }
-      })
-        .then(function (response) {
-          if (!response.ok) throw new Error("AIO review failed");
-          return response.json();
-        })
-        .then(function (updated) { renderReport(panel, updated); })
-        .catch(function () {
-          reviewed.disabled = false;
-        });
-    });
-
-    const reject = document.createElement("button");
-    reject.type = "button";
-    reject.textContent = "Reject/Hide";
-    reject.disabled = true;
-    reject.title = "TODO: enable when the AIO API supports hide/reject workflow semantics.";
-
-    controls.appendChild(reviewed);
-    controls.appendChild(reject);
     const details = detailsPanel(report);
     if (details) content.appendChild(details);
     const helper = helperPanel(report);
     if (helper) content.appendChild(helper);
     const scores = scorePanel(report);
     if (scores) content.appendChild(scores);
-    content.appendChild(controls);
   }
 
   function helperPanel(report) {
@@ -1066,7 +1033,6 @@ AIO_PANEL_SCRIPT = r"""
     fields.appendChild(field("domain", report.ai_domain));
     fields.appendChild(field("model", compactModel(report)));
     fields.appendChild(field("summary", report.summary || "-"));
-    fields.appendChild(field("review", report.physician_review_status || "-"));
     fields.appendChild(field("routing", routingReason(report)));
     fields.appendChild(field("model_ver", report.model_version || "-"));
     fields.appendChild(field("report_id", report.id || "-"));
