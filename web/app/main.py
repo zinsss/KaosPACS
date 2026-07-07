@@ -948,14 +948,6 @@ AIO_PANEL_SCRIPT = r"""
 
     const content = panel.querySelector(".aio-content");
     content.textContent = "";
-    const fields = document.createElement("div");
-    fields.className = "aio-fields";
-    fields.appendChild(field("status", report.status));
-    fields.appendChild(field("domain", report.ai_domain));
-    fields.appendChild(field("model", compactModel(report)));
-    fields.appendChild(field("summary", report.summary || "-"));
-    fields.appendChild(field("review", report.physician_review_status || "-"));
-
     const controls = document.createElement("div");
     controls.className = "aio-controls";
     const reviewed = document.createElement("button");
@@ -986,7 +978,6 @@ AIO_PANEL_SCRIPT = r"""
 
     controls.appendChild(reviewed);
     controls.appendChild(reject);
-    content.appendChild(fields);
     const details = detailsPanel(report);
     if (details) content.appendChild(details);
     const helper = helperPanel(report);
@@ -1071,6 +1062,11 @@ AIO_PANEL_SCRIPT = r"""
     const body = panel.querySelector(".aio-details-body");
     const fields = document.createElement("div");
     fields.className = "aio-fields";
+    fields.appendChild(field("status", report.status));
+    fields.appendChild(field("domain", report.ai_domain));
+    fields.appendChild(field("model", compactModel(report)));
+    fields.appendChild(field("summary", report.summary || "-"));
+    fields.appendChild(field("review", report.physician_review_status || "-"));
     fields.appendChild(field("routing", routingReason(report)));
     fields.appendChild(field("model_ver", report.model_version || "-"));
     fields.appendChild(field("report_id", report.id || "-"));
