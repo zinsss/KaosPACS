@@ -961,7 +961,7 @@ AIO_PANEL_SCRIPT = r"""
     });
     if (!helperFindings.length) return null;
 
-    const panel = collapsiblePanel(helperTitle(report));
+    const panel = collapsiblePanel(report.ai_domain === "cxr" ? "Chest X-ray helper" : "AI Opinion helper");
     const body = panel.querySelector(".aio-details-body");
     const list = document.createElement("ul");
     list.className = "aio-helper-list";
@@ -1080,13 +1080,6 @@ AIO_PANEL_SCRIPT = r"""
   function compactModel(report) {
     if (!report || !report.model_name) return "-";
     return report.model_name.replace(/^torchxrayvision:/, "TXRV ");
-  }
-
-  function helperTitle(report) {
-    if (!report) return "AI Opinion helper";
-    if (report.ai_domain === "cxr") return "Chest X-ray helper";
-    if (report.ai_domain === "msk_xray") return "MSK X-ray helper";
-    return "AI Opinion helper";
   }
 
   panels.forEach(loadPanel);
