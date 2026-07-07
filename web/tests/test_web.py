@@ -139,6 +139,8 @@ def test_render_index_escapes_values() -> None:
     assert "No AI Opinion yet" in html
     assert "Run AI Opinion" in html
     assert "Chest X-ray helper" in html
+    assert "TorchXRayVision testing scores" in html
+    assert "aio-score-list" in html
     assert "diagnosis" not in html.lower()
     assert "<script>alert(1)</script>" not in html
 

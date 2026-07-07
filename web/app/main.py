@@ -854,6 +854,11 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
 .aio-helper-list li:first-child { border-top:0; padding-top:0; }
 .aio-helper-list strong { display:block; font-size:13px; margin-bottom:2px; }
 .aio-helper-list span { display:block; color:var(--muted); font-size:12px; line-height:1.35; }
+.aio-score-meta { margin:0 0 7px; color:var(--muted); font-size:12px; line-height:1.35; }
+.aio-score-list { display:grid; gap:5px; margin:0; padding:0; list-style:none; }
+.aio-score-list li { display:grid; grid-template-columns:minmax(0, 1fr) 64px; gap:8px; align-items:center; font-size:13px; }
+.aio-score-list strong { font-weight:600; overflow-wrap:anywhere; }
+.aio-score-list span { text-align:right; font-variant-numeric:tabular-nums; color:#0f766e; font-weight:700; }
 .aio-controls { display:flex; gap:8px; flex-wrap:wrap; }
 .aio-controls button[disabled] { opacity:.55; cursor:not-allowed; }
 .empty, .error { border:1px solid var(--border); background:#fff; border-radius:8px; padding:18px; }
@@ -985,12 +990,17 @@ AIO_PANEL_SCRIPT = r"""
     content.appendChild(fields);
     const helper = helperPanel(report);
     if (helper) content.appendChild(helper);
+    const scores = scorePanel(report);
+    if (scores) content.appendChild(scores);
     content.appendChild(controls);
   }
 
   function helperPanel(report) {
     const findings = Array.isArray(report.findings_json) ? report.findings_json : [];
-    if (!findings.length) return null;
+    const helperFindings = findings.filter(function (item) {
+      return item && item.section !== "torchxrayvision_scores";
+    });
+    if (!helperFindings.length) return null;
 
     const panel = document.createElement("div");
     panel.className = "aio-helper";
@@ -999,7 +1009,7 @@ AIO_PANEL_SCRIPT = r"""
     const list = document.createElement("ul");
     list.className = "aio-helper-list";
 
-    findings.forEach(function (item) {
+    helperFindings.forEach(function (item) {
       const row = document.createElement("li");
       const label = document.createElement("strong");
       label.textContent = item.label || item.section || "Review item";
@@ -1012,6 +1022,51 @@ AIO_PANEL_SCRIPT = r"""
     });
 
     panel.appendChild(title);
+    panel.appendChild(list);
+    return panel;
+  }
+
+  function scorePanel(report) {
+    const findings = Array.isArray(report.findings_json) ? report.findings_json : [];
+    const item = findings.find(function (entry) {
+      return entry && entry.section === "torchxrayvision_scores" && entry.scores && typeof entry.scores === "object";
+    });
+    if (!item) return null;
+
+    const entries = Object.entries(item.scores)
+      .filter(function (entry) { return Number.isFinite(Number(entry[1])); })
+      .sort(function (a, b) { return Number(b[1]) - Number(a[1]); })
+      .slice(0, 8);
+    if (!entries.length) return null;
+
+    const panel = document.createElement("div");
+    panel.className = "aio-helper";
+    const title = document.createElement("h4");
+    title.textContent = "TorchXRayVision testing scores";
+
+    const meta = document.createElement("p");
+    meta.className = "aio-score-meta";
+    meta.textContent = [
+      item.score_type || "model output",
+      item.input_source || "",
+      item.input_warning || ""
+    ].filter(Boolean).join(" · ");
+
+    const list = document.createElement("ul");
+    list.className = "aio-score-list";
+    entries.forEach(function (entry) {
+      const row = document.createElement("li");
+      const label = document.createElement("strong");
+      label.textContent = entry[0];
+      const value = document.createElement("span");
+      value.textContent = Number(entry[1]).toFixed(3);
+      row.appendChild(label);
+      row.appendChild(value);
+      list.appendChild(row);
+    });
+
+    panel.appendChild(title);
+    panel.appendChild(meta);
     panel.appendChild(list);
     return panel;
   }
