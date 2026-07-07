@@ -14,6 +14,7 @@ from app.config import GatewayConfig
 from app.dicom.queue import init_queue_db
 from app.main import create_server
 from app.services.audit import init_audit_db
+from app.services.operational_metadata import save_operational_metadata
 
 
 class RecordingMwlHandler(BaseHTTPRequestHandler):
@@ -97,12 +98,15 @@ def gateway_base_url(
     mwl_base_url: str,
     audit_db=None,
     gateway_queue_db=None,
+    gateway_operational_metadata_db=None,
     gateway_api_token: str | None = None,
     orthanc_url: str = "http://orthanc:8042",
 ) -> tuple[str, ThreadingHTTPServer, threading.Thread]:
     config_kwargs = {}
     if gateway_queue_db is not None:
         config_kwargs["gateway_queue_db"] = gateway_queue_db
+    if gateway_operational_metadata_db is not None:
+        config_kwargs["gateway_operational_metadata_db"] = gateway_operational_metadata_db
     config = GatewayConfig(
         http_host="127.0.0.1",
         http_port=0,
@@ -154,6 +158,19 @@ def valid_order_payload(**overrides):
     }
     payload.update(overrides)
     return payload
+
+
+def operational_metadata_dataset():
+    return type(
+        "Dataset",
+        (),
+        {
+            "AccessionNumber": "ACC-OP",
+            "StudyInstanceUID": "1.2.3.4",
+            "SOPInstanceUID": "1.2.3.4.5",
+            "Modality": "",
+        },
+    )()
 
 
 FORBIDDEN_STATUS_TEXT = {
@@ -512,6 +529,106 @@ def test_imaging_worklist_view_all_includes_inactive_without_marking_active(tmp_
         assert RecordingMwlHandler.calls == [
             {"method": "GET", "path": "/worklist", "payload": None}
         ]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_operational_metadata_lookup_by_study_requires_auth_and_returns_record(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    metadata_db = tmp_path / "gateway_operational_metadata.sqlite3"
+    save_operational_metadata(
+        metadata_db,
+        dataset=operational_metadata_dataset(),
+        worklist_entry={
+            "AccessionNumber": "ACC-OP",
+            "PatientID": "CHART-1",
+            "Modality": "CR",
+            "ScheduledStationAETitle": "INNOVISION",
+            "StudyType": "CR",
+        },
+        matched_by="AccessionNumber",
+        orthanc_study_id="orthanc-study-id",
+    )
+    mwl_server, mwl_thread = setup_recording_mwl({"entries": []})
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_operational_metadata_db=metadata_db,
+        gateway_api_token="secret-token",
+    )
+
+    try:
+        status, body = request_json(
+            "GET",
+            f"{gateway_url}/imaging/operational-metadata/study/orthanc-study-id",
+        )
+        assert status == 401
+        assert body == {"error": "unauthorized"}
+
+        status, body = request_json(
+            "GET",
+            f"{gateway_url}/imaging/operational-metadata/study/orthanc-study-id",
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        assert status == 200
+        assert body["metadata"]["accession_number"] == "ACC-OP"
+        assert body["metadata"]["display_modality"] == "X-ray"
+        assert body["metadata"]["aio_domain_candidate"] == "cxr"
+        assert body["mapping_evidence"] == {
+            "dicom_modality_original": "",
+            "workflow_modality": "CR",
+            "station_aet": "INNOVISION",
+            "study_type": "CR",
+            "matched_by": "AccessionNumber",
+            "match_confidence": "exact",
+            "source": "gateway_mwl_match",
+        }
+        serialized = json.dumps(body, ensure_ascii=False)
+        assert "AI" not in serialized
+        assert "diagnosis" not in serialized
+        assert "report" not in serialized.lower()
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_operational_metadata_lookup_by_accession_returns_expected_metadata(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    metadata_db = tmp_path / "gateway_operational_metadata.sqlite3"
+    save_operational_metadata(
+        metadata_db,
+        dataset=operational_metadata_dataset(),
+        worklist_entry={
+            "AccessionNumber": "ACC-OP",
+            "PatientID": "CHART-1",
+            "Modality": "BMD",
+            "ScheduledStationAETitle": "BMD",
+            "StudyType": "BMD",
+        },
+        matched_by="AccessionNumber",
+    )
+    mwl_server, mwl_thread = setup_recording_mwl({"entries": []})
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+        gateway_operational_metadata_db=metadata_db,
+        gateway_api_token="secret-token",
+    )
+
+    try:
+        status, body = request_json(
+            "GET",
+            f"{gateway_url}/imaging/operational-metadata/accession/ACC-OP",
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        assert status == 200
+        assert body["metadata"]["display_modality"] == "BMD"
+        assert body["metadata"]["aio_domain_candidate"] == "bmd"
     finally:
         stop_server(gateway_server, gateway_thread)
         stop_server(mwl_server, mwl_thread)

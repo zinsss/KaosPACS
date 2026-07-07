@@ -12,6 +12,9 @@ class Config:
     orthanc_public_url: str
     weasis_dicomweb_url: str
     kaospacs_aio_url: str
+    gateway_url: str
+    gateway_api_token: str
+    gateway_timeout_seconds: float
     study_limit: int
     upload_max_bytes: int
     auth_username: str
@@ -33,6 +36,9 @@ def load_config() -> Config:
         kaospacs_aio_url=_strip_slash(
             os.getenv("KAOSPACS_AIO_URL", "http://127.0.0.1:8056")
         ),
+        gateway_url=_strip_slash(os.getenv("WEB_GATEWAY_URL", "http://gateway:8060")),
+        gateway_api_token=os.getenv("WEB_GATEWAY_API_TOKEN", ""),
+        gateway_timeout_seconds=_float_env("WEB_GATEWAY_TIMEOUT_SECONDS", 3.0),
         study_limit=_int_env("WEB_STUDY_LIMIT", 100),
         upload_max_bytes=_int_env("WEB_UPLOAD_MAX_BYTES", 25 * 1024 * 1024),
         auth_username=os.getenv("WEB_AUTH_USERNAME", "kaospacs"),
@@ -45,6 +51,13 @@ def _int_env(name: str, default: int) -> int:
     if raw in (None, ""):
         return default
     return int(raw)
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw in (None, ""):
+        return default
+    return float(raw)
 
 
 def _strip_slash(value: str) -> str:

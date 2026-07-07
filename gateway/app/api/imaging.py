@@ -8,6 +8,10 @@ from urllib.parse import parse_qs, urlparse
 
 from app.api import audit_event, gateway_bad_gateway, json_response, mwl_client, text
 from app.clients.mwl import MwlHttpError, MwlUnavailableError
+from app.services.operational_metadata import (
+    get_by_accession_number,
+    get_by_orthanc_study_id,
+)
 
 
 IMAGING_STATES = ("active", "completed", "expired", "cancelled")
@@ -91,6 +95,47 @@ def handle_get_imaging_worklist(handler: BaseHTTPRequestHandler, path: str) -> N
         success=True,
     )
     json_response(handler, HTTPStatus.OK, payload)
+
+
+def handle_get_operational_metadata(
+    handler: BaseHTTPRequestHandler,
+    path: str,
+    *,
+    lookup_type: str,
+    lookup_value: str,
+) -> None:
+    if lookup_type == "study":
+        record = get_by_orthanc_study_id(
+            handler.config.gateway_operational_metadata_db,
+            lookup_value,
+        )
+    else:
+        record = get_by_accession_number(
+            handler.config.gateway_operational_metadata_db,
+            lookup_value,
+        )
+
+    if record is None:
+        audit_event(
+            handler,
+            event_type="operational_metadata_get",
+            request_path=path,
+            status_code=HTTPStatus.NOT_FOUND,
+            success=False,
+            error_code="not_found",
+        )
+        json_response(handler, HTTPStatus.NOT_FOUND, {"error": "not found"})
+        return
+
+    audit_event(
+        handler,
+        event_type="operational_metadata_get",
+        request_path=path,
+        accession_number=record.accession_number or None,
+        status_code=HTTPStatus.OK,
+        success=True,
+    )
+    json_response(handler, HTTPStatus.OK, record.to_payload())
 
 
 def _include_inactive(handler: BaseHTTPRequestHandler) -> bool:

@@ -4,11 +4,14 @@ import logging
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from app.api import json_response
 from app.api.admin import handle_admin_worklist_prune
-from app.api.imaging import handle_get_imaging_worklist
+from app.api.imaging import (
+    handle_get_imaging_worklist,
+    handle_get_operational_metadata,
+)
 from app.api.orders import handle_order_post
 from app.api.status import status_payload
 from app.api.worklist import (
@@ -23,6 +26,7 @@ from app.dicom.server import start_dicom_listener
 from app.health import health_payload
 from app.services.audit import init_audit_db
 from app.services.auth import is_auth_enabled, is_authorized
+from app.services.operational_metadata import init_operational_metadata_db
 
 
 LOGGER = logging.getLogger("kaospacs.gateway")
@@ -36,6 +40,10 @@ PROTECTED_ENDPOINTS = {
     ("POST", "/orders/upsert"),
     ("POST", "/orders/cancel"),
     ("POST", "/admin/worklist/prune"),
+}
+PROTECTED_PREFIXES = {
+    ("GET", "/imaging/operational-metadata/study/"),
+    ("GET", "/imaging/operational-metadata/accession/"),
 }
 
 
@@ -57,6 +65,15 @@ def _unauthorized_response(handler: BaseHTTPRequestHandler) -> None:
     json_response(handler, HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
 
 
+def _is_protected_endpoint(method: str, path: str) -> bool:
+    if (method, path) in PROTECTED_ENDPOINTS:
+        return True
+    return any(
+        method == protected_method and path.startswith(prefix)
+        for protected_method, prefix in PROTECTED_PREFIXES
+    )
+
+
 def make_handler(config: GatewayConfig):
     class GatewayHandler(BaseHTTPRequestHandler):
         server_version = "KaosPACSGateway/0.1"
@@ -65,7 +82,7 @@ def make_handler(config: GatewayConfig):
             LOGGER.info("Gateway API %s", format % args)
 
         def _require_auth(self, method: str, path: str) -> bool:
-            if (method, path) not in PROTECTED_ENDPOINTS:
+            if not _is_protected_endpoint(method, path):
                 return True
 
             if is_authorized(self.headers, self.config.gateway_api_token):
@@ -97,6 +114,26 @@ def make_handler(config: GatewayConfig):
                 return
             if path == "/imaging/worklist":
                 handle_get_imaging_worklist(self, path)
+                return
+            if path.startswith("/imaging/operational-metadata/study/"):
+                handle_get_operational_metadata(
+                    self,
+                    path,
+                    lookup_type="study",
+                    lookup_value=unquote(path.removeprefix(
+                        "/imaging/operational-metadata/study/"
+                    )),
+                )
+                return
+            if path.startswith("/imaging/operational-metadata/accession/"):
+                handle_get_operational_metadata(
+                    self,
+                    path,
+                    lookup_type="accession",
+                    lookup_value=unquote(path.removeprefix(
+                        "/imaging/operational-metadata/accession/"
+                    )),
+                )
                 return
             if path == "/worklist":
                 handle_get_worklist(self, path)
@@ -148,6 +185,7 @@ def main() -> None:
         )
     init_audit_db(config.gateway_audit_db)
     init_queue_db(config.gateway_queue_db)
+    init_operational_metadata_db(config.gateway_operational_metadata_db)
     retry_worker = start_queue_retry_worker(config)
     server = create_server(config)
     dicom_server = start_dicom_listener(config)

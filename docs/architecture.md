@@ -183,6 +183,11 @@ Business logic belongs outside Orthanc:
   forwarding datasets to Orthanc, normalized order event validation, worklist
   create/update/cancel through the MWL API, operator-facing imaging lifecycle
   read API, and MWL completion calls after successful storage/forwarding.
+  After a successful DICOM to MWL match, Gateway also stores KaosPACS
+  operational modality metadata in its own SQLite DB. This is display/routing
+  metadata only: it records the raw DICOM modality, workflow modality, station
+  AET, study type, derived display modality, and AIO routing candidate. It is
+  not written into Orthanc metadata and does not modify DICOM tags.
   Current Gateway audit stores only workflow event metadata and accession
   numbers, not demographics or full payloads. Current Gateway Orthanc HTTP
   client usage is limited to non-PHI reachability. Gateway writes non-PHI
@@ -211,6 +216,9 @@ Business logic belongs outside Orthanc:
   upload surface. It displays past studies after Orthanc storage and can upload
   generated JPG/PNG/PDF-derived DICOM directly to Orthanc. It is not part of
   modality acquisition, Gateway charset handling, MWL completion, or MWL expiry.
+  If Orthanc has a blank DICOM `Modality` but Gateway operational metadata
+  exists, Web may display the derived modality such as `X-ray`, `BMD`, or
+  `ECG`; the raw DICOM modality remains unchanged.
 - Migration: read-only ViewRex extraction and additive import tooling.
 
 The ViewRex replacement boundary is the modality and EMR contract, not the old
