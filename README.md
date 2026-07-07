@@ -260,11 +260,22 @@ preserves Korean text, and returns a stable response:
 
 `POST /orders/cancel` accepts `AccessionNumber` and records explicit
 source/business cancellation. KaosPACS does not infer cancellation from missing
-source rows.
+source rows. KaosEghis-PACS should keep local sync state for previously synced
+active orders. If the source clearly marks an order cancelled/deleted, it
+should call `POST /orders/cancel` immediately. If the source row simply
+disappears and there is no explicit source status, use a conservative recheck
+policy such as `EGHIS_CANCEL_MISSING_AFTER_SYNC_COUNT=2` before sending
+`CancelReason=missing_from_source_after_recheck`. A deleted and reordered exam
+should cancel the old accession, then upsert the new accession. KaosPACS
+ordinary upsert will not reactivate terminal completed, expired, or cancelled
+entries with the same accession.
 
 KaosEghis-PACS UI should use `/imaging/worklist` instead of reading raw
 `public.mwl`, eGHIS tables, or MWL internals. Lower-level `GET /worklist`
 remains available for temporary compatibility, reconcile, and debug workflows.
+KaosPACS Web also exposes `/imaging/worklist` as an operator correction page;
+active rows can be manually marked cancelled through Gateway only. This is an
+admin/operator correction tool, not source polling.
 
 `POST /admin/worklist/prune` removes old inactive completed, cancelled, or
 expired entries from the runtime MWL worklist only. It defaults to

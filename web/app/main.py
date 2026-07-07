@@ -122,6 +122,9 @@ def create_handler(
                 return
             if not self._require_auth(parsed.path):
                 return
+            if parsed.path == "/imaging/worklist":
+                self._imaging_worklist(parsed.query)
+                return
             if parsed.path == "/api/studies":
                 self._api_studies(parsed.query)
                 return
@@ -139,6 +142,9 @@ def create_handler(
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
             if not self._require_auth(parsed.path):
+                return
+            if parsed.path == "/imaging/worklist/cancel":
+                self._imaging_worklist_cancel()
                 return
             if parsed.path == "/emr.php":
                 self._upload(parsed.query)
@@ -212,6 +218,55 @@ def create_handler(
                     "count": len(studies),
                 }
             )
+
+        def _imaging_worklist(self, query_string: str) -> None:
+            params = parse_qs(query_string)
+            view = (params.get("view", ["active"])[0] or "active").lower()
+            include_inactive = view == "all"
+            payload = metadata_client.imaging_worklist(include_inactive=include_inactive)
+            entries = payload.get("entries", []) if isinstance(payload, dict) else []
+            if not isinstance(entries, list):
+                entries = []
+            body = render_imaging_worklist(
+                entries,
+                view=view,
+                message=params.get("message", [""])[0],
+                error="Gateway is not reachable." if payload.get("error") else "",
+            )
+            encoded = body.encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def _imaging_worklist_cancel(self) -> None:
+            content_length = int(self.headers.get("Content-Length") or "0")
+            raw = self.rfile.read(min(content_length, 8192)) if content_length else b""
+            params = parse_qs(raw.decode("utf-8", errors="replace"))
+            accession_number = _first_param(params, ("AccessionNumber", "accession_number"))
+            reason = _first_param(params, ("CancelReason", "cancel_reason")) or "other"
+            if not accession_number:
+                self._redirect_imaging_worklist("cancel_failed")
+                return
+            try:
+                metadata_client.cancel_order(accession_number, reason)
+            except Exception as exc:
+                LOGGER.warning(
+                    "Web imaging worklist cancel failed event=mark_cancelled_failed exception=%s",
+                    exc.__class__.__name__,
+                )
+                self._redirect_imaging_worklist("cancel_failed")
+                return
+            LOGGER.info("Web imaging worklist cancelled event=mark_cancelled")
+            self._redirect_imaging_worklist("cancelled")
+
+        def _redirect_imaging_worklist(self, message: str) -> None:
+            location = "/imaging/worklist?" + urlencode({"view": "active", "message": message})
+            self.send_response(HTTPStatus.SEE_OTHER)
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def _api_aio_study(self, study_instance_uid: str) -> None:
             if not study_instance_uid:
@@ -535,6 +590,141 @@ def render_index(
 </html>"""
 
 
+CANCEL_REASONS = (
+    ("cancelled_in_source", "Cancelled in source"),
+    ("duplicate_reordered", "Duplicate/reordered"),
+    ("entered_in_error", "Entered in error"),
+    ("patient_declined", "Patient declined"),
+    ("other", "Other"),
+)
+
+
+def render_imaging_worklist(
+    entries: list[dict[str, Any]],
+    *,
+    view: str,
+    message: str = "",
+    error: str = "",
+) -> str:
+    selected_view = view if view in {"active", "completed", "expired", "cancelled", "all"} else "active"
+    visible_entries = _filter_imaging_entries(entries, selected_view)
+    rows = "\n".join(_imaging_worklist_row(entry) for entry in visible_entries)
+    if not rows and not error:
+        rows = '<tr><td colspan="8" class="empty-cell">No entries in this view.</td></tr>'
+    message_html = _imaging_message(message)
+    error_html = f'<div class="error">{html.escape(error)}</div>' if error else ""
+    tabs = "\n".join(
+        _imaging_tab(label, target, selected_view)
+        for label, target in (
+            ("Active", "active"),
+            ("Completed", "completed"),
+            ("Expired", "expired"),
+            ("Cancelled", "cancelled"),
+            ("All", "all"),
+        )
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KaosPACS Imaging Worklist</title>
+  <style>{CSS}</style>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Imaging Worklist</h1>
+      <p>Gateway-backed imaging lifecycle state</p>
+    </div>
+    <nav class="tabs">{tabs}</nav>
+  </header>
+  <main>
+    {error_html}
+    {message_html}
+    <section class="summary">{len(visible_entries)} entries</section>
+    <div class="table-wrap">
+      <table class="worklist-table">
+        <thead>
+          <tr>
+            <th>State</th>
+            <th>Accession</th>
+            <th>Patient</th>
+            <th>Modality</th>
+            <th>Station</th>
+            <th>Scheduled</th>
+            <th>Description</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </div>
+  </main>
+  <script>{IMAGING_WORKLIST_SCRIPT}</script>
+</body>
+</html>"""
+
+
+def _filter_imaging_entries(entries: list[dict[str, Any]], view: str) -> list[dict[str, Any]]:
+    if view == "all":
+        return [entry for entry in entries if isinstance(entry, dict)]
+    return [
+        entry
+        for entry in entries
+        if isinstance(entry, dict) and str(entry.get("state", "")).lower() == view
+    ]
+
+
+def _imaging_tab(label: str, target: str, selected: str) -> str:
+    class_name = "primary" if target == selected else ""
+    return f'<a class="{class_name}" href="/imaging/worklist?view={target}">{label}</a>'
+
+
+def _imaging_message(message: str) -> str:
+    messages = {
+        "cancelled": "Worklist entry marked cancelled.",
+        "cancel_failed": "Could not mark the worklist entry cancelled.",
+    }
+    text_value = messages.get(message, "")
+    return f'<div class="upload-message">{html.escape(text_value)}</div>' if text_value else ""
+
+
+def _imaging_worklist_row(entry: dict[str, Any]) -> str:
+    state = str(entry.get("state") or "")
+    accession_number = str(entry.get("AccessionNumber") or "")
+    patient = str(entry.get("PatientName") or entry.get("PatientID") or "-")
+    cancel_reason = str(entry.get("CancelReason") or "")
+    action = _mark_cancelled_form(accession_number) if state == "active" else "-"
+    state_label = state
+    if state == "cancelled" and cancel_reason:
+        state_label = f"cancelled ({cancel_reason})"
+    return f"""
+<tr>
+  <td>{html.escape(state_label or "-")}</td>
+  <td>{html.escape(accession_number or "-")}</td>
+  <td>{html.escape(patient)}</td>
+  <td>{html.escape(str(entry.get("Modality") or "-"))}</td>
+  <td>{html.escape(str(entry.get("ScheduledStationAETitle") or "-"))}</td>
+  <td>{html.escape(str(entry.get("ScheduledAt") or "-"))}</td>
+  <td>{html.escape(str(entry.get("Description") or "-"))}</td>
+  <td>{action}</td>
+</tr>"""
+
+
+def _mark_cancelled_form(accession_number: str) -> str:
+    options = "\n".join(
+        f'<option value="{html.escape(value)}">{html.escape(label)}</option>'
+        for value, label in CANCEL_REASONS
+    )
+    return f"""
+<form class="inline-cancel" method="post" action="/imaging/worklist/cancel" data-confirm-cancel>
+  <input type="hidden" name="AccessionNumber" value="{html.escape(accession_number, quote=True)}">
+  <select name="CancelReason" aria-label="Cancel reason">{options}</select>
+  <button type="submit" class="secondary">Mark Cancelled</button>
+</form>"""
+
+
 def _study_card(config: Config, study: StudySummary) -> str:
     thumbnail = (
         f'<img src="/thumbnail/{html.escape(study.thumbnail_instance_id)}" alt="">'
@@ -800,8 +990,10 @@ p { margin:5px 0 0; color:var(--muted); }
 input { width:100%; min-height:40px; padding:8px 11px; border:1px solid var(--border); border-radius:6px; font:inherit; }
 button, a { min-height:36px; border-radius:6px; border:1px solid var(--border); padding:8px 11px; background:#fff; color:var(--text); text-decoration:none; font:inherit; display:inline-flex; align-items:center; justify-content:center; white-space:nowrap; }
 button, .primary { background:var(--blue); color:#fff; border-color:var(--blue); }
+select { min-height:36px; padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:#fff; font:inherit; }
 main { padding:18px 28px 32px; }
 .summary { color:var(--muted); margin-bottom:12px; }
+.tabs { display:flex; gap:8px; flex-wrap:wrap; }
 .patient-context, .upload-panel { background:#fff; border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:12px; }
 .patient-context { display:grid; grid-template-columns:repeat(4, minmax(120px, 1fr)); gap:10px 14px; }
 .patient-context span { display:block; color:var(--muted); font-size:12px; margin-bottom:2px; }
@@ -826,6 +1018,13 @@ main { padding:18px 28px 32px; }
 .paste-actions button:last-child { grid-column:1 / -1; }
 .secondary { background:#fff; color:var(--text); border-color:var(--border); }
 .notice { border:1px solid var(--border); background:#fff; border-radius:8px; padding:14px; margin-bottom:12px; }
+.table-wrap { overflow:auto; border:1px solid var(--border); border-radius:8px; background:#fff; }
+.worklist-table { width:100%; border-collapse:collapse; min-width:980px; }
+.worklist-table th, .worklist-table td { padding:10px 12px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }
+.worklist-table th { font-size:12px; color:var(--muted); background:#f8fafc; }
+.worklist-table tr:last-child td { border-bottom:0; }
+.inline-cancel { display:flex; gap:8px; align-items:center; }
+.empty-cell { color:var(--muted); text-align:center; padding:22px !important; }
 .grid { display:grid; grid-template-columns:minmax(0, 1fr); gap:12px; }
 .study { display:grid; grid-template-columns:minmax(180px, 240px) minmax(0, 1fr); min-height:180px; background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
 .thumb { width:100%; min-height:180px; background:#101820; display:flex; align-items:center; justify-content:center; color:#aab6c4; }
@@ -866,6 +1065,7 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
 @media (max-width: 720px) {
   .topbar { display:block; padding:18px; }
   .search { margin-top:14px; min-width:0; }
+  .tabs { margin-top:14px; }
   main { padding:14px; }
   .grid { grid-template-columns:1fr; }
   .study { grid-template-columns:108px minmax(0, 1fr); }
@@ -1254,6 +1454,20 @@ PASTE_SCRIPT = r"""
     }
   });
   clear.disabled = true;
+})();
+"""
+
+
+IMAGING_WORKLIST_SCRIPT = r"""
+(function () {
+  const forms = document.querySelectorAll("[data-confirm-cancel]");
+  forms.forEach(function (form) {
+    form.addEventListener("submit", function (event) {
+      if (!window.confirm("Mark this active worklist entry as cancelled?")) {
+        event.preventDefault();
+      }
+    });
+  });
 })();
 """
 

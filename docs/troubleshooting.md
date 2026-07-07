@@ -128,6 +128,32 @@ Web can use this operational metadata as a display fallback when Orthanc's raw
 DICOM modality is blank. This does not mean the DICOM tag or Orthanc metadata
 was changed.
 
+## Deleted Or Reordered Source Order Still Appears Active
+
+KaosPACS does not infer source/business cancellation from missing eGHIS rows.
+KaosEghis-PACS must explicitly call Gateway:
+
+```text
+POST /orders/cancel
+```
+
+with the old `AccessionNumber` when a previously synced source imaging order is
+cancelled, deleted, or replaced by a reorder. If eGHIS has a clear
+cancelled/deleted status, cancellation should be sent immediately. If a row
+only disappears from the source query, use a conservative adapter-side recheck
+policy such as `EGHIS_CANCEL_MISSING_AFTER_SYNC_COUNT=2` before sending
+`CancelReason=missing_from_source_after_recheck`.
+
+For manual correction, open KaosPACS Web:
+
+```text
+http://192.168.0.200/imaging/worklist
+```
+
+Active rows can be marked cancelled through Gateway. Cancelled rows remain
+retained, leave Active, and can be reviewed under Cancelled or All. This action
+does not delete DICOM images and does not call the MWL API directly from Web.
+
 ## Orthanc Cannot Connect To PostgreSQL
 
 Check PostgreSQL health and credentials:

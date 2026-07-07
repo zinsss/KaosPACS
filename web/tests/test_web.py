@@ -10,6 +10,7 @@ from http.server import ThreadingHTTPServer
 from io import BytesIO
 from types import SimpleNamespace
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from unittest.mock import Mock
 
@@ -263,6 +264,96 @@ def test_web_does_not_override_nonblank_dicom_modality() -> None:
         assert '<span class="modality">CR</span>' in html
         gateway_metadata.get_by_study.assert_not_called()
         gateway_metadata.get_by_accession.assert_not_called()
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_imaging_worklist_page_shows_mark_cancelled_for_active_only() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    orthanc = Mock()
+    gateway_metadata = Mock()
+    gateway_metadata.imaging_worklist.return_value = {
+        "entries": [
+            {
+                "state": "active",
+                "AccessionNumber": "ACTIVE-1",
+                "PatientID": "P1",
+                "PatientName": "ACTIVE^PATIENT",
+                "Modality": "CR",
+                "ScheduledStationAETitle": "INNOVISION",
+                "ScheduledAt": "2026-07-07T09:00:00",
+                "Description": "CHEST",
+            },
+            {
+                "state": "cancelled",
+                "AccessionNumber": "CANCELLED-1",
+                "PatientID": "P2",
+                "PatientName": "CANCELLED^PATIENT",
+                "Modality": "BMD",
+                "ScheduledStationAETitle": "BMD",
+                "ScheduledAt": "2026-07-07T10:00:00",
+                "Description": "BMD",
+                "CancelReason": "duplicate_reordered",
+            },
+        ],
+        "counts": {},
+    }
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, orthanc, gateway_metadata=gateway_metadata),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        response = urlopen(f"{_server_url(server)}/imaging/worklist?view=all", timeout=3)
+        html = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert "ACTIVE-1" in html
+        assert "CANCELLED-1" in html
+        assert "duplicate_reordered" in html
+        assert "Mark Cancelled" in html
+        assert html.count("Mark Cancelled") == 1
+        gateway_metadata.imaging_worklist.assert_called_once_with(include_inactive=True)
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_imaging_worklist_mark_cancelled_posts_to_gateway_only() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    orthanc = Mock()
+    gateway_metadata = Mock()
+    gateway_metadata.cancel_order.return_value = {"status": "cancelled"}
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, orthanc, gateway_metadata=gateway_metadata),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        body = urlencode(
+            {
+                "AccessionNumber": "ACTIVE-1",
+                "CancelReason": "entered_in_error",
+            }
+        ).encode("utf-8")
+        request = Request(
+            f"{_server_url(server)}/imaging/worklist/cancel",
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        response = urlopen(request, timeout=3)
+
+        assert response.status == 200
+        gateway_metadata.cancel_order.assert_called_once_with("ACTIVE-1", "entered_in_error")
+        assert not orthanc.method_calls
     finally:
         _stop_test_server(server, thread)
 

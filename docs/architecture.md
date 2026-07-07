@@ -205,7 +205,11 @@ Business logic belongs outside Orthanc:
   handling, normalization, and sending normalized order events to Gateway. It
   should not call MWL directly in production, call Orthanc directly, or infer
   DICOM completion. It owns source/business order create, update, cancel,
-  delete, restore, and reactivate events.
+  delete, restore, and reactivate events. It must explicitly call Gateway
+  `/orders/cancel` when it detects that a previously synced source imaging
+  order was cancelled, deleted, or replaced by a reorder. Missing source rows
+  without a clear cancellation status should use a configurable conservative
+  recheck policy in KaosEghis-PACS, not KaosPACS-side source inference.
 - MWL: modality worklist responses, local worklist state, local MWL API, and
   minimal audit tracking. It is not a workflow engine, must not connect
   directly to eGHIS, must not infer study completion, and must not communicate
@@ -218,7 +222,10 @@ Business logic belongs outside Orthanc:
   modality acquisition, Gateway charset handling, MWL completion, or MWL expiry.
   If Orthanc has a blank DICOM `Modality` but Gateway operational metadata
   exists, Web may display the derived modality such as `X-ray`, `BMD`, or
-  `ECG`; the raw DICOM modality remains unchanged.
+  `ECG`; the raw DICOM modality remains unchanged. Web also provides a small
+  Gateway-backed imaging worklist correction page where operators can manually
+  mark active entries cancelled. That page calls Gateway only and does not call
+  the MWL API directly.
 - Migration: read-only ViewRex extraction and additive import tooling.
 
 The ViewRex replacement boundary is the modality and EMR contract, not the old

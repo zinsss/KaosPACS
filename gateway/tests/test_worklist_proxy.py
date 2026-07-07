@@ -1550,6 +1550,97 @@ def test_order_upsert_replaces_matching_accession(tmp_path) -> None:
         stop_server(mwl_server, mwl_thread)
 
 
+def test_order_upsert_does_not_reactivate_completed_entry(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    completed_entry = {
+        "AccessionNumber": "A1",
+        "PatientID": "completed-chart",
+        "Active": False,
+        "CompletedAt": "2026-07-07T10:00:00+09:00",
+    }
+    mwl_server, mwl_thread = setup_recording_mwl({"entries": [completed_entry]})
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+    )
+
+    try:
+        status, body = request_json(
+            "POST",
+            f"{gateway_url}/orders/upsert",
+            valid_order_payload(AccessionNumber="A1", ChartNo="new-chart"),
+        )
+
+        assert status == 200
+        assert body == {
+            "status": "ok",
+            "action": "ignored_terminal",
+            "AccessionNumber": "A1",
+        }
+        put_entries = RecordingMwlHandler.calls[1]["payload"]["entries"]
+        assert put_entries == [completed_entry]
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
+def test_deleted_and_reordered_order_can_cancel_old_and_upsert_new_accession(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    current_entry = {
+        "AccessionNumber": "OLD-ACC",
+        "PatientID": "12345",
+        "PatientName": "TEST^PATIENT",
+        "PatientBirthDate": "19700101",
+        "PatientSex": "O",
+        "Modality": "CR",
+        "ScheduledStationAETitle": "INNOVISION",
+        "ScheduledProcedureStepDescription": "CHEST",
+        "Active": True,
+    }
+    mwl_server, mwl_thread = setup_recording_mwl({"entries": [current_entry]})
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+    )
+
+    try:
+        cancel_status, _cancel_body = request_json(
+            "POST",
+            f"{gateway_url}/orders/cancel",
+            {"AccessionNumber": "OLD-ACC", "CancelReason": "duplicate_reordered"},
+        )
+        cancelled_entry = {
+            **current_entry,
+            "Active": False,
+            "CancelledAt": "2026-07-07T10:00:00+09:00",
+            "CancelReason": "duplicate_reordered",
+        }
+        RecordingMwlHandler.response_payload = {"entries": [cancelled_entry]}
+        upsert_status, _upsert_body = request_json(
+            "POST",
+            f"{gateway_url}/orders/upsert",
+            valid_order_payload(AccessionNumber="NEW-ACC", Modality="CR", StationAET="INNOVISION"),
+        )
+
+        assert cancel_status == 200
+        assert upsert_status == 200
+        assert RecordingMwlHandler.calls[0] == {
+            "method": "POST",
+            "path": "/worklist/cancel",
+            "payload": {"AccessionNumber": "OLD-ACC", "CancelReason": "duplicate_reordered"},
+        }
+        put_entries = RecordingMwlHandler.calls[2]["payload"]["entries"]
+        assert put_entries[0] == cancelled_entry
+        assert put_entries[0]["Active"] is False
+        assert put_entries[1]["AccessionNumber"] == "NEW-ACC"
+        assert put_entries[1]["Active"] is True
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
 def test_order_upsert_invalid_request_does_not_call_mwl(tmp_path) -> None:
     audit_db = tmp_path / "gateway_audit.sqlite3"
     mwl_server, mwl_thread = setup_recording_mwl()

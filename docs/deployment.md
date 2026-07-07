@@ -296,6 +296,20 @@ returns the operator-facing imaging lifecycle states `active`, `completed`,
 with no completion, expiry, or source cancellation timestamp, and KaosEghis-PACS
 must not treat it as active.
 
+KaosEghis-PACS must keep local sync state for previously synced active orders.
+If the source has an explicit cancelled/deleted status, call Gateway
+`/orders/cancel` immediately. If a source row disappears without a clear source
+status, use a conservative confirmation setting such as
+`EGHIS_CANCEL_MISSING_AFTER_SYNC_COUNT=2` before calling Gateway with
+`CancelReason=missing_from_source_after_recheck`. A delete/reorder should cancel
+the old accession and upsert the new accession. KaosPACS does not poll eGHIS or
+infer source cancellation on its own.
+
+KaosPACS Web exposes `/imaging/worklist` for operator correction. Active rows
+can be marked cancelled through Gateway with a reason. Web remains protected by
+Basic Auth when `WEB_AUTH_PASSWORD` is set, and the cancellation action uses
+Gateway only.
+
 `GET /status` is protected by the same bearer token when authentication is
 enabled. It is for operational visibility only and reports dependency
 reachability plus current ownership state. It must not include worklist entries,

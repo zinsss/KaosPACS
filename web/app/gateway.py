@@ -49,18 +49,32 @@ class GatewayMetadataClient:
             f"/imaging/operational-metadata/accession/{quote(accession_number, safe='')}"
         )
 
-    def _get(self, path: str) -> OperationalMetadata | None:
-        headers = {"Accept": "application/json"}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
-        request = Request(
-            f"{self.base_url}{path}",
-            headers=headers,
-            method="GET",
-        )
+    def imaging_worklist(self, *, include_inactive: bool = False) -> dict[str, Any]:
+        path = "/imaging/worklist?view=all" if include_inactive else "/imaging/worklist"
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+            payload = self._json_request("GET", path)
+        except (HTTPError, TimeoutError, socket.timeout, URLError, OSError, json.JSONDecodeError) as error:
+            LOGGER.warning(
+                "Gateway imaging worklist lookup failed exception=%s",
+                error.__class__.__name__,
+            )
+            return {"entries": [], "counts": {}, "error": "gateway_unavailable"}
+        return payload if isinstance(payload, dict) else {"entries": [], "counts": {}}
+
+    def cancel_order(self, accession_number: str, reason: str) -> dict[str, Any]:
+        payload = self._json_request(
+            "POST",
+            "/orders/cancel",
+            {
+                "AccessionNumber": accession_number,
+                "CancelReason": reason,
+            },
+        )
+        return payload if isinstance(payload, dict) else {"status": "ok"}
+
+    def _get(self, path: str) -> OperationalMetadata | None:
+        try:
+            payload = self._json_request("GET", path)
         except HTTPError as error:
             if error.code != 404:
                 LOGGER.warning(
@@ -75,6 +89,28 @@ class GatewayMetadataClient:
             )
             return None
         return _metadata_from_payload(payload)
+
+    def _json_request(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+    ) -> Any:
+        headers = {"Accept": "application/json"}
+        data = None
+        if payload is not None:
+            data = json.dumps(payload).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        request = Request(
+            f"{self.base_url}{path}",
+            data=data,
+            headers=headers,
+            method=method,
+        )
+        with urlopen(request, timeout=self.timeout_seconds) as response:
+            return json.loads(response.read().decode("utf-8"))
 
 
 def _metadata_from_payload(payload: Any) -> OperationalMetadata | None:
