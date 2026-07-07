@@ -456,6 +456,74 @@ def test_handle_store_charset_fix_failure_forwards_original_without_failing(
     assert "SECRETID" not in caplog.text
 
 
+def test_handle_store_charset_fix_retries_from_stored_file_after_live_failure(
+    tmp_path,
+    caplog,
+    monkeypatch,
+) -> None:
+    caplog.set_level(logging.INFO)
+    dataset = _minimal_dataset()
+    if hasattr(dataset, "SpecificCharacterSet"):
+        del dataset.SpecificCharacterSet
+    dataset.PatientName = "ÀÌÁø¼º"
+    dataset.PatientID = "PID-STABLE"
+    dataset.StudyDescription = "ÈäºÎ[Á÷Á¢]1¸Å"
+    dataset.SeriesDescription = "PA"
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    forwarder = ReadingForwarder(ForwardResult(True, 0x0000))
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    fix_report_path = tmp_path / "dicom_charset_fix.jsonl"
+    init_audit_db(audit_db)
+    real_fix = dicom_server.maybe_fix_charset
+    calls = 0
+
+    def fail_once_then_fix(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ValueError("synthetic live dataset failure ÀÌÁø¼º PID-STABLE")
+        return real_fix(*args, **kwargs)
+
+    monkeypatch.setattr(dicom_server, "maybe_fix_charset", fail_once_then_fix)
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        forwarder=forwarder,
+        audit_db=audit_db,
+        charset_fix_report_path=fix_report_path,
+    )
+
+    original_path = tmp_path / "inbox" / f"{dataset.SOPInstanceUID}.dcm"
+    forwarded_path = tmp_path / "inbox" / "forwarded" / f"{dataset.SOPInstanceUID}.dcm"
+    assert status == 0x0000
+    assert calls == 2
+    assert forwarder.paths == [forwarded_path]
+    assert original_path.exists()
+    assert forwarded_path.exists()
+    forwarded = forwarder.datasets[0]
+    assert forwarded.SpecificCharacterSet == "ISO_IR 192"
+    assert str(forwarded.PatientName) == "이진성"
+    assert forwarded.StudyDescription == "흉부[직접]1매"
+    assert forwarded.SeriesDescription == "PA"
+    assert forwarded.PatientID == "PID-STABLE"
+    assert forwarded.AccessionNumber == "ACC-TEST"
+    report = json.loads(fix_report_path.read_text(encoding="utf-8"))
+    assert report["fix_applied"] is True
+    assert report["reason"] == "missing_charset_euc_kr_to_utf8_applied"
+    assert report["new_specific_character_set"] == ["ISO_IR 192"]
+    assert "PatientName" in report["fixed_keywords"]
+    assert _dicom_charset_fix_events(audit_db) == [
+        ("dicom_charset_fix_checked", "ACC-TEST", 1, None),
+    ]
+    assert "ValueError" in caplog.text
+    assert "retry from stored file succeeded" in caplog.text
+    assert "synthetic live dataset failure" not in caplog.text
+    assert "ÀÌÁø¼º" not in caplog.text
+    assert "이진성" not in caplog.text
+    assert "PID-STABLE" not in caplog.text
+
+
 def test_handle_store_inspection_failure_does_not_fail_c_store(
     tmp_path,
     caplog,
