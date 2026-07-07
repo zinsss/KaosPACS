@@ -24,6 +24,7 @@ from app.dicom.server import (
 )
 from app.dicom.storage import safe_dicom_filename, store_dataset
 from app.services.audit import init_audit_db
+from app.services.operational_metadata import get_by_accession_number
 
 
 def _free_loopback_port() -> int:
@@ -140,6 +141,16 @@ class RecordingMwlClient:
         if self.complete_error is not None:
             raise self.complete_error
         return type("MwlResponse", (), {"status_code": self.complete_status, "payload": {}})()
+
+
+class RecordingOrthancClient:
+    def __init__(self, study_id="orthanc-study-id") -> None:
+        self.study_id = study_id
+        self.study_uid_calls: list[str] = []
+
+    def find_study_id_by_uid(self, study_instance_uid):
+        self.study_uid_calls.append(study_instance_uid)
+        return self.study_id
 
 
 def test_handle_store_forwarding_disabled_stores_locally_only(tmp_path) -> None:
@@ -915,6 +926,61 @@ def test_handle_store_success_gets_worklist_and_completes_matched_accession(
     assert "AccessionNumber" in caplog.text
     assert "SHOULD^NOTLOG" not in caplog.text
     assert "SECRETID" not in caplog.text
+
+
+def test_handle_store_saves_operational_metadata_after_mwl_match(tmp_path) -> None:
+    dataset = _minimal_dataset()
+    dataset.Modality = ""
+    before = json.loads(dataset.to_json())
+    event = type("StoreEvent", (), {"dataset": dataset, "file_meta": dataset.file_meta})()
+    forwarder = RecordingForwarder(ForwardResult(True, 0x0000))
+    mwl_client = RecordingMwlClient(
+        {
+            "entries": [
+                {
+                    "Active": True,
+                    "AccessionNumber": "ACC-TEST",
+                    "PatientID": "CHART-1",
+                    "Modality": "CR",
+                    "ScheduledStationAETitle": "INNOVISION",
+                    "StudyType": "CR",
+                    "PatientName": "SHOULD^NOT_STORE",
+                    "PatientBirthDate": "19700101",
+                    "PatientSex": "M",
+                }
+            ]
+        }
+    )
+    orthanc_client = RecordingOrthancClient()
+    metadata_db = tmp_path / "gateway_operational_metadata.sqlite3"
+
+    status = handle_store(
+        event,
+        tmp_path / "inbox",
+        forwarder=forwarder,
+        mwl_client=mwl_client,
+        orthanc_client=orthanc_client,
+        operational_metadata_db=metadata_db,
+    )
+
+    record = get_by_accession_number(metadata_db, "ACC-TEST")
+    assert status == 0x0000
+    assert record is not None
+    assert record.orthanc_study_id == "orthanc-study-id"
+    assert record.study_instance_uid == dataset.StudyInstanceUID
+    assert record.sop_instance_uid == dataset.SOPInstanceUID
+    assert record.patient_id == "CHART-1"
+    assert record.dicom_modality_original == ""
+    assert record.workflow_modality == "CR"
+    assert record.station_aet == "INNOVISION"
+    assert record.study_type == "CR"
+    assert record.display_modality == "X-ray"
+    assert record.aio_domain_candidate == "cxr"
+    assert record.matched_by == "AccessionNumber"
+    assert record.match_confidence == "exact"
+    assert record.source == "gateway_mwl_match"
+    assert orthanc_client.study_uid_calls == [str(dataset.StudyInstanceUID)]
+    assert json.loads(dataset.to_json()) == before
 
 
 def test_handle_store_no_match_audits_accession_only_without_demographics(tmp_path, caplog) -> None:

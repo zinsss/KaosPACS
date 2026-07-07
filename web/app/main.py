@@ -7,7 +7,7 @@ import html
 import json
 import logging
 import warnings
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 
 from .config import Config, load_config
 from .dicom_upload import create_upload_dicom
+from .gateway import GatewayMetadataClient
 from .orthanc import OrthancClient, StudySummary
 
 with warnings.catch_warnings():
@@ -102,8 +103,14 @@ def create_handler(
     config: Config,
     orthanc: OrthancClient,
     aio: AioClient | None = None,
+    gateway_metadata: GatewayMetadataClient | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     aio_client = aio or AioClient(config.kaospacs_aio_url)
+    metadata_client = gateway_metadata or GatewayMetadataClient(
+        getattr(config, "gateway_url", "http://gateway:8060"),
+        token=getattr(config, "gateway_api_token", ""),
+        timeout_seconds=getattr(config, "gateway_timeout_seconds", 3.0),
+    )
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "KaosPACSWeb/0.1"
@@ -114,6 +121,9 @@ def create_handler(
                 self._json({"status": "ok", "service": "web", "version": "0.1"})
                 return
             if not self._require_auth(parsed.path):
+                return
+            if parsed.path == "/imaging/worklist":
+                self._imaging_worklist(parsed.query)
                 return
             if parsed.path == "/api/studies":
                 self._api_studies(parsed.query)
@@ -132,6 +142,9 @@ def create_handler(
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
             if not self._require_auth(parsed.path):
+                return
+            if parsed.path == "/imaging/worklist/cancel":
+                self._imaging_worklist_cancel()
                 return
             if parsed.path == "/emr.php":
                 self._upload(parsed.query)
@@ -191,7 +204,10 @@ def create_handler(
             query = params.get("q", [""])[0]
             limit = _safe_limit(params.get("limit", [str(config.study_limit)])[0])
             try:
-                studies = orthanc.studies(query=query, limit=limit)
+                studies = _enrich_studies_with_operational_metadata(
+                    orthanc.studies(query=query, limit=limit),
+                    metadata_client,
+                )
             except Exception as exc:
                 LOGGER.warning("Orthanc study query failed exception=%s", exc.__class__.__name__)
                 self._json({"error": "orthanc_unavailable"}, HTTPStatus.BAD_GATEWAY)
@@ -202,6 +218,55 @@ def create_handler(
                     "count": len(studies),
                 }
             )
+
+        def _imaging_worklist(self, query_string: str) -> None:
+            params = parse_qs(query_string)
+            view = (params.get("view", ["active"])[0] or "active").lower()
+            include_inactive = view == "all"
+            payload = metadata_client.imaging_worklist(include_inactive=include_inactive)
+            entries = payload.get("entries", []) if isinstance(payload, dict) else []
+            if not isinstance(entries, list):
+                entries = []
+            body = render_imaging_worklist(
+                entries,
+                view=view,
+                message=params.get("message", [""])[0],
+                error="Gateway is not reachable." if payload.get("error") else "",
+            )
+            encoded = body.encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def _imaging_worklist_cancel(self) -> None:
+            content_length = int(self.headers.get("Content-Length") or "0")
+            raw = self.rfile.read(min(content_length, 8192)) if content_length else b""
+            params = parse_qs(raw.decode("utf-8", errors="replace"))
+            accession_number = _first_param(params, ("AccessionNumber", "accession_number"))
+            reason = _first_param(params, ("CancelReason", "cancel_reason")) or "other"
+            if not accession_number:
+                self._redirect_imaging_worklist("cancel_failed")
+                return
+            try:
+                metadata_client.cancel_order(accession_number, reason)
+            except Exception as exc:
+                LOGGER.warning(
+                    "Web imaging worklist cancel failed event=mark_cancelled_failed exception=%s",
+                    exc.__class__.__name__,
+                )
+                self._redirect_imaging_worklist("cancel_failed")
+                return
+            LOGGER.info("Web imaging worklist cancelled event=mark_cancelled")
+            self._redirect_imaging_worklist("cancelled")
+
+        def _redirect_imaging_worklist(self, message: str) -> None:
+            location = "/imaging/worklist?" + urlencode({"view": "active", "message": message})
+            self.send_response(HTTPStatus.SEE_OTHER)
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def _api_aio_study(self, study_instance_uid: str) -> None:
             if not study_instance_uid:
@@ -262,15 +327,21 @@ def create_handler(
             )
             try:
                 if path == "/emr.php" and patient.patient_id:
-                    studies = orthanc.studies_for_patient(
-                        patient.patient_id,
-                        query=query,
-                        limit=config.study_limit,
+                    studies = _enrich_studies_with_operational_metadata(
+                        orthanc.studies_for_patient(
+                            patient.patient_id,
+                            query=query,
+                            limit=config.study_limit,
+                        ),
+                        metadata_client,
                     )
                 elif path == "/emr.php":
                     studies = []
                 else:
-                    studies = orthanc.studies(query=query, limit=config.study_limit)
+                    studies = _enrich_studies_with_operational_metadata(
+                        orthanc.studies(query=query, limit=config.study_limit),
+                        metadata_client,
+                    )
                 body = render_index(
                     config,
                     studies,
@@ -519,6 +590,141 @@ def render_index(
 </html>"""
 
 
+CANCEL_REASONS = (
+    ("cancelled_in_source", "Cancelled in source"),
+    ("duplicate_reordered", "Duplicate/reordered"),
+    ("entered_in_error", "Entered in error"),
+    ("patient_declined", "Patient declined"),
+    ("other", "Other"),
+)
+
+
+def render_imaging_worklist(
+    entries: list[dict[str, Any]],
+    *,
+    view: str,
+    message: str = "",
+    error: str = "",
+) -> str:
+    selected_view = view if view in {"active", "completed", "expired", "cancelled", "all"} else "active"
+    visible_entries = _filter_imaging_entries(entries, selected_view)
+    rows = "\n".join(_imaging_worklist_row(entry) for entry in visible_entries)
+    if not rows and not error:
+        rows = '<tr><td colspan="8" class="empty-cell">No entries in this view.</td></tr>'
+    message_html = _imaging_message(message)
+    error_html = f'<div class="error">{html.escape(error)}</div>' if error else ""
+    tabs = "\n".join(
+        _imaging_tab(label, target, selected_view)
+        for label, target in (
+            ("Active", "active"),
+            ("Completed", "completed"),
+            ("Expired", "expired"),
+            ("Cancelled", "cancelled"),
+            ("All", "all"),
+        )
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KaosPACS Imaging Worklist</title>
+  <style>{CSS}</style>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Imaging Worklist</h1>
+      <p>Gateway-backed imaging lifecycle state</p>
+    </div>
+    <nav class="tabs">{tabs}</nav>
+  </header>
+  <main>
+    {error_html}
+    {message_html}
+    <section class="summary">{len(visible_entries)} entries</section>
+    <div class="table-wrap">
+      <table class="worklist-table">
+        <thead>
+          <tr>
+            <th>State</th>
+            <th>Accession</th>
+            <th>Patient</th>
+            <th>Modality</th>
+            <th>Station</th>
+            <th>Scheduled</th>
+            <th>Description</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </div>
+  </main>
+  <script>{IMAGING_WORKLIST_SCRIPT}</script>
+</body>
+</html>"""
+
+
+def _filter_imaging_entries(entries: list[dict[str, Any]], view: str) -> list[dict[str, Any]]:
+    if view == "all":
+        return [entry for entry in entries if isinstance(entry, dict)]
+    return [
+        entry
+        for entry in entries
+        if isinstance(entry, dict) and str(entry.get("state", "")).lower() == view
+    ]
+
+
+def _imaging_tab(label: str, target: str, selected: str) -> str:
+    class_name = "primary" if target == selected else ""
+    return f'<a class="{class_name}" href="/imaging/worklist?view={target}">{label}</a>'
+
+
+def _imaging_message(message: str) -> str:
+    messages = {
+        "cancelled": "Worklist entry marked cancelled.",
+        "cancel_failed": "Could not mark the worklist entry cancelled.",
+    }
+    text_value = messages.get(message, "")
+    return f'<div class="upload-message">{html.escape(text_value)}</div>' if text_value else ""
+
+
+def _imaging_worklist_row(entry: dict[str, Any]) -> str:
+    state = str(entry.get("state") or "")
+    accession_number = str(entry.get("AccessionNumber") or "")
+    patient = str(entry.get("PatientName") or entry.get("PatientID") or "-")
+    cancel_reason = str(entry.get("CancelReason") or "")
+    action = _mark_cancelled_form(accession_number) if state == "active" else "-"
+    state_label = state
+    if state == "cancelled" and cancel_reason:
+        state_label = f"cancelled ({cancel_reason})"
+    return f"""
+<tr>
+  <td>{html.escape(state_label or "-")}</td>
+  <td>{html.escape(accession_number or "-")}</td>
+  <td>{html.escape(patient)}</td>
+  <td>{html.escape(str(entry.get("Modality") or "-"))}</td>
+  <td>{html.escape(str(entry.get("ScheduledStationAETitle") or "-"))}</td>
+  <td>{html.escape(str(entry.get("ScheduledAt") or "-"))}</td>
+  <td>{html.escape(str(entry.get("Description") or "-"))}</td>
+  <td>{action}</td>
+</tr>"""
+
+
+def _mark_cancelled_form(accession_number: str) -> str:
+    options = "\n".join(
+        f'<option value="{html.escape(value)}">{html.escape(label)}</option>'
+        for value, label in CANCEL_REASONS
+    )
+    return f"""
+<form class="inline-cancel" method="post" action="/imaging/worklist/cancel" data-confirm-cancel>
+  <input type="hidden" name="AccessionNumber" value="{html.escape(accession_number, quote=True)}">
+  <select name="CancelReason" aria-label="Cancel reason">{options}</select>
+  <button type="submit" class="secondary">Mark Cancelled</button>
+</form>"""
+
+
 def _study_card(config: Config, study: StudySummary) -> str:
     thumbnail = (
         f'<img src="/thumbnail/{html.escape(study.thumbnail_instance_id)}" alt="">'
@@ -527,7 +733,7 @@ def _study_card(config: Config, study: StudySummary) -> str:
     )
     weasis_url = make_weasis_url(config.weasis_dicomweb_url, study.study_instance_uid)
     orthanc_url = f"{config.orthanc_public_url}/ui/app/"
-    modality = ", ".join(study.modalities) or "-"
+    modality = ", ".join(study.modalities) or study.operational_display_modality or "-"
     date = _format_date(study.study_date)
     description = study.study_description or "No study description"
     return f"""
@@ -552,6 +758,30 @@ def _study_card(config: Config, study: StudySummary) -> str:
     {_aio_panel(study)}
   </div>
 </article>"""
+
+
+def _enrich_studies_with_operational_metadata(
+    studies: list[StudySummary],
+    metadata_client: GatewayMetadataClient,
+) -> list[StudySummary]:
+    enriched: list[StudySummary] = []
+    for study in studies:
+        if study.modalities:
+            enriched.append(study)
+            continue
+        metadata = metadata_client.get_by_study(study.orthanc_id)
+        if metadata is None:
+            metadata = metadata_client.get_by_accession(study.accession_number)
+        if metadata is None:
+            enriched.append(study)
+            continue
+        enriched.append(
+            replace(
+                study,
+                operational_display_modality=metadata.display_modality,
+            )
+        )
+    return enriched
 
 
 def _aio_panel(study: StudySummary) -> str:
@@ -760,8 +990,10 @@ p { margin:5px 0 0; color:var(--muted); }
 input { width:100%; min-height:40px; padding:8px 11px; border:1px solid var(--border); border-radius:6px; font:inherit; }
 button, a { min-height:36px; border-radius:6px; border:1px solid var(--border); padding:8px 11px; background:#fff; color:var(--text); text-decoration:none; font:inherit; display:inline-flex; align-items:center; justify-content:center; white-space:nowrap; }
 button, .primary { background:var(--blue); color:#fff; border-color:var(--blue); }
+select { min-height:36px; padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:#fff; font:inherit; }
 main { padding:18px 28px 32px; }
 .summary { color:var(--muted); margin-bottom:12px; }
+.tabs { display:flex; gap:8px; flex-wrap:wrap; }
 .patient-context, .upload-panel { background:#fff; border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:12px; }
 .patient-context { display:grid; grid-template-columns:repeat(4, minmax(120px, 1fr)); gap:10px 14px; }
 .patient-context span { display:block; color:var(--muted); font-size:12px; margin-bottom:2px; }
@@ -786,9 +1018,16 @@ main { padding:18px 28px 32px; }
 .paste-actions button:last-child { grid-column:1 / -1; }
 .secondary { background:#fff; color:var(--text); border-color:var(--border); }
 .notice { border:1px solid var(--border); background:#fff; border-radius:8px; padding:14px; margin-bottom:12px; }
-.grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(360px, 1fr)); gap:12px; }
-.study { display:grid; grid-template-columns:132px minmax(0, 1fr); min-height:172px; background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
-.thumb { width:132px; min-height:172px; background:#101820; display:flex; align-items:center; justify-content:center; color:#aab6c4; }
+.table-wrap { overflow:auto; border:1px solid var(--border); border-radius:8px; background:#fff; }
+.worklist-table { width:100%; border-collapse:collapse; min-width:980px; }
+.worklist-table th, .worklist-table td { padding:10px 12px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }
+.worklist-table th { font-size:12px; color:var(--muted); background:#f8fafc; }
+.worklist-table tr:last-child td { border-bottom:0; }
+.inline-cancel { display:flex; gap:8px; align-items:center; }
+.empty-cell { color:var(--muted); text-align:center; padding:22px !important; }
+.grid { display:grid; grid-template-columns:minmax(0, 1fr); gap:12px; }
+.study { display:grid; grid-template-columns:minmax(180px, 240px) minmax(0, 1fr); min-height:180px; background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+.thumb { width:100%; min-height:180px; background:#101820; display:flex; align-items:center; justify-content:center; color:#aab6c4; }
 .thumb img { width:100%; height:100%; object-fit:contain; display:block; }
 .no-thumb { font-size:13px; }
 .study-body { min-width:0; padding:13px 14px 12px; }
@@ -804,16 +1043,29 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
 .aio-disclaimer { margin:0 0 9px; padding:8px; border:1px solid #f2c94c; border-radius:6px; background:#fff8db; color:#4a3412; font:700 12px/1.35 system-ui, -apple-system, Segoe UI, sans-serif; white-space:pre-wrap; }
 .aio-content p { margin:0 0 8px; }
 .aio-fields { display:grid; grid-template-columns:1fr; gap:6px; margin:0 0 9px; }
-.aio-field { display:grid; grid-template-columns:120px minmax(0, 1fr); gap:8px; font-size:13px; }
+.aio-field { display:grid; grid-template-columns:88px minmax(0, 1fr); gap:8px; font-size:13px; }
 .aio-field span { color:var(--muted); }
 .aio-field strong { font-weight:600; overflow-wrap:anywhere; }
-.aio-controls { display:flex; gap:8px; flex-wrap:wrap; }
-.aio-controls button[disabled] { opacity:.55; cursor:not-allowed; }
+.aio-details { border:1px solid var(--border); border-radius:8px; background:#fff; padding:0; margin:0 0 9px; }
+.aio-details summary { cursor:pointer; padding:9px; font-size:13px; font-weight:700; line-height:1.25; }
+.aio-details[open] summary { border-bottom:1px solid #edf1f6; }
+.aio-details-body { padding:9px; }
+.aio-helper-list { display:grid; gap:7px; margin:0; padding:0; list-style:none; }
+.aio-helper-list li { border-top:1px solid #edf1f6; padding-top:7px; }
+.aio-helper-list li:first-child { border-top:0; padding-top:0; }
+.aio-helper-list strong { display:block; font-size:13px; margin-bottom:2px; }
+.aio-helper-list span { display:block; color:var(--muted); font-size:12px; line-height:1.35; }
+.aio-score-meta { margin:0 0 7px; color:var(--muted); font-size:12px; line-height:1.35; }
+.aio-score-list { display:grid; gap:5px; margin:0; padding:0; list-style:none; }
+.aio-score-list li { display:grid; grid-template-columns:minmax(0, 1fr) 64px; gap:8px; align-items:center; font-size:13px; }
+.aio-score-list strong { font-weight:600; overflow-wrap:anywhere; }
+.aio-score-list span { text-align:right; font-variant-numeric:tabular-nums; color:#0f766e; font-weight:700; }
 .empty, .error { border:1px solid var(--border); background:#fff; border-radius:8px; padding:18px; }
 .error { border-color:#ef9a9a; color:#9f1239; }
 @media (max-width: 720px) {
   .topbar { display:block; padding:18px; }
   .search { margin-top:14px; min-width:0; }
+  .tabs { margin-top:14px; }
   main { padding:14px; }
   .grid { grid-template-columns:1fr; }
   .study { grid-template-columns:108px minmax(0, 1fr); }
@@ -894,49 +1146,110 @@ AIO_PANEL_SCRIPT = r"""
 
     const content = panel.querySelector(".aio-content");
     content.textContent = "";
+    const details = detailsPanel(report);
+    if (details) content.appendChild(details);
+    const helper = helperPanel(report);
+    if (helper) content.appendChild(helper);
+    const scores = scorePanel(report);
+    if (scores) content.appendChild(scores);
+  }
+
+  function helperPanel(report) {
+    const findings = Array.isArray(report.findings_json) ? report.findings_json : [];
+    const helperFindings = findings.filter(function (item) {
+      return item && item.section !== "torchxrayvision_scores";
+    });
+    if (!helperFindings.length) return null;
+
+    const panel = collapsiblePanel(helperTitle(report));
+    const body = panel.querySelector(".aio-details-body");
+    const list = document.createElement("ul");
+    list.className = "aio-helper-list";
+
+    helperFindings.forEach(function (item) {
+      const row = document.createElement("li");
+      const label = document.createElement("strong");
+      label.textContent = item.label || item.section || "Review item";
+      const prompt = document.createElement("span");
+      const status = item.status ? " [" + item.status + "]" : "";
+      prompt.textContent = (item.helper_prompt || "-") + status;
+      row.appendChild(label);
+      row.appendChild(prompt);
+      list.appendChild(row);
+    });
+
+    body.appendChild(list);
+    return panel;
+  }
+
+  function scorePanel(report) {
+    const findings = Array.isArray(report.findings_json) ? report.findings_json : [];
+    const item = findings.find(function (entry) {
+      return entry && entry.section === "torchxrayvision_scores" && entry.scores && typeof entry.scores === "object";
+    });
+    if (!item) return null;
+
+    const entries = Object.entries(item.scores)
+      .filter(function (entry) { return Number.isFinite(Number(entry[1])); })
+      .sort(function (a, b) { return Number(b[1]) - Number(a[1]); })
+      .slice(0, 8);
+    if (!entries.length) return null;
+
+    const panel = collapsiblePanel("TorchXRayVision testing scores");
+    const body = panel.querySelector(".aio-details-body");
+
+    const meta = document.createElement("p");
+    meta.className = "aio-score-meta";
+    meta.textContent = [
+      item.score_type || "model output",
+      item.input_source || "",
+      item.input_warning || ""
+    ].filter(Boolean).join(" · ");
+
+    const list = document.createElement("ul");
+    list.className = "aio-score-list";
+    entries.forEach(function (entry) {
+      const row = document.createElement("li");
+      const label = document.createElement("strong");
+      label.textContent = entry[0];
+      const value = document.createElement("span");
+      value.textContent = Number(entry[1]).toFixed(3);
+      row.appendChild(label);
+      row.appendChild(value);
+      list.appendChild(row);
+    });
+
+    body.appendChild(meta);
+    body.appendChild(list);
+    return panel;
+  }
+
+  function detailsPanel(report) {
+    const panel = collapsiblePanel("AIO details");
+    const body = panel.querySelector(".aio-details-body");
     const fields = document.createElement("div");
     fields.className = "aio-fields";
     fields.appendChild(field("status", report.status));
-    fields.appendChild(field("ai_domain", report.ai_domain));
-    fields.appendChild(field("model_name", report.model_name || "-"));
-    fields.appendChild(field("model_version", report.model_version || "-"));
+    fields.appendChild(field("domain", report.ai_domain));
+    fields.appendChild(field("model", compactModel(report)));
     fields.appendChild(field("summary", report.summary || "-"));
-    fields.appendChild(field("routing reason", routingReason(report)));
-    fields.appendChild(field("physician_review_status", report.physician_review_status || "-"));
-    fields.appendChild(field("disclaimer_text", report.disclaimer_text || "-"));
+    fields.appendChild(field("routing", routingReason(report)));
+    fields.appendChild(field("model_ver", report.model_version || "-"));
+    fields.appendChild(field("report_id", report.id || "-"));
+    body.appendChild(fields);
+    return panel;
+  }
 
-    const controls = document.createElement("div");
-    controls.className = "aio-controls";
-    const reviewed = document.createElement("button");
-    reviewed.type = "button";
-    reviewed.textContent = "Mark reviewed";
-    reviewed.disabled = report.physician_review_status === "approved";
-    reviewed.addEventListener("click", function () {
-      reviewed.disabled = true;
-      fetch("/api/aio/report/" + encodeURIComponent(report.id) + "/review", {
-        method: "POST",
-        headers: { "Accept": "application/json" }
-      })
-        .then(function (response) {
-          if (!response.ok) throw new Error("AIO review failed");
-          return response.json();
-        })
-        .then(function (updated) { renderReport(panel, updated); })
-        .catch(function () {
-          reviewed.disabled = false;
-        });
-    });
-
-    const reject = document.createElement("button");
-    reject.type = "button";
-    reject.textContent = "Reject/Hide";
-    reject.disabled = true;
-    reject.title = "TODO: enable when the AIO API supports hide/reject workflow semantics.";
-
-    controls.appendChild(reviewed);
-    controls.appendChild(reject);
-    content.appendChild(fields);
-    content.appendChild(controls);
+  function collapsiblePanel(titleText) {
+    const panel = document.createElement("details");
+    panel.className = "aio-details";
+    const title = document.createElement("summary");
+    title.textContent = titleText;
+    const body = document.createElement("div");
+    body.className = "aio-details-body";
+    panel.appendChild(title);
+    panel.appendChild(body);
+    return panel;
   }
 
   function renderUnavailable(panel) {
@@ -962,6 +1275,18 @@ AIO_PANEL_SCRIPT = r"""
   function routingReason(report) {
     if (!report || !report.routing_json) return "-";
     return report.routing_json.reason || "-";
+  }
+
+  function compactModel(report) {
+    if (!report || !report.model_name) return "-";
+    return report.model_name.replace(/^torchxrayvision:/, "TXRV ");
+  }
+
+  function helperTitle(report) {
+    if (!report) return "AI Opinion helper";
+    if (report.ai_domain === "cxr") return "Chest X-ray helper";
+    if (report.ai_domain === "msk_xray") return "MSK X-ray helper";
+    return "AI Opinion helper";
   }
 
   panels.forEach(loadPanel);
@@ -1129,6 +1454,20 @@ PASTE_SCRIPT = r"""
     }
   });
   clear.disabled = true;
+})();
+"""
+
+
+IMAGING_WORKLIST_SCRIPT = r"""
+(function () {
+  const forms = document.querySelectorAll("[data-confirm-cancel]");
+  forms.forEach(function (form) {
+    form.addEventListener("submit", function (event) {
+      if (!window.confirm("Mark this active worklist entry as cancelled?")) {
+        event.preventDefault();
+      }
+    });
+  });
 })();
 """
 

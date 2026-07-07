@@ -103,6 +103,57 @@ duplicate queue rows. The queue uses a partial unique index on `SOPInstanceUID`
 and duplicate enqueue attempts return the existing row. A duplicate of a
 completed row is not reset to pending.
 
+## Blank Or Generic Modality Display
+
+Some devices may send a blank DICOM `Modality` tag. Gateway does not overwrite
+that DICOM tag. After a successful MWL match, Gateway stores separate
+KaosPACS operational modality metadata at:
+
+```text
+/app/data/gateway_operational_metadata.sqlite3
+/srv/docker/kaospacs/gateway/gateway_operational_metadata.sqlite3
+```
+
+Expected mappings include:
+
+- `StationAET=INNOVISION` or workflow `Modality=CR` -> display `X-ray`, AIO
+  candidate `cxr`
+- `StationAET=BMD` or workflow `Modality=BMD` -> display `BMD`, AIO candidate
+  `bmd`
+- `StationAET=ECG` or workflow `Modality=ECG` -> display `ECG`, AIO candidate
+  `ecg`
+- unknown values -> display `Unknown`, AIO candidate `unsupported`
+
+Web can use this operational metadata as a display fallback when Orthanc's raw
+DICOM modality is blank. This does not mean the DICOM tag or Orthanc metadata
+was changed.
+
+## Deleted Or Reordered Source Order Still Appears Active
+
+KaosPACS does not infer source/business cancellation from missing eGHIS rows.
+KaosEghis-PACS must explicitly call Gateway:
+
+```text
+POST /orders/cancel
+```
+
+with the old `AccessionNumber` when a previously synced source imaging order is
+cancelled, deleted, or replaced by a reorder. If eGHIS has a clear
+cancelled/deleted status, cancellation should be sent immediately. If a row
+only disappears from the source query, use a conservative adapter-side recheck
+policy such as `EGHIS_CANCEL_MISSING_AFTER_SYNC_COUNT=2` before sending
+`CancelReason=missing_from_source_after_recheck`.
+
+For manual correction, open KaosPACS Web:
+
+```text
+http://192.168.0.200/imaging/worklist
+```
+
+Active rows can be marked cancelled through Gateway. Cancelled rows remain
+retained, leave Active, and can be reviewed under Cancelled or All. This action
+does not delete DICOM images and does not call the MWL API directly from Web.
+
 ## Orthanc Cannot Connect To PostgreSQL
 
 Check PostgreSQL health and credentials:

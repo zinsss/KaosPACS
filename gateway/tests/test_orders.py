@@ -81,7 +81,7 @@ def test_validate_order_upsert_reports_missing_fields() -> None:
 
 def test_upsert_worklist_entry_replaces_matching_accession() -> None:
     replacement = {"AccessionNumber": "A1", "PatientID": "new"}
-    result = upsert_worklist_entry(
+    result, action = upsert_worklist_entry(
         {
             "entries": [
                 {"AccessionNumber": "A1", "PatientID": "old"},
@@ -97,11 +97,12 @@ def test_upsert_worklist_entry_replaces_matching_accession() -> None:
             {"AccessionNumber": "A2", "PatientID": "keep"},
         ]
     }
+    assert action == "upserted"
 
 
 def test_upsert_worklist_entry_appends_when_not_found() -> None:
     new_entry = {"AccessionNumber": "A2", "PatientID": "new"}
-    result = upsert_worklist_entry(
+    result, action = upsert_worklist_entry(
         {"entries": [{"AccessionNumber": "A1", "PatientID": "keep"}]},
         new_entry,
     )
@@ -112,3 +113,20 @@ def test_upsert_worklist_entry_appends_when_not_found() -> None:
             new_entry,
         ]
     }
+    assert action == "upserted"
+
+
+def test_upsert_worklist_entry_preserves_terminal_entry() -> None:
+    terminal_entry = {
+        "AccessionNumber": "A1",
+        "PatientID": "old",
+        "Active": False,
+        "CompletedAt": "2026-07-07T10:00:00+09:00",
+    }
+    result, action = upsert_worklist_entry(
+        {"entries": [terminal_entry]},
+        {"AccessionNumber": "A1", "PatientID": "new", "Active": True},
+    )
+
+    assert result == {"entries": [terminal_entry]}
+    assert action == "ignored_terminal"

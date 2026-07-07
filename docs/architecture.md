@@ -183,6 +183,11 @@ Business logic belongs outside Orthanc:
   forwarding datasets to Orthanc, normalized order event validation, worklist
   create/update/cancel through the MWL API, operator-facing imaging lifecycle
   read API, and MWL completion calls after successful storage/forwarding.
+  After a successful DICOM to MWL match, Gateway also stores KaosPACS
+  operational modality metadata in its own SQLite DB. This is display/routing
+  metadata only: it records the raw DICOM modality, workflow modality, station
+  AET, study type, derived display modality, and AIO routing candidate. It is
+  not written into Orthanc metadata and does not modify DICOM tags.
   Current Gateway audit stores only workflow event metadata and accession
   numbers, not demographics or full payloads. Current Gateway Orthanc HTTP
   client usage is limited to non-PHI reachability. Gateway writes non-PHI
@@ -200,7 +205,11 @@ Business logic belongs outside Orthanc:
   handling, normalization, and sending normalized order events to Gateway. It
   should not call MWL directly in production, call Orthanc directly, or infer
   DICOM completion. It owns source/business order create, update, cancel,
-  delete, restore, and reactivate events.
+  delete, restore, and reactivate events. It must explicitly call Gateway
+  `/orders/cancel` when it detects that a previously synced source imaging
+  order was cancelled, deleted, or replaced by a reorder. Missing source rows
+  without a clear cancellation status should use a configurable conservative
+  recheck policy in KaosEghis-PACS, not KaosPACS-side source inference.
 - MWL: modality worklist responses, local worklist state, local MWL API, and
   minimal audit tracking. It is not a workflow engine, must not connect
   directly to eGHIS, must not infer study completion, and must not communicate
@@ -211,6 +220,12 @@ Business logic belongs outside Orthanc:
   upload surface. It displays past studies after Orthanc storage and can upload
   generated JPG/PNG/PDF-derived DICOM directly to Orthanc. It is not part of
   modality acquisition, Gateway charset handling, MWL completion, or MWL expiry.
+  If Orthanc has a blank DICOM `Modality` but Gateway operational metadata
+  exists, Web may display the derived modality such as `X-ray`, `BMD`, or
+  `ECG`; the raw DICOM modality remains unchanged. Web also provides a small
+  Gateway-backed imaging worklist correction page where operators can manually
+  mark active entries cancelled. That page calls Gateway only and does not call
+  the MWL API directly.
 - Migration: read-only ViewRex extraction and additive import tooling.
 
 The ViewRex replacement boundary is the modality and EMR contract, not the old

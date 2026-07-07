@@ -28,6 +28,25 @@ class OrthancHttpClient:
     def get_system(self) -> OrthancResult:
         return self._request("GET", "/system")
 
+    def find_study_id_by_uid(self, study_instance_uid: str) -> str | None:
+        if not study_instance_uid:
+            return None
+        result = self._request(
+            "POST",
+            "/tools/find",
+            {
+                "Level": "Study",
+                "Query": {
+                    "StudyInstanceUID": study_instance_uid,
+                },
+            },
+        )
+        if not result.reachable or not isinstance(result.payload, list):
+            return None
+        if not result.payload:
+            return None
+        return str(result.payload[0])
+
     def is_reachable(self) -> dict[str, Any]:
         result = self.get_system()
         return {
@@ -36,10 +55,20 @@ class OrthancHttpClient:
             "status_code": result.status_code,
         }
 
-    def _request(self, method: str, path: str) -> OrthancResult:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+    ) -> OrthancResult:
+        data = json.dumps(payload).encode("utf-8") if payload is not None else None
         request = Request(
             f"{self.base_url}{path}",
-            headers={"Accept": "application/json"},
+            data=data,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
             method=method,
         )
         LOGGER.info("Orthanc HTTP request method=%s path=%s", method, path)

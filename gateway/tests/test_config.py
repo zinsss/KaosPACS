@@ -2,6 +2,7 @@ import pytest
 
 from app.config import (
     DEFAULT_GATEWAY_AUDIT_DB,
+    DEFAULT_GATEWAY_OPERATIONAL_METADATA_DB,
     DEFAULT_GATEWAY_QUEUE_DB,
     DEFAULT_GATEWAY_DICOM_AET,
     DEFAULT_GATEWAY_DICOM_BIND,
@@ -46,6 +47,7 @@ def test_config_defaults() -> None:
     assert config.orthanc_timeout_seconds == DEFAULT_ORTHANC_TIMEOUT_SECONDS
     assert config.gateway_audit_db == DEFAULT_GATEWAY_AUDIT_DB
     assert config.gateway_queue_db == DEFAULT_GATEWAY_QUEUE_DB
+    assert config.gateway_operational_metadata_db == DEFAULT_GATEWAY_OPERATIONAL_METADATA_DB
     assert config.gateway_api_token is None
     assert config.gateway_dicom_enabled == DEFAULT_GATEWAY_DICOM_ENABLED
     assert config.gateway_dicom_aet == DEFAULT_GATEWAY_DICOM_AET
@@ -102,6 +104,7 @@ def test_config_env_overrides() -> None:
             "ORTHANC_TIMEOUT_SECONDS": "4.5",
             "GATEWAY_AUDIT_DB": "/tmp/gateway-audit.sqlite3",
             "GATEWAY_QUEUE_DB": "/tmp/gateway-queue.sqlite3",
+            "GATEWAY_OPERATIONAL_METADATA_DB": "/tmp/gateway-operational.sqlite3",
             "GATEWAY_API_TOKEN": "secret-token",
             "GATEWAY_DICOM_ENABLED": "true",
             "GATEWAY_DICOM_AET": "GW_TEST",
@@ -136,6 +139,7 @@ def test_config_env_overrides() -> None:
     assert config.orthanc_timeout_seconds == 4.5
     assert str(config.gateway_audit_db) == "/tmp/gateway-audit.sqlite3"
     assert str(config.gateway_queue_db) == "/tmp/gateway-queue.sqlite3"
+    assert str(config.gateway_operational_metadata_db) == "/tmp/gateway-operational.sqlite3"
     assert config.gateway_api_token == "secret-token"
     assert config.gateway_dicom_enabled is True
     assert config.gateway_dicom_aet == "GW_TEST"

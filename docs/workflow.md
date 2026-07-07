@@ -49,6 +49,15 @@ fixer applies, queue mode enqueues the normalized forwarding copy. Gateway does
 not perform broad charset guessing, private tag edits, pixel edits, UID edits,
 PatientID edits, AccessionNumber edits, or metadata rewriting.
 
+After a successful MWL match, Gateway stores a separate KaosPACS operational
+modality metadata record in `/app/data/gateway_operational_metadata.sqlite3`.
+This record is for display/routing only. It can preserve that the incoming
+DICOM `Modality` was blank while the workflow metadata says `StationAET`
+`INNOVISION`, `Modality=CR`, and `StudyType=CR`, which maps to display modality
+`X-ray` and AIO candidate `cxr`. `BMD` maps to `bmd`, `ECG` maps to `ecg`, and
+unknown values map to `unsupported`. Gateway does not write this metadata into
+Orthanc and does not fill or overwrite the DICOM `Modality` tag in this step.
+
 Gateway appends non-PHI DICOM inspection summaries to:
 
 ```text
@@ -128,6 +137,16 @@ than raw MWL JSON. Gateway validates those events, converts them into MWL
 entries, and updates the internal MWL API. Raw Gateway `/worklist` endpoints
 remain internal/development helpers.
 
+Source cancellation, deletion, and reorder detection belongs to KaosEghis-PACS.
+When a previously synced active source order is explicitly cancelled/deleted,
+KaosEghis-PACS must call `POST /orders/cancel` with the old accession. If a
+source row disappears without a clear deleted/cancelled status, the adapter
+should use a conservative confirmation count such as
+`EGHIS_CANCEL_MISSING_AFTER_SYNC_COUNT=2` before sending
+`CancelReason=missing_from_source_after_recheck`. A reorder should cancel the
+old accession and upsert the new accession. KaosPACS must not poll eGHIS or
+infer source cancellation on its own.
+
 KaosEghis-PACS operator UI should read imaging lifecycle state from Gateway:
 
 ```text
@@ -146,6 +165,12 @@ By default, the endpoint returns only `active`, `completed`, `expired`, and
 expiry, or cancellation timestamp are `inactive`; they are available only with
 `GET /imaging/worklist?view=all` for reconciliation. KaosEghis-PACS must not
 treat inactive rows as active orders.
+
+KaosPACS Web includes an operator correction page at `/imaging/worklist`.
+Active rows can be manually marked cancelled through Gateway with a reason such
+as `cancelled_in_source`, `duplicate_reordered`, `entered_in_error`,
+`patient_declined`, or `other`. This action does not delete the row and does
+not call MWL directly.
 
 The UI should not infer imaging state from raw `public.mwl`, direct eGHIS
 tables, MWL internals, or DICOM C-FIND. Lower-level `GET /worklist` remains a

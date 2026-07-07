@@ -135,6 +135,7 @@ GATEWAY_DICOM_BIND=0.0.0.0
 GATEWAY_DICOM_PORT=104
 GATEWAY_DICOM_STORAGE_DIR=/app/data/dicom-inbox
 GATEWAY_QUEUE_DB=/app/data/gateway_queue.sqlite3
+GATEWAY_OPERATIONAL_METADATA_DB=/app/data/gateway_operational_metadata.sqlite3
 GATEWAY_DICOM_QUEUE_ENABLED=false
 GATEWAY_QUEUE_WORKER_ENABLED=false
 GATEWAY_QUEUE_POLL_INTERVAL_SECONDS=5
@@ -164,6 +165,18 @@ a fix applies, Gateway keeps the original received file and writes a normalized 
 `/app/data/dicom-inbox/forwarded`. It does not perform broad charset guessing,
 private tag edits, pixel edits, UID edits, PatientID edits, AccessionNumber
 edits, or Modality edits.
+
+Gateway operational modality metadata is stored at:
+
+```text
+/app/data/gateway_operational_metadata.sqlite3
+/srv/docker/kaospacs/gateway/gateway_operational_metadata.sqlite3
+```
+
+It is separate from DICOM metadata and Orthanc metadata. Gateway writes it after
+a successful DICOM to MWL match so Web/AIO can route or display blank-modality
+studies using workflow evidence. It must not contain AI findings, diagnostic
+report language, or full payloads.
 
 Inspection reports are JSONL records under the Gateway data mount:
 
@@ -282,6 +295,20 @@ returns the operator-facing imaging lifecycle states `active`, `completed`,
 `GET /imaging/worklist?view=all`; inactive means a retained non-actionable row
 with no completion, expiry, or source cancellation timestamp, and KaosEghis-PACS
 must not treat it as active.
+
+KaosEghis-PACS must keep local sync state for previously synced active orders.
+If the source has an explicit cancelled/deleted status, call Gateway
+`/orders/cancel` immediately. If a source row disappears without a clear source
+status, use a conservative confirmation setting such as
+`EGHIS_CANCEL_MISSING_AFTER_SYNC_COUNT=2` before calling Gateway with
+`CancelReason=missing_from_source_after_recheck`. A delete/reorder should cancel
+the old accession and upsert the new accession. KaosPACS does not poll eGHIS or
+infer source cancellation on its own.
+
+KaosPACS Web exposes `/imaging/worklist` for operator correction. Active rows
+can be marked cancelled through Gateway with a reason. Web remains protected by
+Basic Auth when `WEB_AUTH_PASSWORD` is set, and the cancellation action uses
+Gateway only.
 
 `GET /status` is protected by the same bearer token when authentication is
 enabled. It is for operational visibility only and reports dependency

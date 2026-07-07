@@ -10,6 +10,7 @@ from http.server import ThreadingHTTPServer
 from io import BytesIO
 from types import SimpleNamespace
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from unittest.mock import Mock
 
@@ -19,6 +20,7 @@ from pydicom.uid import EncapsulatedPDFStorage, SecondaryCaptureImageStorage
 
 from app.config import load_config
 from app.dicom_upload import create_upload_dicom
+from app.gateway import OperationalMetadata
 from app.main import AIO_DISCLAIMER, create_handler, make_weasis_url, render_index
 from app.orthanc import StudySummary
 
@@ -31,6 +33,9 @@ def test_config_defaults(monkeypatch) -> None:
         "WEB_ORTHANC_PUBLIC_URL",
         "WEASIS_DICOMWEB_URL",
         "KAOSPACS_AIO_URL",
+        "WEB_GATEWAY_URL",
+        "WEB_GATEWAY_API_TOKEN",
+        "WEB_GATEWAY_TIMEOUT_SECONDS",
         "WEB_STUDY_LIMIT",
         "WEB_UPLOAD_MAX_BYTES",
         "WEB_AUTH_USERNAME",
@@ -46,6 +51,9 @@ def test_config_defaults(monkeypatch) -> None:
     assert config.orthanc_public_url == "http://192.168.0.200:8042"
     assert config.weasis_dicomweb_url == "http://192.168.0.200:8042/dicom-web"
     assert config.kaospacs_aio_url == "http://127.0.0.1:8056"
+    assert config.gateway_url == "http://gateway:8060"
+    assert config.gateway_api_token == ""
+    assert config.gateway_timeout_seconds == 3.0
     assert config.study_limit == 100
     assert config.upload_max_bytes == 25 * 1024 * 1024
     assert config.auth_username == "kaospacs"
@@ -59,6 +67,9 @@ def test_config_env_overrides(monkeypatch) -> None:
     monkeypatch.setenv("WEB_ORTHANC_PUBLIC_URL", "http://pacs:8042/")
     monkeypatch.setenv("WEASIS_DICOMWEB_URL", "http://pacs:8042/dicom-web/")
     monkeypatch.setenv("KAOSPACS_AIO_URL", "http://aio:8056/")
+    monkeypatch.setenv("WEB_GATEWAY_URL", "http://gateway.local:8060/")
+    monkeypatch.setenv("WEB_GATEWAY_API_TOKEN", "gateway-token")
+    monkeypatch.setenv("WEB_GATEWAY_TIMEOUT_SECONDS", "1.5")
     monkeypatch.setenv("WEB_STUDY_LIMIT", "50")
     monkeypatch.setenv("WEB_UPLOAD_MAX_BYTES", "12345")
     monkeypatch.setenv("WEB_AUTH_USERNAME", "viewer")
@@ -72,6 +83,9 @@ def test_config_env_overrides(monkeypatch) -> None:
     assert config.orthanc_public_url == "http://pacs:8042"
     assert config.weasis_dicomweb_url == "http://pacs:8042/dicom-web"
     assert config.kaospacs_aio_url == "http://aio:8056"
+    assert config.gateway_url == "http://gateway.local:8060"
+    assert config.gateway_api_token == "gateway-token"
+    assert config.gateway_timeout_seconds == 1.5
     assert config.study_limit == 50
     assert config.upload_max_bytes == 12345
     assert config.auth_username == "viewer"
@@ -125,8 +139,223 @@ def test_render_index_escapes_values() -> None:
     assert 'data-orthanc-study-id="orthanc-id"' in html
     assert "No AI Opinion yet" in html
     assert "Run AI Opinion" in html
+    assert "Chest X-ray helper" in html
+    assert "TorchXRayVision testing scores" in html
+    assert "aio-score-list" in html
     assert "diagnosis" not in html.lower()
     assert "<script>alert(1)</script>" not in html
+
+
+def test_render_index_uses_operational_modality_when_dicom_modality_blank() -> None:
+    config = Mock()
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    study = StudySummary(
+        orthanc_id="orthanc-id",
+        study_instance_uid="1.2.3",
+        accession_number="ACC",
+        patient_id="PID",
+        patient_name="NAME",
+        patient_birth_date="",
+        patient_sex="",
+        study_date="20260702",
+        study_time="",
+        study_description="Chest",
+        modalities=[],
+        series_count=1,
+        instance_count=2,
+        thumbnail_instance_id="inst",
+        operational_display_modality="X-ray",
+    )
+
+    html = render_index(config, [study], query="", error="")
+
+    assert '<span class="modality">X-ray</span>' in html
+
+
+def test_web_enriches_blank_modality_from_gateway_metadata() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    config.study_limit = 100
+    study = StudySummary(
+        orthanc_id="orthanc-id",
+        study_instance_uid="1.2.3",
+        accession_number="ACC",
+        patient_id="PID",
+        patient_name="NAME",
+        patient_birth_date="",
+        patient_sex="",
+        study_date="20260702",
+        study_time="",
+        study_description="Chest",
+        modalities=[],
+        series_count=1,
+        instance_count=2,
+        thumbnail_instance_id="inst",
+    )
+    orthanc = Mock()
+    orthanc.studies_for_patient.return_value = [study]
+    gateway_metadata = Mock()
+    gateway_metadata.get_by_study.return_value = None
+    gateway_metadata.get_by_accession.return_value = OperationalMetadata(
+        display_modality="X-ray",
+        dicom_modality_original="",
+        workflow_modality="CR",
+        station_aet="INNOVISION",
+        study_type="CR",
+        aio_domain_candidate="cxr",
+    )
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, orthanc, gateway_metadata=gateway_metadata),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        response = urlopen(f"{_server_url(server)}/emr.php?m_patid=PID", timeout=3)
+        html = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert '<span class="modality">X-ray</span>' in html
+        gateway_metadata.get_by_study.assert_called_once_with("orthanc-id")
+        gateway_metadata.get_by_accession.assert_called_once_with("ACC")
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_web_does_not_override_nonblank_dicom_modality() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    config.study_limit = 100
+    study = StudySummary(
+        orthanc_id="orthanc-id",
+        study_instance_uid="1.2.3",
+        accession_number="ACC",
+        patient_id="PID",
+        patient_name="NAME",
+        patient_birth_date="",
+        patient_sex="",
+        study_date="20260702",
+        study_time="",
+        study_description="Chest",
+        modalities=["CR"],
+        series_count=1,
+        instance_count=2,
+        thumbnail_instance_id="inst",
+    )
+    orthanc = Mock()
+    orthanc.studies_for_patient.return_value = [study]
+    gateway_metadata = Mock()
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, orthanc, gateway_metadata=gateway_metadata),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        response = urlopen(f"{_server_url(server)}/emr.php?m_patid=PID", timeout=3)
+        html = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert '<span class="modality">CR</span>' in html
+        gateway_metadata.get_by_study.assert_not_called()
+        gateway_metadata.get_by_accession.assert_not_called()
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_imaging_worklist_page_shows_mark_cancelled_for_active_only() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    orthanc = Mock()
+    gateway_metadata = Mock()
+    gateway_metadata.imaging_worklist.return_value = {
+        "entries": [
+            {
+                "state": "active",
+                "AccessionNumber": "ACTIVE-1",
+                "PatientID": "P1",
+                "PatientName": "ACTIVE^PATIENT",
+                "Modality": "CR",
+                "ScheduledStationAETitle": "INNOVISION",
+                "ScheduledAt": "2026-07-07T09:00:00",
+                "Description": "CHEST",
+            },
+            {
+                "state": "cancelled",
+                "AccessionNumber": "CANCELLED-1",
+                "PatientID": "P2",
+                "PatientName": "CANCELLED^PATIENT",
+                "Modality": "BMD",
+                "ScheduledStationAETitle": "BMD",
+                "ScheduledAt": "2026-07-07T10:00:00",
+                "Description": "BMD",
+                "CancelReason": "duplicate_reordered",
+            },
+        ],
+        "counts": {},
+    }
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, orthanc, gateway_metadata=gateway_metadata),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        response = urlopen(f"{_server_url(server)}/imaging/worklist?view=all", timeout=3)
+        html = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert "ACTIVE-1" in html
+        assert "CANCELLED-1" in html
+        assert "duplicate_reordered" in html
+        assert "Mark Cancelled" in html
+        assert html.count("Mark Cancelled") == 1
+        gateway_metadata.imaging_worklist.assert_called_once_with(include_inactive=True)
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_imaging_worklist_mark_cancelled_posts_to_gateway_only() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    orthanc = Mock()
+    gateway_metadata = Mock()
+    gateway_metadata.cancel_order.return_value = {"status": "cancelled"}
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, orthanc, gateway_metadata=gateway_metadata),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        body = urlencode(
+            {
+                "AccessionNumber": "ACTIVE-1",
+                "CancelReason": "entered_in_error",
+            }
+        ).encode("utf-8")
+        request = Request(
+            f"{_server_url(server)}/imaging/worklist/cancel",
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        response = urlopen(request, timeout=3)
+
+        assert response.status == 200
+        gateway_metadata.cancel_order.assert_called_once_with("ACTIVE-1", "entered_in_error")
+        assert not orthanc.method_calls
+    finally:
+        _stop_test_server(server, thread)
 
 
 def test_aio_proxy_endpoints_call_aio_client() -> None:

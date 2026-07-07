@@ -118,7 +118,10 @@ def order_to_mwl_entry(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def upsert_worklist_entry(worklist_payload: Any, entry: dict[str, Any]) -> dict[str, Any]:
+def upsert_worklist_entry(
+    worklist_payload: Any,
+    entry: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
     existing_entries = []
     if isinstance(worklist_payload, dict) and isinstance(worklist_payload.get("entries"), list):
         existing_entries = worklist_payload["entries"]
@@ -131,6 +134,10 @@ def upsert_worklist_entry(worklist_payload: Any, entry: dict[str, Any]) -> dict[
             isinstance(existing_entry, dict)
             and text(existing_entry.get("AccessionNumber")) == accession_number
         ):
+            if is_terminal_worklist_entry(existing_entry):
+                updated_entries.append(existing_entry)
+                replaced = True
+                continue
             updated_entries.append(entry)
             replaced = True
         else:
@@ -138,8 +145,24 @@ def upsert_worklist_entry(worklist_payload: Any, entry: dict[str, Any]) -> dict[
 
     if not replaced:
         updated_entries.append(entry)
+        return {"entries": updated_entries}, "upserted"
 
-    return {"entries": updated_entries}
+    if any(
+        isinstance(existing_entry, dict)
+        and text(existing_entry.get("AccessionNumber")) == accession_number
+        and is_terminal_worklist_entry(existing_entry)
+        for existing_entry in existing_entries
+    ):
+        return {"entries": updated_entries}, "ignored_terminal"
+    return {"entries": updated_entries}, "upserted"
+
+
+def is_terminal_worklist_entry(entry: dict[str, Any]) -> bool:
+    return bool(
+        text(entry.get("CompletedAt"))
+        or text(entry.get("ExpiredAt"))
+        or text(entry.get("CancelledAt"))
+    )
 
 
 def handle_order_post(handler: BaseHTTPRequestHandler, path: str) -> None:
@@ -211,7 +234,7 @@ def handle_order_upsert(handler: BaseHTTPRequestHandler, path: str, payload: Any
                 },
             )
             return
-        updated_worklist = upsert_worklist_entry(current_worklist.payload, entry)
+        updated_worklist, action = upsert_worklist_entry(current_worklist.payload, entry)
         response = client.put_worklist(updated_worklist)
     except MwlHttpError as error:
         audit_event(
@@ -251,7 +274,7 @@ def handle_order_upsert(handler: BaseHTTPRequestHandler, path: str, payload: Any
         HTTPStatus.OK,
         {
             "status": "ok",
-            "action": "upserted",
+            "action": action,
             "AccessionNumber": accession_number,
         },
     )
