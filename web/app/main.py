@@ -7,7 +7,7 @@ import html
 import json
 import logging
 import warnings
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 
 from .config import Config, load_config
 from .dicom_upload import create_upload_dicom
+from .gateway import GatewayMetadataClient
 from .orthanc import OrthancClient, StudySummary
 
 with warnings.catch_warnings():
@@ -102,8 +103,14 @@ def create_handler(
     config: Config,
     orthanc: OrthancClient,
     aio: AioClient | None = None,
+    gateway_metadata: GatewayMetadataClient | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     aio_client = aio or AioClient(config.kaospacs_aio_url)
+    metadata_client = gateway_metadata or GatewayMetadataClient(
+        getattr(config, "gateway_url", "http://gateway:8060"),
+        token=getattr(config, "gateway_api_token", ""),
+        timeout_seconds=getattr(config, "gateway_timeout_seconds", 3.0),
+    )
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "KaosPACSWeb/0.1"
@@ -191,7 +198,10 @@ def create_handler(
             query = params.get("q", [""])[0]
             limit = _safe_limit(params.get("limit", [str(config.study_limit)])[0])
             try:
-                studies = orthanc.studies(query=query, limit=limit)
+                studies = _enrich_studies_with_operational_metadata(
+                    orthanc.studies(query=query, limit=limit),
+                    metadata_client,
+                )
             except Exception as exc:
                 LOGGER.warning("Orthanc study query failed exception=%s", exc.__class__.__name__)
                 self._json({"error": "orthanc_unavailable"}, HTTPStatus.BAD_GATEWAY)
@@ -262,15 +272,21 @@ def create_handler(
             )
             try:
                 if path == "/emr.php" and patient.patient_id:
-                    studies = orthanc.studies_for_patient(
-                        patient.patient_id,
-                        query=query,
-                        limit=config.study_limit,
+                    studies = _enrich_studies_with_operational_metadata(
+                        orthanc.studies_for_patient(
+                            patient.patient_id,
+                            query=query,
+                            limit=config.study_limit,
+                        ),
+                        metadata_client,
                     )
                 elif path == "/emr.php":
                     studies = []
                 else:
-                    studies = orthanc.studies(query=query, limit=config.study_limit)
+                    studies = _enrich_studies_with_operational_metadata(
+                        orthanc.studies(query=query, limit=config.study_limit),
+                        metadata_client,
+                    )
                 body = render_index(
                     config,
                     studies,
@@ -527,7 +543,7 @@ def _study_card(config: Config, study: StudySummary) -> str:
     )
     weasis_url = make_weasis_url(config.weasis_dicomweb_url, study.study_instance_uid)
     orthanc_url = f"{config.orthanc_public_url}/ui/app/"
-    modality = ", ".join(study.modalities) or "-"
+    modality = ", ".join(study.modalities) or study.operational_display_modality or "-"
     date = _format_date(study.study_date)
     description = study.study_description or "No study description"
     return f"""
@@ -552,6 +568,30 @@ def _study_card(config: Config, study: StudySummary) -> str:
     {_aio_panel(study)}
   </div>
 </article>"""
+
+
+def _enrich_studies_with_operational_metadata(
+    studies: list[StudySummary],
+    metadata_client: GatewayMetadataClient,
+) -> list[StudySummary]:
+    enriched: list[StudySummary] = []
+    for study in studies:
+        if study.modalities:
+            enriched.append(study)
+            continue
+        metadata = metadata_client.get_by_study(study.orthanc_id)
+        if metadata is None:
+            metadata = metadata_client.get_by_accession(study.accession_number)
+        if metadata is None:
+            enriched.append(study)
+            continue
+        enriched.append(
+            replace(
+                study,
+                operational_display_modality=metadata.display_modality,
+            )
+        )
+    return enriched
 
 
 def _aio_panel(study: StudySummary) -> str:

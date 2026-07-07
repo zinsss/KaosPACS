@@ -10,6 +10,7 @@ from pynetdicom import AE, evt
 from pynetdicom.presentation import AllStoragePresentationContexts
 
 from app.clients.mwl import MwlApiClient, MwlHttpError, MwlUnavailableError
+from app.clients.orthanc import OrthancHttpClient
 from app.config import GatewayConfig
 from app.dicom.charset_fix import (
     CharsetFixResult,
@@ -29,6 +30,7 @@ from app.dicom.matcher import MatchResult, match_dataset_to_worklist
 from app.dicom.queue import enqueue_stored_dataset
 from app.dicom.storage import store_dataset, store_encoded_dataset
 from app.services.audit import record_gateway_event
+from app.services.operational_metadata import save_operational_metadata
 
 
 LOGGER = logging.getLogger("kaospacs.gateway.dicom")
@@ -80,7 +82,9 @@ def handle_store(
     *,
     forwarder: DicomForwarder | None = None,
     mwl_client: MwlApiClient | None = None,
+    orthanc_client: OrthancHttpClient | None = None,
     audit_db: Path | None = None,
+    operational_metadata_db: Path | None = None,
     queue_db: Path | None = None,
     queue_enabled: bool = False,
     forward_mode: str = "direct",
@@ -201,7 +205,13 @@ def handle_store(
         )
 
     if forwarder is None:
-        _match_after_success(forwarding_dataset, mwl_client, audit_db)
+        _match_after_success(
+            forwarding_dataset,
+            mwl_client,
+            audit_db,
+            operational_metadata_db=operational_metadata_db,
+            orthanc_client=orthanc_client,
+        )
         return SUCCESS_STATUS
 
     forward_result = forwarder.forward_file(forwarding_path)
@@ -213,7 +223,13 @@ def handle_store(
             status_code=forward_result.status_code,
             success=True,
         )
-        _match_after_success(forwarding_dataset, mwl_client, audit_db)
+        _match_after_success(
+            forwarding_dataset,
+            mwl_client,
+            audit_db,
+            operational_metadata_db=operational_metadata_db,
+            orthanc_client=orthanc_client,
+        )
         return SUCCESS_STATUS
 
     _audit_dicom_event(
@@ -231,6 +247,9 @@ def _match_after_success(
     dataset: Any,
     mwl_client: MwlApiClient | None,
     audit_db: Path | None,
+    *,
+    operational_metadata_db: Path | None = None,
+    orthanc_client: OrthancHttpClient | None = None,
 ) -> None:
     if mwl_client is None:
         return
@@ -292,12 +311,51 @@ def _match_after_success(
         error_code=None if match_result.matched else match_result.reason,
     )
     if match_result.matched and match_result.accession_number:
+        _save_operational_metadata_after_match(
+            dataset,
+            match_result,
+            operational_metadata_db,
+            orthanc_client,
+        )
         completion_result = complete_matched_worklist(mwl_client, dataset, match_result)
         _audit_dicom_completion(
             audit_db,
             match_result,
             completion_result,
         )
+
+
+def _save_operational_metadata_after_match(
+    dataset: Any,
+    match_result: MatchResult,
+    operational_metadata_db: Path | None,
+    orthanc_client: OrthancHttpClient | None,
+) -> None:
+    if operational_metadata_db is None or not match_result.worklist_entry:
+        return
+    orthanc_study_id = None
+    if orthanc_client is not None:
+        try:
+            orthanc_study_id = orthanc_client.find_study_id_by_uid(
+                _text(getattr(dataset, "StudyInstanceUID", ""))
+            )
+        except Exception as error:
+            LOGGER.warning(
+                "Gateway operational metadata Orthanc lookup failed sop_instance_uid=%s "
+                "study_instance_uid=%s accession_number=%s modality=%s exception=%s",
+                _text(getattr(dataset, "SOPInstanceUID", "")),
+                _text(getattr(dataset, "StudyInstanceUID", "")),
+                match_result.accession_number or "",
+                _text(getattr(dataset, "Modality", "")),
+                error.__class__.__name__,
+            )
+    save_operational_metadata(
+        operational_metadata_db,
+        dataset=dataset,
+        worklist_entry=match_result.worklist_entry,
+        matched_by=match_result.matched_by,
+        orthanc_study_id=orthanc_study_id,
+    )
 
 
 def _enqueue_after_store(
@@ -616,7 +674,9 @@ class GatewayDicomServer:
         storage_dir: Path,
         forwarder: DicomForwarder | None = None,
         mwl_client: MwlApiClient | None = None,
+        orthanc_client: OrthancHttpClient | None = None,
         audit_db: Path | None = None,
+        operational_metadata_db: Path | None = None,
         queue_db: Path | None = None,
         queue_enabled: bool = False,
         forward_mode: str = "direct",
@@ -632,7 +692,9 @@ class GatewayDicomServer:
         self.storage_dir = storage_dir
         self.forwarder = forwarder
         self.mwl_client = mwl_client
+        self.orthanc_client = orthanc_client
         self.audit_db = audit_db
+        self.operational_metadata_db = operational_metadata_db
         self.queue_db = queue_db
         self.queue_enabled = queue_enabled
         self.forward_mode = forward_mode
@@ -677,7 +739,9 @@ class GatewayDicomServer:
             self.storage_dir,
             forwarder=self.forwarder,
             mwl_client=self.mwl_client,
+            orthanc_client=self.orthanc_client,
             audit_db=self.audit_db,
+            operational_metadata_db=self.operational_metadata_db,
             queue_db=self.queue_db,
             queue_enabled=self.queue_enabled,
             forward_mode=self.forward_mode,
@@ -715,6 +779,10 @@ def start_dicom_listener(config: GatewayConfig) -> GatewayDicomServer | None:
         config.mwl_api_url,
         config.mwl_api_timeout_seconds,
     )
+    orthanc_client = OrthancHttpClient(
+        config.orthanc_url,
+        config.orthanc_timeout_seconds,
+    )
 
     return GatewayDicomServer(
         bind=config.gateway_dicom_bind,
@@ -723,7 +791,9 @@ def start_dicom_listener(config: GatewayConfig) -> GatewayDicomServer | None:
         storage_dir=config.gateway_dicom_storage_dir,
         forwarder=forwarder,
         mwl_client=mwl_client,
+        orthanc_client=orthanc_client,
         audit_db=config.gateway_audit_db,
+        operational_metadata_db=config.gateway_operational_metadata_db,
         queue_db=config.gateway_queue_db,
         queue_enabled=config.gateway_dicom_queue_enabled,
         forward_mode=config.gateway_dicom_forward_mode,

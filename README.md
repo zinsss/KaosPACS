@@ -46,6 +46,12 @@ Current runtime:
 - Gateway writes a minimal workflow audit DB at
   `/app/data/gateway_audit.sqlite3`, persisted under
   `/srv/docker/kaospacs/gateway`.
+- Gateway writes separate operational modality metadata at
+  `/app/data/gateway_operational_metadata.sqlite3` after a successful DICOM to
+  MWL match. This is KaosPACS-owned display/routing metadata only. It keeps
+  raw DICOM modality, workflow modality, station AET, study type, derived
+  display modality, and AIO routing candidate outside Orthanc. It does not
+  modify DICOM tags and does not write Orthanc metadata.
 - Gateway includes a DICOM forwarding queue foundation at
   `/app/data/gateway_queue.sqlite3`. Direct forwarding is the default
   production path. Queue mode and the retry worker remain available for
@@ -84,6 +90,17 @@ MWL SCP port:    105
 Do not casually rename these values in production configs. Local tests may use
 temporary overrides, but production defaults are part of the compatibility
 contract.
+
+## Metadata Boundaries
+
+- DICOM metadata is what the modality sent and Orthanc stores. Gateway charset
+  normalization may fix approved Korean display text, but this task does not
+  fill blank DICOM `Modality` tags.
+- KaosPACS operational metadata is Gateway-owned SQLite state used for
+  display/routing when workflow evidence is clearer than a blank DICOM tag.
+  It is not written into Orthanc metadata.
+- AIO reports are separate future/adjacent outputs. Operational metadata must
+  not contain AI findings, diagnoses, or report text.
 
 ## Directory Layout
 
@@ -134,6 +151,9 @@ docker compose ps
 - Gateway protected status: `http://127.0.0.1:8060/status`
 - Gateway worklist API: `http://127.0.0.1:8060/worklist`
 - Gateway imaging worklist API: `http://127.0.0.1:8060/imaging/worklist`
+- Gateway operational metadata lookup:
+  - `GET http://127.0.0.1:8060/imaging/operational-metadata/study/<orthancStudyId>`
+  - `GET http://127.0.0.1:8060/imaging/operational-metadata/accession/<accessionNumber>`
 - Gateway normalized order API:
   - `POST http://127.0.0.1:8060/orders/upsert`
   - `POST http://127.0.0.1:8060/orders/cancel`
@@ -177,6 +197,11 @@ docker compose ps
   to an active MWL entry with an accession number, Gateway calls MWL completion.
   Matching uses `AccessionNumber`, then `RequestedProcedureID`, then
   `ScheduledProcedureStepID`; it never uses patient name, DOB, or fuzzy matching.
+  After a successful match, Gateway also saves operational modality metadata in
+  its own SQLite DB. For example, a blank DICOM `Modality` from INNOVISION with
+  workflow `Modality=CR` is displayed/routed as `X-ray` with AIO candidate
+  `cxr`; `BMD` maps to `bmd`, `ECG` maps to `ecg`, and unknown values map to
+  `unsupported`. This does not fill or overwrite the DICOM `Modality` tag.
 
 If `GATEWAY_API_TOKEN` is set, Gateway workflow requests must include:
 

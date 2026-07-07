@@ -49,6 +49,15 @@ fixer applies, queue mode enqueues the normalized forwarding copy. Gateway does
 not perform broad charset guessing, private tag edits, pixel edits, UID edits,
 PatientID edits, AccessionNumber edits, or metadata rewriting.
 
+After a successful MWL match, Gateway stores a separate KaosPACS operational
+modality metadata record in `/app/data/gateway_operational_metadata.sqlite3`.
+This record is for display/routing only. It can preserve that the incoming
+DICOM `Modality` was blank while the workflow metadata says `StationAET`
+`INNOVISION`, `Modality=CR`, and `StudyType=CR`, which maps to display modality
+`X-ray` and AIO candidate `cxr`. `BMD` maps to `bmd`, `ECG` maps to `ecg`, and
+unknown values map to `unsupported`. Gateway does not write this metadata into
+Orthanc and does not fill or overwrite the DICOM `Modality` tag in this step.
+
 Gateway appends non-PHI DICOM inspection summaries to:
 
 ```text

@@ -23,6 +23,7 @@ class StudySummary:
     series_count: int
     instance_count: int
     thumbnail_instance_id: str
+    operational_display_modality: str = ""
 
 
 class OrthancClient:

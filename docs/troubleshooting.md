@@ -103,6 +103,31 @@ duplicate queue rows. The queue uses a partial unique index on `SOPInstanceUID`
 and duplicate enqueue attempts return the existing row. A duplicate of a
 completed row is not reset to pending.
 
+## Blank Or Generic Modality Display
+
+Some devices may send a blank DICOM `Modality` tag. Gateway does not overwrite
+that DICOM tag. After a successful MWL match, Gateway stores separate
+KaosPACS operational modality metadata at:
+
+```text
+/app/data/gateway_operational_metadata.sqlite3
+/srv/docker/kaospacs/gateway/gateway_operational_metadata.sqlite3
+```
+
+Expected mappings include:
+
+- `StationAET=INNOVISION` or workflow `Modality=CR` -> display `X-ray`, AIO
+  candidate `cxr`
+- `StationAET=BMD` or workflow `Modality=BMD` -> display `BMD`, AIO candidate
+  `bmd`
+- `StationAET=ECG` or workflow `Modality=ECG` -> display `ECG`, AIO candidate
+  `ecg`
+- unknown values -> display `Unknown`, AIO candidate `unsupported`
+
+Web can use this operational metadata as a display fallback when Orthanc's raw
+DICOM modality is blank. This does not mean the DICOM tag or Orthanc metadata
+was changed.
+
 ## Orthanc Cannot Connect To PostgreSQL
 
 Check PostgreSQL health and credentials:

@@ -135,6 +135,7 @@ GATEWAY_DICOM_BIND=0.0.0.0
 GATEWAY_DICOM_PORT=104
 GATEWAY_DICOM_STORAGE_DIR=/app/data/dicom-inbox
 GATEWAY_QUEUE_DB=/app/data/gateway_queue.sqlite3
+GATEWAY_OPERATIONAL_METADATA_DB=/app/data/gateway_operational_metadata.sqlite3
 GATEWAY_DICOM_QUEUE_ENABLED=false
 GATEWAY_QUEUE_WORKER_ENABLED=false
 GATEWAY_QUEUE_POLL_INTERVAL_SECONDS=5
@@ -164,6 +165,18 @@ a fix applies, Gateway keeps the original received file and writes a normalized 
 `/app/data/dicom-inbox/forwarded`. It does not perform broad charset guessing,
 private tag edits, pixel edits, UID edits, PatientID edits, AccessionNumber
 edits, or Modality edits.
+
+Gateway operational modality metadata is stored at:
+
+```text
+/app/data/gateway_operational_metadata.sqlite3
+/srv/docker/kaospacs/gateway/gateway_operational_metadata.sqlite3
+```
+
+It is separate from DICOM metadata and Orthanc metadata. Gateway writes it after
+a successful DICOM to MWL match so Web/AIO can route or display blank-modality
+studies using workflow evidence. It must not contain AI findings, diagnostic
+report language, or full payloads.
 
 Inspection reports are JSONL records under the Gateway data mount:
 

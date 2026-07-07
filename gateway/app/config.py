@@ -16,6 +16,9 @@ DEFAULT_MWL_API_TIMEOUT_SECONDS = 3.0
 DEFAULT_ORTHANC_TIMEOUT_SECONDS = 3.0
 DEFAULT_GATEWAY_AUDIT_DB = Path("/app/data/gateway_audit.sqlite3")
 DEFAULT_GATEWAY_QUEUE_DB = Path("/app/data/gateway_queue.sqlite3")
+DEFAULT_GATEWAY_OPERATIONAL_METADATA_DB = Path(
+    "/app/data/gateway_operational_metadata.sqlite3"
+)
 DEFAULT_GATEWAY_DICOM_ENABLED = True
 DEFAULT_GATEWAY_DICOM_AET = "VIEWREX"
 DEFAULT_GATEWAY_DICOM_PORT = 104
@@ -55,6 +58,7 @@ class GatewayConfig:
     orthanc_timeout_seconds: float = DEFAULT_ORTHANC_TIMEOUT_SECONDS
     gateway_audit_db: Path = DEFAULT_GATEWAY_AUDIT_DB
     gateway_queue_db: Path = DEFAULT_GATEWAY_QUEUE_DB
+    gateway_operational_metadata_db: Path = DEFAULT_GATEWAY_OPERATIONAL_METADATA_DB
     gateway_api_token: str | None = None
     gateway_dicom_enabled: bool = DEFAULT_GATEWAY_DICOM_ENABLED
     gateway_dicom_aet: str = DEFAULT_GATEWAY_DICOM_AET
@@ -174,6 +178,12 @@ def load_config(env: Mapping[str, str] | None = None) -> GatewayConfig:
         ),
         gateway_audit_db=Path(source.get("GATEWAY_AUDIT_DB", str(DEFAULT_GATEWAY_AUDIT_DB))),
         gateway_queue_db=Path(source.get("GATEWAY_QUEUE_DB", str(DEFAULT_GATEWAY_QUEUE_DB))),
+        gateway_operational_metadata_db=Path(
+            source.get(
+                "GATEWAY_OPERATIONAL_METADATA_DB",
+                str(DEFAULT_GATEWAY_OPERATIONAL_METADATA_DB),
+            )
+        ),
         gateway_api_token=gateway_api_token,
         gateway_dicom_enabled=_bool_from_env(
             source.get("GATEWAY_DICOM_ENABLED"),
