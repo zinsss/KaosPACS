@@ -826,9 +826,9 @@ main { padding:18px 28px 32px; }
 .paste-actions button:last-child { grid-column:1 / -1; }
 .secondary { background:#fff; color:var(--text); border-color:var(--border); }
 .notice { border:1px solid var(--border); background:#fff; border-radius:8px; padding:14px; margin-bottom:12px; }
-.grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(360px, 1fr)); gap:12px; }
-.study { display:grid; grid-template-columns:132px minmax(0, 1fr); min-height:172px; background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
-.thumb { width:132px; min-height:172px; background:#101820; display:flex; align-items:center; justify-content:center; color:#aab6c4; }
+.grid { display:grid; grid-template-columns:minmax(0, 1fr); gap:12px; }
+.study { display:grid; grid-template-columns:minmax(180px, 240px) minmax(0, 1fr); min-height:180px; background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+.thumb { width:100%; min-height:180px; background:#101820; display:flex; align-items:center; justify-content:center; color:#aab6c4; }
 .thumb img { width:100%; height:100%; object-fit:contain; display:block; }
 .no-thumb { font-size:13px; }
 .study-body { min-width:0; padding:13px 14px 12px; }
