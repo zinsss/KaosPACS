@@ -844,11 +844,13 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
 .aio-disclaimer { margin:0 0 9px; padding:8px; border:1px solid #f2c94c; border-radius:6px; background:#fff8db; color:#4a3412; font:700 12px/1.35 system-ui, -apple-system, Segoe UI, sans-serif; white-space:pre-wrap; }
 .aio-content p { margin:0 0 8px; }
 .aio-fields { display:grid; grid-template-columns:1fr; gap:6px; margin:0 0 9px; }
-.aio-field { display:grid; grid-template-columns:120px minmax(0, 1fr); gap:8px; font-size:13px; }
+.aio-field { display:grid; grid-template-columns:88px minmax(0, 1fr); gap:8px; font-size:13px; }
 .aio-field span { color:var(--muted); }
 .aio-field strong { font-weight:600; overflow-wrap:anywhere; }
-.aio-helper { border:1px solid var(--border); border-radius:8px; background:#fff; padding:9px; margin:0 0 9px; }
-.aio-helper h4 { margin:0 0 7px; font-size:14px; line-height:1.25; letter-spacing:0; }
+.aio-details { border:1px solid var(--border); border-radius:8px; background:#fff; padding:0; margin:0 0 9px; }
+.aio-details summary { cursor:pointer; padding:9px; font-size:13px; font-weight:700; line-height:1.25; }
+.aio-details[open] summary { border-bottom:1px solid #edf1f6; }
+.aio-details-body { padding:9px; }
 .aio-helper-list { display:grid; gap:7px; margin:0; padding:0; list-style:none; }
 .aio-helper-list li { border-top:1px solid #edf1f6; padding-top:7px; }
 .aio-helper-list li:first-child { border-top:0; padding-top:0; }
@@ -949,13 +951,10 @@ AIO_PANEL_SCRIPT = r"""
     const fields = document.createElement("div");
     fields.className = "aio-fields";
     fields.appendChild(field("status", report.status));
-    fields.appendChild(field("ai_domain", report.ai_domain));
-    fields.appendChild(field("model_name", report.model_name || "-"));
-    fields.appendChild(field("model_version", report.model_version || "-"));
+    fields.appendChild(field("domain", report.ai_domain));
+    fields.appendChild(field("model", compactModel(report)));
     fields.appendChild(field("summary", report.summary || "-"));
-    fields.appendChild(field("routing reason", routingReason(report)));
-    fields.appendChild(field("physician_review_status", report.physician_review_status || "-"));
-    fields.appendChild(field("disclaimer_text", report.disclaimer_text || "-"));
+    fields.appendChild(field("review", report.physician_review_status || "-"));
 
     const controls = document.createElement("div");
     controls.className = "aio-controls";
@@ -988,6 +987,8 @@ AIO_PANEL_SCRIPT = r"""
     controls.appendChild(reviewed);
     controls.appendChild(reject);
     content.appendChild(fields);
+    const details = detailsPanel(report);
+    if (details) content.appendChild(details);
     const helper = helperPanel(report);
     if (helper) content.appendChild(helper);
     const scores = scorePanel(report);
@@ -1002,10 +1003,8 @@ AIO_PANEL_SCRIPT = r"""
     });
     if (!helperFindings.length) return null;
 
-    const panel = document.createElement("div");
-    panel.className = "aio-helper";
-    const title = document.createElement("h4");
-    title.textContent = report.ai_domain === "cxr" ? "Chest X-ray helper" : "AI Opinion helper";
+    const panel = collapsiblePanel(report.ai_domain === "cxr" ? "Chest X-ray helper" : "AI Opinion helper");
+    const body = panel.querySelector(".aio-details-body");
     const list = document.createElement("ul");
     list.className = "aio-helper-list";
 
@@ -1021,8 +1020,7 @@ AIO_PANEL_SCRIPT = r"""
       list.appendChild(row);
     });
 
-    panel.appendChild(title);
-    panel.appendChild(list);
+    body.appendChild(list);
     return panel;
   }
 
@@ -1039,10 +1037,8 @@ AIO_PANEL_SCRIPT = r"""
       .slice(0, 8);
     if (!entries.length) return null;
 
-    const panel = document.createElement("div");
-    panel.className = "aio-helper";
-    const title = document.createElement("h4");
-    title.textContent = "TorchXRayVision testing scores";
+    const panel = collapsiblePanel("TorchXRayVision testing scores");
+    const body = panel.querySelector(".aio-details-body");
 
     const meta = document.createElement("p");
     meta.className = "aio-score-meta";
@@ -1065,9 +1061,32 @@ AIO_PANEL_SCRIPT = r"""
       list.appendChild(row);
     });
 
+    body.appendChild(meta);
+    body.appendChild(list);
+    return panel;
+  }
+
+  function detailsPanel(report) {
+    const panel = collapsiblePanel("AIO details");
+    const body = panel.querySelector(".aio-details-body");
+    const fields = document.createElement("div");
+    fields.className = "aio-fields";
+    fields.appendChild(field("routing", routingReason(report)));
+    fields.appendChild(field("model_ver", report.model_version || "-"));
+    fields.appendChild(field("report_id", report.id || "-"));
+    body.appendChild(fields);
+    return panel;
+  }
+
+  function collapsiblePanel(titleText) {
+    const panel = document.createElement("details");
+    panel.className = "aio-details";
+    const title = document.createElement("summary");
+    title.textContent = titleText;
+    const body = document.createElement("div");
+    body.className = "aio-details-body";
     panel.appendChild(title);
-    panel.appendChild(meta);
-    panel.appendChild(list);
+    panel.appendChild(body);
     return panel;
   }
 
@@ -1094,6 +1113,11 @@ AIO_PANEL_SCRIPT = r"""
   function routingReason(report) {
     if (!report || !report.routing_json) return "-";
     return report.routing_json.reason || "-";
+  }
+
+  function compactModel(report) {
+    if (!report || !report.model_name) return "-";
+    return report.model_name.replace(/^torchxrayvision:/, "TXRV ");
   }
 
   panels.forEach(loadPanel);
