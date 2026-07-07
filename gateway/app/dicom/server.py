@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from pydicom import dcmread
 from pydicom.uid import ExplicitVRBigEndian, ExplicitVRLittleEndian, ImplicitVRLittleEndian
 from pynetdicom import AE, evt
 from pynetdicom.presentation import AllStoragePresentationContexts
@@ -419,6 +420,16 @@ def _fix_after_inspection(
             _text(getattr(dataset, "Modality", "")),
             error.__class__.__name__,
         )
+        retry_result = _retry_charset_fix_from_stored_file(
+            original_path,
+            storage_dir,
+            audit_db,
+            charset_fix_enabled=charset_fix_enabled,
+            charset_fix_mode=charset_fix_mode,
+            charset_fix_report_path=charset_fix_report_path,
+        )
+        if retry_result is not None:
+            return retry_result
         result = failure_result(
             dataset,
             enabled=charset_fix_enabled,
@@ -426,6 +437,44 @@ def _fix_after_inspection(
         )
         _record_charset_fix_result(audit_db, charset_fix_report_path, result)
         return dataset, original_path
+
+
+def _retry_charset_fix_from_stored_file(
+    original_path: Path,
+    storage_dir: Path,
+    audit_db: Path | None,
+    *,
+    charset_fix_enabled: bool,
+    charset_fix_mode: str,
+    charset_fix_report_path: Path | None,
+) -> tuple[Any, Path] | None:
+    try:
+        stored_dataset = dcmread(original_path, force=True)
+        result = maybe_fix_charset(
+            stored_dataset,
+            enabled=charset_fix_enabled,
+            mode=charset_fix_mode,
+        )
+        forwarding_path = original_path
+        if result.fix_applied:
+            forwarding_path = store_dataset(result.dataset, storage_dir / "forwarded")
+            LOGGER.info(
+                "DICOM charset fix retry from stored file succeeded sop_instance_uid=%s "
+                "study_instance_uid=%s accession_number=%s modality=%s",
+                result.sop_instance_uid,
+                result.study_instance_uid,
+                result.accession_number,
+                result.modality,
+            )
+        _record_charset_fix_result(audit_db, charset_fix_report_path, result)
+        return result.dataset, forwarding_path
+    except Exception as retry_error:
+        LOGGER.warning(
+            "DICOM charset fix retry from stored file failed path=%s exception=%s",
+            original_path.name,
+            retry_error.__class__.__name__,
+        )
+        return None
 
 
 def _record_charset_fix_result(
