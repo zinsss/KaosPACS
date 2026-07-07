@@ -847,6 +847,13 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
 .aio-field { display:grid; grid-template-columns:120px minmax(0, 1fr); gap:8px; font-size:13px; }
 .aio-field span { color:var(--muted); }
 .aio-field strong { font-weight:600; overflow-wrap:anywhere; }
+.aio-helper { border:1px solid var(--border); border-radius:8px; background:#fff; padding:9px; margin:0 0 9px; }
+.aio-helper h4 { margin:0 0 7px; font-size:14px; line-height:1.25; letter-spacing:0; }
+.aio-helper-list { display:grid; gap:7px; margin:0; padding:0; list-style:none; }
+.aio-helper-list li { border-top:1px solid #edf1f6; padding-top:7px; }
+.aio-helper-list li:first-child { border-top:0; padding-top:0; }
+.aio-helper-list strong { display:block; font-size:13px; margin-bottom:2px; }
+.aio-helper-list span { display:block; color:var(--muted); font-size:12px; line-height:1.35; }
 .aio-controls { display:flex; gap:8px; flex-wrap:wrap; }
 .aio-controls button[disabled] { opacity:.55; cursor:not-allowed; }
 .empty, .error { border:1px solid var(--border); background:#fff; border-radius:8px; padding:18px; }
@@ -976,7 +983,37 @@ AIO_PANEL_SCRIPT = r"""
     controls.appendChild(reviewed);
     controls.appendChild(reject);
     content.appendChild(fields);
+    const helper = helperPanel(report);
+    if (helper) content.appendChild(helper);
     content.appendChild(controls);
+  }
+
+  function helperPanel(report) {
+    const findings = Array.isArray(report.findings_json) ? report.findings_json : [];
+    if (!findings.length) return null;
+
+    const panel = document.createElement("div");
+    panel.className = "aio-helper";
+    const title = document.createElement("h4");
+    title.textContent = report.ai_domain === "cxr" ? "Chest X-ray helper" : "AI Opinion helper";
+    const list = document.createElement("ul");
+    list.className = "aio-helper-list";
+
+    findings.forEach(function (item) {
+      const row = document.createElement("li");
+      const label = document.createElement("strong");
+      label.textContent = item.label || item.section || "Review item";
+      const prompt = document.createElement("span");
+      const status = item.status ? " [" + item.status + "]" : "";
+      prompt.textContent = (item.helper_prompt || "-") + status;
+      row.appendChild(label);
+      row.appendChild(prompt);
+      list.appendChild(row);
+    });
+
+    panel.appendChild(title);
+    panel.appendChild(list);
+    return panel;
   }
 
   function renderUnavailable(panel) {

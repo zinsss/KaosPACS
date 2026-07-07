@@ -138,6 +138,7 @@ def test_render_index_escapes_values() -> None:
     assert 'data-orthanc-study-id="orthanc-id"' in html
     assert "No AI Opinion yet" in html
     assert "Run AI Opinion" in html
+    assert "Chest X-ray helper" in html
     assert "diagnosis" not in html.lower()
     assert "<script>alert(1)</script>" not in html
 
