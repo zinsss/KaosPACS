@@ -20,7 +20,7 @@ from pydicom.uid import EncapsulatedPDFStorage, SecondaryCaptureImageStorage
 from app.config import load_config
 from app.dicom_upload import create_upload_dicom
 from app.main import AIO_DISCLAIMER, create_handler, make_weasis_url, render_index
-from app.orthanc import StudySummary
+from app.orthanc import OrthancClient, StudySummary
 
 
 def test_config_defaults(monkeypatch) -> None:
@@ -326,6 +326,114 @@ def test_patient_context_page_contains_upload_without_manual_patient_fields() ->
     assert 'name="patient_name"' not in html
     assert 'name="dob"' not in html
     assert 'name="sex"' not in html
+
+
+def test_patient_context_fills_missing_demographics_from_studies() -> None:
+    config = Mock()
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    study = StudySummary(
+        orthanc_id="orthanc-id",
+        study_instance_uid="1.2.3",
+        accession_number="ACC",
+        patient_id="9426",
+        patient_name="이진성",
+        patient_birth_date="19700101",
+        patient_sex="M",
+        study_date="20260708",
+        study_time="",
+        study_description="흉부",
+        modalities=["CR"],
+        series_count=1,
+        instance_count=1,
+        thumbnail_instance_id="inst",
+    )
+
+    html = render_index(
+        config,
+        [study],
+        query="",
+        patient_id="9426",
+        patient_name="",
+        patient_birth_date="",
+        patient_sex="",
+        upload_message="",
+        error="",
+    )
+
+    assert "이진성" in html
+    assert "19700101" in html
+    assert "M" in html
+    assert "m_patname=%EC%9D%B4%EC%A7%84%EC%84%B1" in html
+    assert "m_dob=19700101" in html
+    assert "m_sex=M" in html
+
+
+def test_study_card_shows_dob_and_sex() -> None:
+    config = Mock()
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    study = StudySummary(
+        orthanc_id="orthanc-id",
+        study_instance_uid="1.2.3",
+        accession_number="ACC",
+        patient_id="9426",
+        patient_name="이진성",
+        patient_birth_date="19700101",
+        patient_sex="M",
+        study_date="20260708",
+        study_time="",
+        study_description="흉부",
+        modalities=["CR"],
+        series_count=1,
+        instance_count=1,
+        thumbnail_instance_id="inst",
+    )
+
+    html = render_index(
+        config,
+        [study],
+        query="",
+        patient_id="9426",
+        upload_message="",
+        error="",
+    )
+
+    assert "<dt>DOB</dt><dd>19700101</dd>" in html
+    assert "<dt>Sex</dt><dd>M</dd>" in html
+
+
+def test_orthanc_summary_falls_back_to_instance_patient_tags() -> None:
+    client = OrthancClient("http://orthanc")
+    payloads = {
+        "/series/series-1": {
+            "MainDicomTags": {"Modality": "CR"},
+            "Instances": ["instance-1"],
+        },
+        "/instances/instance-1/simplified-tags": {
+            "PatientID": "9426",
+            "PatientName": "이진성",
+            "PatientBirthDate": "19700101",
+            "PatientSex": "M",
+        },
+    }
+    client._json = Mock(side_effect=lambda path, params=None: payloads[path])
+    study = {
+        "ID": "study-1",
+        "MainDicomTags": {
+            "StudyInstanceUID": "1.2.3",
+            "AccessionNumber": "ACC",
+        },
+        "PatientMainDicomTags": {"PatientID": "9426"},
+        "Series": ["series-1"],
+    }
+
+    summary = client._summary(study)
+
+    assert summary.patient_id == "9426"
+    assert summary.patient_name == "이진성"
+    assert summary.patient_birth_date == "19700101"
+    assert summary.patient_sex == "M"
 
 
 def test_web_upload_accepts_single_file_field() -> None:

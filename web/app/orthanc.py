@@ -120,14 +120,17 @@ class OrthancClient:
             if not thumbnail_instance_id and instances:
                 thumbnail_instance_id = instances[0]
 
+        instance_tags = self._instance_tags(thumbnail_instance_id) if thumbnail_instance_id else {}
         return StudySummary(
             orthanc_id=study_id,
             study_instance_uid=str(study_tags.get("StudyInstanceUID", "")),
             accession_number=str(study_tags.get("AccessionNumber", "")),
-            patient_id=str(patient_tags.get("PatientID", "")),
-            patient_name=str(patient_tags.get("PatientName", "")),
-            patient_birth_date=str(patient_tags.get("PatientBirthDate", "")),
-            patient_sex=str(patient_tags.get("PatientSex", "")),
+            patient_id=str(patient_tags.get("PatientID") or instance_tags.get("PatientID") or ""),
+            patient_name=str(patient_tags.get("PatientName") or instance_tags.get("PatientName") or ""),
+            patient_birth_date=str(
+                patient_tags.get("PatientBirthDate") or instance_tags.get("PatientBirthDate") or ""
+            ),
+            patient_sex=str(patient_tags.get("PatientSex") or instance_tags.get("PatientSex") or ""),
             study_date=str(study_tags.get("StudyDate", "")),
             study_time=str(study_tags.get("StudyTime", "")),
             study_description=str(study_tags.get("StudyDescription", "")),
@@ -144,6 +147,13 @@ class OrthancClient:
 
     def _series_payload(self, series_id: str) -> dict[str, Any]:
         return self._json(f"/series/{series_id}")
+
+    def _instance_tags(self, instance_id: str) -> dict[str, Any]:
+        try:
+            payload = self._json(f"/instances/{instance_id}/simplified-tags")
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
 
     def _json(self, path: str, params: dict[str, str] | None = None) -> Any:
         query = f"?{urlencode(params)}" if params else ""

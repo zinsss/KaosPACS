@@ -30,6 +30,13 @@ REQUIRED_ORDER_FIELDS = (
     "ScheduledAt",
     "Description",
 )
+TERMINAL_STATE_FIELDS = (
+    "CompletedAt",
+    "ExpiredAt",
+    "ExpireReason",
+    "CancelledAt",
+    "CancelReason",
+)
 
 
 def text(value: Any) -> str:
@@ -131,7 +138,7 @@ def upsert_worklist_entry(worklist_payload: Any, entry: dict[str, Any]) -> dict[
             isinstance(existing_entry, dict)
             and text(existing_entry.get("AccessionNumber")) == accession_number
         ):
-            updated_entries.append(entry)
+            updated_entries.append(merge_upsert_entry(existing_entry, entry))
             replaced = True
         else:
             updated_entries.append(existing_entry)
@@ -140,6 +147,28 @@ def upsert_worklist_entry(worklist_payload: Any, entry: dict[str, Any]) -> dict[
         updated_entries.append(entry)
 
     return {"entries": updated_entries}
+
+
+def merge_upsert_entry(existing_entry: dict[str, Any], new_entry: dict[str, Any]) -> dict[str, Any]:
+    if not is_terminal_worklist_entry(existing_entry):
+        return new_entry
+
+    merged = dict(new_entry)
+    merged["Active"] = False
+    for field in TERMINAL_STATE_FIELDS:
+        value = existing_entry.get(field)
+        if text(value):
+            merged[field] = value
+        elif field in existing_entry and field not in merged:
+            merged[field] = existing_entry[field]
+    return merged
+
+
+def is_terminal_worklist_entry(entry: dict[str, Any]) -> bool:
+    return any(
+        text(entry.get(field))
+        for field in ("CompletedAt", "ExpiredAt", "CancelledAt")
+    )
 
 
 def handle_order_post(handler: BaseHTTPRequestHandler, path: str) -> None:

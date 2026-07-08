@@ -99,6 +99,55 @@ def test_upsert_worklist_entry_replaces_matching_accession() -> None:
     }
 
 
+def test_upsert_worklist_entry_preserves_completed_terminal_state() -> None:
+    replacement = {
+        "AccessionNumber": "A1",
+        "PatientID": "new",
+        "PatientName": "New Name",
+        "Active": True,
+    }
+    result = upsert_worklist_entry(
+        {
+            "entries": [
+                {
+                    "AccessionNumber": "A1",
+                    "PatientID": "old",
+                    "Active": False,
+                    "CompletedAt": "2026-07-08T09:56:11+09:00",
+                }
+            ]
+        },
+        replacement,
+    )
+
+    assert result["entries"][0]["PatientID"] == "new"
+    assert result["entries"][0]["PatientName"] == "New Name"
+    assert result["entries"][0]["Active"] is False
+    assert result["entries"][0]["CompletedAt"] == "2026-07-08T09:56:11+09:00"
+
+
+def test_upsert_worklist_entry_preserves_cancelled_terminal_state() -> None:
+    replacement = {"AccessionNumber": "A1", "PatientID": "new", "Active": True}
+    result = upsert_worklist_entry(
+        {
+            "entries": [
+                {
+                    "AccessionNumber": "A1",
+                    "PatientID": "old",
+                    "Active": False,
+                    "CancelledAt": "2026-07-08T10:00:00+09:00",
+                    "CancelReason": "cancelled_in_source",
+                }
+            ]
+        },
+        replacement,
+    )
+
+    assert result["entries"][0]["Active"] is False
+    assert result["entries"][0]["CancelledAt"] == "2026-07-08T10:00:00+09:00"
+    assert result["entries"][0]["CancelReason"] == "cancelled_in_source"
+
+
 def test_upsert_worklist_entry_appends_when_not_found() -> None:
     new_entry = {"AccessionNumber": "A2", "PatientID": "new"}
     result = upsert_worklist_entry(

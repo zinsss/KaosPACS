@@ -1433,6 +1433,57 @@ def test_order_upsert_replaces_matching_accession(tmp_path) -> None:
         stop_server(mwl_server, mwl_thread)
 
 
+def test_order_upsert_does_not_reactivate_completed_entry(tmp_path) -> None:
+    audit_db = tmp_path / "gateway_audit.sqlite3"
+    mwl_server, mwl_thread = setup_recording_mwl(
+        {
+            "entries": [
+                {
+                    "AccessionNumber": "A1",
+                    "PatientID": "old",
+                    "PatientName": "OLD^NAME",
+                    "Modality": "CR",
+                    "ScheduledStationAETitle": "INNOVISION",
+                    "ScheduledProcedureStepDescription": "CHEST",
+                    "Active": False,
+                    "CompletedAt": "2026-07-08T09:56:11+09:00",
+                }
+            ]
+        }
+    )
+    mwl_host, mwl_port = mwl_server.server_address
+    gateway_url, gateway_server, gateway_thread = gateway_base_url(
+        f"http://{mwl_host}:{mwl_port}",
+        audit_db,
+    )
+
+    try:
+        status, _body = request_json(
+            "POST",
+            f"{gateway_url}/orders/upsert",
+            valid_order_payload(
+                AccessionNumber="A1",
+                PatientName="NEW^NAME",
+                ChartNo="new-chart",
+                Modality="CR",
+                StationAET="INNOVISION",
+                StudyType="CR",
+                Description="CHEST",
+            ),
+        )
+
+        assert status == 200
+        entry = RecordingMwlHandler.calls[1]["payload"]["entries"][0]
+        assert entry["AccessionNumber"] == "A1"
+        assert entry["PatientID"] == "new-chart"
+        assert entry["PatientName"] == "NEW^NAME"
+        assert entry["Active"] is False
+        assert entry["CompletedAt"] == "2026-07-08T09:56:11+09:00"
+    finally:
+        stop_server(gateway_server, gateway_thread)
+        stop_server(mwl_server, mwl_thread)
+
+
 def test_order_upsert_invalid_request_does_not_call_mwl(tmp_path) -> None:
     audit_db = tmp_path / "gateway_audit.sqlite3"
     mwl_server, mwl_thread = setup_recording_mwl()

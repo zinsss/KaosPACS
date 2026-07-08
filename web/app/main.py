@@ -458,34 +458,31 @@ def render_index(
     upload_message: str = "",
     error: str,
 ) -> str:
+    patient = _patient_context_from_studies(
+        PatientContext(
+            patient_id=patient_id,
+            patient_name=patient_name,
+            patient_birth_date=patient_birth_date,
+            patient_sex=patient_sex,
+        ),
+        studies,
+    )
     rows = "\n".join(_study_card(config, study) for study in studies)
-    if not rows and not error and patient_id:
+    if not rows and not error and patient.patient_id:
         rows = (
             '<div class="empty">No Orthanc studies were found for this patient.</div>'
         )
     elif not rows and not error:
         rows = '<div class="empty">No studies found in Orthanc.</div>'
     error_html = f'<div class="error">{html.escape(error)}</div>' if error else ""
-    patient_html = _patient_context_html(
-        PatientContext(
-            patient_id=patient_id,
-            patient_name=patient_name,
-            patient_birth_date=patient_birth_date,
-            patient_sex=patient_sex,
-        )
-    )
+    patient_html = _patient_context_html(patient)
     upload_html = (
         _upload_form(
-            PatientContext(
-                patient_id=patient_id,
-                patient_name=patient_name,
-                patient_birth_date=patient_birth_date,
-                patient_sex=patient_sex,
-            ),
+            patient,
             query,
             upload_message,
         )
-        if patient_id
+        if patient.patient_id
         else '<div class="notice">No patient/chart number was provided in m_patid.</div>'
     )
     return f"""<!doctype html>
@@ -542,6 +539,8 @@ def _study_card(config: Config, study: StudySummary) -> str:
     <dl>
       <div><dt>Patient</dt><dd>{html.escape(study.patient_name or "-")}</dd></div>
       <div><dt>ID</dt><dd>{html.escape(study.patient_id or "-")}</dd></div>
+      <div><dt>DOB</dt><dd>{html.escape(study.patient_birth_date or "-")}</dd></div>
+      <div><dt>Sex</dt><dd>{html.escape(study.patient_sex or "-")}</dd></div>
       <div><dt>Accession</dt><dd>{html.escape(study.accession_number or "-")}</dd></div>
       <div><dt>Series</dt><dd>{study.series_count} / {study.instance_count} images</dd></div>
     </dl>
@@ -678,6 +677,27 @@ def _patient_context_from_params(params: dict[str, list[str]]) -> PatientContext
         ),
         patient_sex=_first_param(params, ("m_sex", "patient_sex", "PatientSex", "sex")),
     )
+
+
+def _patient_context_from_studies(
+    patient: PatientContext,
+    studies: list[StudySummary],
+) -> PatientContext:
+    return PatientContext(
+        patient_id=patient.patient_id or _first_study_value(studies, "patient_id"),
+        patient_name=patient.patient_name or _first_study_value(studies, "patient_name"),
+        patient_birth_date=patient.patient_birth_date
+        or _first_study_value(studies, "patient_birth_date"),
+        patient_sex=patient.patient_sex or _first_study_value(studies, "patient_sex"),
+    )
+
+
+def _first_study_value(studies: list[StudySummary], field: str) -> str:
+    for study in studies:
+        value = str(getattr(study, field, "") or "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _first_param(params: dict[str, list[str]], keys: tuple[str, ...]) -> str:
