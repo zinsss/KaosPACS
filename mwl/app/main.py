@@ -47,7 +47,6 @@ def _text(value: Any) -> str:
 def _entry_summary(entry: dict[str, Any]) -> str:
     return (
         f"accession={_text(entry.get('AccessionNumber'))!r} "
-        f"chart_no={_text(entry.get('PatientID'))!r} "
         f"modality={_text(entry.get('Modality'))!r} "
         f"station_aet={_text(entry.get('ScheduledStationAETitle'))!r}"
     )
@@ -56,7 +55,6 @@ def _entry_summary(entry: dict[str, Any]) -> str:
 def _item_summary(dataset: Dataset) -> str:
     step = dataset.ScheduledProcedureStepSequence[0]
     return (
-        f"patient_id={_dataset_value(dataset, 'PatientID')!r} "
         f"accession={_dataset_value(dataset, 'AccessionNumber')!r} "
         f"modality={_dataset_value(step, 'Modality')!r} "
         f"station_aet={_dataset_value(step, 'ScheduledStationAETitle')!r}"
@@ -248,11 +246,18 @@ def init_audit_db(path: Path) -> None:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 completed_at TEXT,
+                complete_reason TEXT,
                 cancelled_at TEXT,
                 cancel_reason TEXT
             )
             """
         )
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(mwl_audit)")
+        }
+        if "complete_reason" not in columns:
+            connection.execute("ALTER TABLE mwl_audit ADD COLUMN complete_reason TEXT")
 
 
 def _audit_values(entry: dict[str, Any], now: str) -> dict[str, str]:
@@ -271,6 +276,7 @@ def _audit_values(entry: dict[str, Any], now: str) -> dict[str, str]:
         "status": status,
         "updated_at": now,
         "completed_at": _text(entry.get("CompletedAt")),
+        "complete_reason": _text(entry.get("CompleteReason")),
         "cancelled_at": _text(entry.get("CancelledAt")),
         "cancel_reason": _text(entry.get("CancelReason")),
     }
@@ -301,9 +307,10 @@ def upsert_audit_entries(path: Path, entries: list[dict[str, Any]]) -> None:
                     created_at,
                     updated_at,
                     completed_at,
+                    complete_reason,
                     cancelled_at,
                     cancel_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(accession_number) DO UPDATE SET
                     chart_no=excluded.chart_no,
                     study_type=excluded.study_type,
@@ -313,6 +320,7 @@ def upsert_audit_entries(path: Path, entries: list[dict[str, Any]]) -> None:
                     status=excluded.status,
                     updated_at=excluded.updated_at,
                     completed_at=excluded.completed_at,
+                    complete_reason=excluded.complete_reason,
                     cancelled_at=excluded.cancelled_at,
                     cancel_reason=excluded.cancel_reason
                 """,
@@ -327,6 +335,7 @@ def upsert_audit_entries(path: Path, entries: list[dict[str, Any]]) -> None:
                     now,
                     values["updated_at"],
                     values["completed_at"],
+                    values["complete_reason"],
                     values["cancelled_at"],
                     values["cancel_reason"],
                 ),
@@ -502,6 +511,9 @@ def apply_worklist_state(
     accession_number: str,
     state: str,
     cancel_reason: str = "",
+    complete_reason: str = "",
+    orthanc_study_instance_uid: str = "",
+    note: str = "",
 ) -> tuple[dict[str, Any], int]:
     payload = read_worklist_payload(path)
     errors = validate_worklist_payload(payload)
@@ -517,6 +529,12 @@ def apply_worklist_state(
         entry["Active"] = False
         if state == "complete":
             entry["CompletedAt"] = timestamp
+            if complete_reason:
+                entry["CompleteReason"] = complete_reason
+            if orthanc_study_instance_uid:
+                entry["OrthancStudyInstanceUID"] = orthanc_study_instance_uid
+            if note:
+                entry["Note"] = note
         elif state == "cancel":
             entry["CancelledAt"] = timestamp
             if cancel_reason:
@@ -662,6 +680,9 @@ def make_api_handler(worklist_path: Path, audit_db_path: Path):
                     accession_number=accession_number,
                     state=state,
                     cancel_reason=_text(request.get("CancelReason")),
+                    complete_reason=_text(request.get("CompleteReason")),
+                    orthanc_study_instance_uid=_text(request.get("OrthancStudyInstanceUID")),
+                    note=_text(request.get("Note")),
                 )
                 if updated:
                     upsert_audit_entries(

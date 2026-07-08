@@ -80,3 +80,51 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+
+  gateway:
+    build:
+      context: ./gateway
+    container_name: kaospacs-gateway
+    restart: unless-stopped
+    depends_on:
+      mwl:
+        condition: service_healthy
+    ports:
+      - "${GATEWAY_PORT:-8060}:8060"
+    environment:
+      TZ: ${TZ:-Asia/Seoul}
+      GATEWAY_HOST: "0.0.0.0"
+      GATEWAY_PORT: "8060"
+      GATEWAY_API_TOKEN: ${GATEWAY_API_TOKEN:-change_me_gateway_token}
+      MWL_API_BASE_URL: "http://mwl:8055"
+      GATEWAY_TIMEOUT_SECONDS: "5"
+    volumes:
+      - ${MWL_DATA:-/srv/docker/kaospacs/mwl}:/app/data:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8060/health', timeout=2).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  web:
+    build:
+      context: ./web
+    container_name: kaospacs-web
+    restart: unless-stopped
+    depends_on:
+      gateway:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-8070}:8070"
+    environment:
+      TZ: ${TZ:-Asia/Seoul}
+      WEB_HOST: "0.0.0.0"
+      WEB_PORT: "8070"
+      GATEWAY_BASE_URL: "http://gateway:8060"
+      GATEWAY_API_TOKEN: ${GATEWAY_API_TOKEN:-change_me_gateway_token}
+      GATEWAY_TIMEOUT_SECONDS: "5"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8070/health', timeout=2).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12

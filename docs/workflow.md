@@ -50,11 +50,23 @@ POST /worklist/complete
 POST /worklist/cancel
 ```
 
+Gateway and Web expose the operator-facing imaging lifecycle view:
+
+```text
+GET  /imaging/worklist
+POST /admin/worklist/complete
+```
+
 The API is bound to `127.0.0.1:8055` by default and should not be exposed
 directly to external systems.
 
 Completed or cancelled entries are kept in JSON and marked `Active=false`; they
 are not physically deleted and are not returned in DICOM MWL C-FIND responses.
+
+Manual `Mark Complete` is a KaosPACS admin correction only. Use it when the
+operator has verified the study already exists in Orthanc and the imaging
+worklist entry remained active because of a missed match, delayed
+reconciliation, or accession mismatch.
 
 The MWL audit database is:
 

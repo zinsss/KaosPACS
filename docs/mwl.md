@@ -138,6 +138,8 @@ curl -X POST http://127.0.0.1:8055/worklist/cancel \
 ```
 
 `complete` sets `Active=false` and `CompletedAt` to the current ISO datetime.
+It may also carry `CompleteReason`, `OrthancStudyInstanceUID`, and `Note` from
+the Gateway admin correction flow.
 `cancel` sets `Active=false`, `CancelledAt` to the current ISO datetime, and
 optionally stores `CancelReason`. These actions do not physically delete
 entries.
@@ -187,6 +189,10 @@ from the worklist JSON is treated as the chart number for audit purposes.
 
 `PUT /worklist` upserts audit rows by `AccessionNumber`. Complete and cancel
 actions update both the JSON worklist entry and the matching audit row.
+
+Manual Mark Complete is an exceptional KaosPACS admin correction. Normal
+completion remains the imaging-side completion path. KaosEghis-PACS must not
+mark worklist completion.
 
 Run it with:
 

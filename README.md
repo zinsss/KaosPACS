@@ -4,8 +4,12 @@ KaosPACS is a Docker-based PACS replacement stack for an expired proprietary
 ViewRex PACS system used with eGHIS EMR and legacy imaging devices.
 
 The current scope runs Orthanc with PostgreSQL metadata/index storage while
-keeping DICOM binaries on host file storage. It also includes a KaosPACS MWL
-service with a localhost-only update API and a minimal SQLite audit database.
+keeping DICOM binaries on host file storage. It also includes:
+
+- a KaosPACS MWL service with a localhost-only update API
+- a minimal SQLite audit database
+- a Gateway service for imaging worklist views and controlled admin correction
+- a Web service for operator imaging worklist review
 
 KaosPACS remains EMR-agnostic. eGHIS integration, polling, routing, web launch,
 Weasis launch coordination, charset evaluation, and ViewRex database migration
@@ -69,6 +73,8 @@ docker compose ps
 - DICOM SCP: `192.168.0.200:104`, AET `VIEWREX`
 - MWL SCP: `192.168.0.200:105`, AET `VIEWREX_WL`
 - MWL local API: `http://127.0.0.1:8055/health`
+- Gateway: `http://192.168.0.200:8060/health`
+- Web: `http://192.168.0.200:8070/imaging/worklist`
 
 Port `104` is a privileged low port. Binding it may require a rootful Docker
 daemon, host networking, or adjusted capabilities depending on the environment.
@@ -81,3 +87,15 @@ active runtime worklist at `/app/data/worklist.json`.
 
 `/app/data` persists on the host at `/srv/docker/kaospacs/mwl` and also stores
 the minimal audit database at `/app/data/mwl_audit.sqlite3`.
+
+## Admin correction
+
+KaosPACS owns imaging completion. If a study is truly present in Orthanc but a
+worklist entry remains active because of a missed match or operational gap, the
+operator correction path is KaosPACS-side:
+
+- Gateway `POST /admin/worklist/complete`
+- Web `Mark Complete`
+
+This is an exceptional admin correction only. KaosEghis-PACS must not mark
+completion itself.

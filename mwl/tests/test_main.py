@@ -315,7 +315,12 @@ def test_api_complete_marks_entry_inactive_without_deleting(tmp_path):
             server,
             "POST",
             "/worklist/complete",
-            {"AccessionNumber": "VALID001"},
+            {
+                "AccessionNumber": "VALID001",
+                "CompleteReason": "operator_verified_completed",
+                "OrthancStudyInstanceUID": "1.2.3.4",
+                "Note": "verified in orthanc",
+            },
         )
     finally:
         server.shutdown()
@@ -327,10 +332,14 @@ def test_api_complete_marks_entry_inactive_without_deleting(tmp_path):
     assert entry["Active"] is False
     assert entry["PatientName"] == "TEST^VALID"
     assert "CompletedAt" in entry
+    assert entry["CompleteReason"] == "operator_verified_completed"
+    assert entry["OrthancStudyInstanceUID"] == "1.2.3.4"
+    assert entry["Note"] == "verified in orthanc"
     assert load_worklist_datasets(path, now=NOW) == []
     rows = audit_rows(audit_db)
     assert rows[0]["status"] == "completed"
     assert rows[0]["completed_at"]
+    assert rows[0]["complete_reason"] == "operator_verified_completed"
 
 
 def test_api_cancel_marks_entry_inactive_with_reason(tmp_path):
@@ -379,3 +388,4 @@ def test_audit_db_does_not_contain_demographic_columns(tmp_path):
     assert "patient_name" not in columns
     assert "patient_birth_date" not in columns
     assert "patient_sex" not in columns
+    assert "complete_reason" in columns

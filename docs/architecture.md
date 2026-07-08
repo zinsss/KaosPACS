@@ -24,6 +24,8 @@ The current implementation contains:
 - Host-mounted file storage for DICOM binaries.
 - KaosPACS MWL SCP at `VIEWREX_WL:105`.
 - MWL local HTTP API bound to `127.0.0.1:8055`.
+- Gateway imaging worklist API at `:8060`.
+- Web imaging worklist UI at `:8070`.
 - Active MWL JSON state at `/app/data/worklist.json`, initialized from the
   read-only seed `/app/config/worklist.json`.
 - Minimal MWL SQLite audit database at `/app/data/mwl_audit.sqlite3`.
@@ -41,6 +43,11 @@ KaosPACS MWL API / JSON
 The MWL API is local-only by default and manages explicit worklist state:
 active, completed, cancelled, and expired. It does not infer workflow from
 Orthanc studies.
+
+Gateway exposes an operator-facing imaging worklist plus a protected admin
+completion correction endpoint for rare stuck-active cases. Manual completion
+remains KaosPACS-owned imaging authority, not KaosEghis-PACS business
+authority.
 
 ## Future Flow
 
@@ -62,7 +69,7 @@ infrastructure. It should stay boring.
 Business logic belongs outside Orthanc:
 
 - Gateway / KaosEghis-PACS: eGHIS integration, launch coordination, and future
-  workflow APIs.
+  workflow APIs. Gateway admin correction may mark imaging completion only.
 - MWL: modality worklist responses, local worklist state, and minimal audit
   tracking.
 - Web: browser launch, viewer routing, and EMR-facing PACS screens.
