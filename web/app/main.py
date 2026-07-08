@@ -930,23 +930,19 @@ AIO_PANEL_SCRIPT = r"""
     const sections = document.createElement("div");
     sections.className = "aio-sections";
 
-    const opinion = fieldsBlock([
+    const details = fieldsBlock([
       ["status", report.status],
       ["ai_domain", report.ai_domain],
-      ["summary", report.summary || "-"]
-    ]);
-    sections.appendChild(section("Opinion", opinion, true));
-
-    const findings = findingsBlock(report);
-    sections.appendChild(section("Findings", findings, false));
-
-    const routing = fieldsBlock([
+      ["summary", report.summary || "-"],
       ["model_name", report.model_name || "-"],
       ["model_version", report.model_version || "-"],
       ["routing reason", routingReason(report)],
       ["review", report.physician_review_status || "-"]
     ]);
-    sections.appendChild(section("Routing / Review", routing, false));
+    sections.appendChild(section("Details", details, true));
+
+    const findings = findingsBlock(report);
+    sections.appendChild(section("Findings", findings, false));
 
     const controls = document.createElement("div");
     controls.className = "aio-controls";

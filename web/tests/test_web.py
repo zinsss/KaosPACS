@@ -141,12 +141,12 @@ def test_study_grid_uses_full_width_rows() -> None:
     assert ".study { width:100%; display:grid; grid-template-columns:220px minmax(0, 1fr);" in CSS
 
 
-def test_aio_report_renders_three_expandable_sections() -> None:
+def test_aio_report_renders_details_and_findings_sections() -> None:
     assert 'sections.className = "aio-sections"' in AIO_PANEL_SCRIPT
     assert ".aio-sections { display:grid; grid-template-columns:minmax(0, 1fr);" in CSS
-    assert 'section("Opinion"' in AIO_PANEL_SCRIPT
+    assert 'section("Details"' in AIO_PANEL_SCRIPT
     assert 'section("Findings"' in AIO_PANEL_SCRIPT
-    assert 'section("Routing / Review"' in AIO_PANEL_SCRIPT
+    assert 'section("Routing / Review"' not in AIO_PANEL_SCRIPT
     assert "document.createElement(\"details\")" in AIO_PANEL_SCRIPT
     assert "scoresBlock(item)" in AIO_PANEL_SCRIPT
     assert 'list.className = "aio-score-list"' in AIO_PANEL_SCRIPT
