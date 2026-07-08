@@ -19,7 +19,14 @@ from pydicom.uid import EncapsulatedPDFStorage, SecondaryCaptureImageStorage
 
 from app.config import load_config
 from app.dicom_upload import create_upload_dicom
-from app.main import AIO_DISCLAIMER, create_handler, make_weasis_url, render_index
+from app.main import (
+    AIO_DISCLAIMER,
+    AIO_PANEL_SCRIPT,
+    CSS,
+    create_handler,
+    make_weasis_url,
+    render_index,
+)
 from app.orthanc import OrthancClient, StudySummary
 
 
@@ -127,6 +134,19 @@ def test_render_index_escapes_values() -> None:
     assert "Run AI Opinion" in html
     assert "diagnosis" not in html.lower()
     assert "<script>alert(1)</script>" not in html
+
+
+def test_study_grid_uses_full_width_rows() -> None:
+    assert ".grid { display:grid; grid-template-columns:minmax(0, 1fr);" in CSS
+    assert ".study { width:100%; display:grid; grid-template-columns:220px minmax(0, 1fr);" in CSS
+
+
+def test_aio_report_renders_three_expandable_sections() -> None:
+    assert 'sections.className = "aio-sections"' in AIO_PANEL_SCRIPT
+    assert 'section("Opinion"' in AIO_PANEL_SCRIPT
+    assert 'section("Findings"' in AIO_PANEL_SCRIPT
+    assert 'section("Routing / Review"' in AIO_PANEL_SCRIPT
+    assert "document.createElement(\"details\")" in AIO_PANEL_SCRIPT
 
 
 def test_aio_proxy_endpoints_call_aio_client() -> None:

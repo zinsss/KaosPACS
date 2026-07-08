@@ -806,9 +806,9 @@ main { padding:18px 28px 32px; }
 .paste-actions button:last-child { grid-column:1 / -1; }
 .secondary { background:#fff; color:var(--text); border-color:var(--border); }
 .notice { border:1px solid var(--border); background:#fff; border-radius:8px; padding:14px; margin-bottom:12px; }
-.grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(360px, 1fr)); gap:12px; }
-.study { display:grid; grid-template-columns:132px minmax(0, 1fr); min-height:172px; background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
-.thumb { width:132px; min-height:172px; background:#101820; display:flex; align-items:center; justify-content:center; color:#aab6c4; }
+.grid { display:grid; grid-template-columns:minmax(0, 1fr); gap:12px; }
+.study { width:100%; display:grid; grid-template-columns:220px minmax(0, 1fr); min-height:220px; background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+.thumb { width:220px; min-height:220px; background:#101820; display:flex; align-items:center; justify-content:center; color:#aab6c4; }
 .thumb img { width:100%; height:100%; object-fit:contain; display:block; }
 .no-thumb { font-size:13px; }
 .study-body { min-width:0; padding:13px 14px 12px; }
@@ -823,10 +823,19 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
 .aio-panel h3 { margin:0 0 8px; font-size:15px; line-height:1.25; letter-spacing:0; }
 .aio-disclaimer { margin:0 0 9px; padding:8px; border:1px solid #f2c94c; border-radius:6px; background:#fff8db; color:#4a3412; font:700 12px/1.35 system-ui, -apple-system, Segoe UI, sans-serif; white-space:pre-wrap; }
 .aio-content p { margin:0 0 8px; }
-.aio-fields { display:grid; grid-template-columns:1fr; gap:6px; margin:0 0 9px; }
+.aio-sections { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px; align-items:start; margin-bottom:9px; }
+.aio-section { border:1px solid var(--border); border-radius:7px; background:#fff; overflow:hidden; }
+.aio-section summary { cursor:pointer; padding:8px 10px; font-weight:700; color:#152033; background:#eef4ff; border-bottom:1px solid var(--border); }
+.aio-section:not([open]) summary { border-bottom:0; }
+.aio-section-body { padding:9px 10px; }
+.aio-fields { display:grid; grid-template-columns:1fr; gap:6px; margin:0; }
 .aio-field { display:grid; grid-template-columns:120px minmax(0, 1fr); gap:8px; font-size:13px; }
 .aio-field span { color:var(--muted); }
 .aio-field strong { font-weight:600; overflow-wrap:anywhere; }
+.aio-finding { border-top:1px solid var(--border); padding-top:7px; margin-top:7px; font-size:13px; }
+.aio-finding:first-child { border-top:0; padding-top:0; margin-top:0; }
+.aio-finding strong { display:block; margin-bottom:3px; overflow-wrap:anywhere; }
+.aio-finding span { color:var(--muted); overflow-wrap:anywhere; }
 .aio-controls { display:flex; gap:8px; flex-wrap:wrap; }
 .aio-controls button[disabled] { opacity:.55; cursor:not-allowed; }
 .empty, .error { border:1px solid var(--border); background:#fff; border-radius:8px; padding:18px; }
@@ -840,6 +849,7 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
   .thumb { width:108px; }
   dl { grid-template-columns:1fr; }
   .patient-context { grid-template-columns:1fr 1fr; }
+  .aio-sections { grid-template-columns:1fr; }
 }
 """
 
@@ -914,16 +924,26 @@ AIO_PANEL_SCRIPT = r"""
 
     const content = panel.querySelector(".aio-content");
     content.textContent = "";
-    const fields = document.createElement("div");
-    fields.className = "aio-fields";
-    fields.appendChild(field("status", report.status));
-    fields.appendChild(field("ai_domain", report.ai_domain));
-    fields.appendChild(field("model_name", report.model_name || "-"));
-    fields.appendChild(field("model_version", report.model_version || "-"));
-    fields.appendChild(field("summary", report.summary || "-"));
-    fields.appendChild(field("routing reason", routingReason(report)));
-    fields.appendChild(field("physician_review_status", report.physician_review_status || "-"));
-    fields.appendChild(field("disclaimer_text", report.disclaimer_text || "-"));
+    const sections = document.createElement("div");
+    sections.className = "aio-sections";
+
+    const opinion = fieldsBlock([
+      ["status", report.status],
+      ["ai_domain", report.ai_domain],
+      ["summary", report.summary || "-"]
+    ]);
+    sections.appendChild(section("Opinion", opinion, true));
+
+    const findings = findingsBlock(report);
+    sections.appendChild(section("Findings", findings, false));
+
+    const routing = fieldsBlock([
+      ["model_name", report.model_name || "-"],
+      ["model_version", report.model_version || "-"],
+      ["routing reason", routingReason(report)],
+      ["review", report.physician_review_status || "-"]
+    ]);
+    sections.appendChild(section("Routing / Review", routing, false));
 
     const controls = document.createElement("div");
     controls.className = "aio-controls";
@@ -955,7 +975,7 @@ AIO_PANEL_SCRIPT = r"""
 
     controls.appendChild(reviewed);
     controls.appendChild(reject);
-    content.appendChild(fields);
+    content.appendChild(sections);
     content.appendChild(controls);
   }
 
@@ -977,6 +997,64 @@ AIO_PANEL_SCRIPT = r"""
     row.appendChild(key);
     row.appendChild(val);
     return row;
+  }
+
+  function fieldsBlock(rows) {
+    const fields = document.createElement("div");
+    fields.className = "aio-fields";
+    rows.forEach(function (row) {
+      fields.appendChild(field(row[0], row[1]));
+    });
+    return fields;
+  }
+
+  function section(title, body, open) {
+    const details = document.createElement("details");
+    details.className = "aio-section";
+    if (open) details.open = true;
+    const summary = document.createElement("summary");
+    summary.textContent = title;
+    const container = document.createElement("div");
+    container.className = "aio-section-body";
+    container.appendChild(body);
+    details.appendChild(summary);
+    details.appendChild(container);
+    return details;
+  }
+
+  function findingsBlock(report) {
+    const container = document.createElement("div");
+    const findings = Array.isArray(report.findings_json) ? report.findings_json : [];
+    if (!findings.length) {
+      container.appendChild(field("findings", "-"));
+      return container;
+    }
+    findings.forEach(function (item) {
+      const row = document.createElement("div");
+      row.className = "aio-finding";
+      const title = document.createElement("strong");
+      title.textContent = findingTitle(item);
+      const status = document.createElement("span");
+      status.textContent = findingStatus(item);
+      row.appendChild(title);
+      row.appendChild(status);
+      container.appendChild(row);
+    });
+    return container;
+  }
+
+  function findingTitle(item) {
+    if (!item || typeof item !== "object") return "Finding";
+    return String(item.label || item.section || "Finding");
+  }
+
+  function findingStatus(item) {
+    if (!item || typeof item !== "object") return "-";
+    const parts = [];
+    if (item.status) parts.push(String(item.status));
+    if (item.score_type) parts.push(String(item.score_type));
+    if (item.prototype_only === true) parts.push("prototype");
+    return parts.length ? parts.join(" · ") : "-";
   }
 
   function routingReason(report) {
