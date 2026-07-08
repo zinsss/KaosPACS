@@ -87,13 +87,20 @@ document upload surface. It is configured by:
 
 ```text
 WEB_HTTP_BIND=0.0.0.0
-WEB_PORT=80
+WEB_PORT=8070
 WEB_ORTHANC_PUBLIC_URL=http://192.168.0.200:8042
 WEASIS_DICOMWEB_URL=http://192.168.0.200:8042/dicom-web
+WEB_GATEWAY_URL=http://gateway:8060
 WEB_STUDY_LIMIT=100
 ```
 
-The web container talks to Orthanc internally at `http://orthanc:8042`.
+The web container talks to Orthanc internally at `http://orthanc:8042` and to
+Gateway internally at `http://gateway:8060`. KaosEghis should embed the Web
+admin page at:
+
+```text
+http://<pacs-host>:8070/imaging/worklist
+```
 Browsers open `http://192.168.0.200/emr.php`. The Weasis buttons use the
 configured DICOMweb URL, so client workstations must be able to reach Orthanc
 HTTP at `192.168.0.200:8042` and must have Weasis installed and registered for
@@ -364,6 +371,8 @@ curl -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
   http://127.0.0.1:8060/imaging/worklist
 curl -H "Authorization: Bearer $GATEWAY_API_TOKEN" \
   'http://127.0.0.1:8060/imaging/worklist?view=all'
+curl http://127.0.0.1:8070/health
+curl http://127.0.0.1:8070/imaging/worklist
 curl -X POST http://127.0.0.1:8060/orders/upsert \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $GATEWAY_API_TOKEN" \

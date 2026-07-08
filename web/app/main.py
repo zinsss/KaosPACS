@@ -90,6 +90,47 @@ class AioClient:
             return json.loads(response.read().decode("utf-8"))
 
 
+class GatewayClient:
+    def __init__(self, base_url: str, token: str = "", timeout: float = 5.0) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.token = token
+        self.timeout = timeout
+
+    def imaging_worklist(self, *, view: str = "all") -> dict[str, Any]:
+        query = urlencode({"view": view}) if view else ""
+        path = "/imaging/worklist" + (f"?{query}" if query else "")
+        return self._json("GET", path)
+
+    def mark_complete(self, accession_number: str) -> dict[str, Any]:
+        return self._json(
+            "POST",
+            "/worklist/complete",
+            {"AccessionNumber": accession_number},
+        )
+
+    def _json(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        data = json.dumps(payload).encode("utf-8") if payload is not None else None
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        request = Request(
+            f"{self.base_url}{path}",
+            data=data,
+            headers=headers,
+            method=method,
+        )
+        with urlopen(request, timeout=self.timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+
 def make_weasis_url(dicomweb_url: str, study_instance_uid: str) -> str:
     command = (
         f'$dicom:rs --url "{dicomweb_url.rstrip("/")}" '
@@ -102,8 +143,13 @@ def create_handler(
     config: Config,
     orthanc: OrthancClient,
     aio: AioClient | None = None,
+    gateway: GatewayClient | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     aio_client = aio or AioClient(config.kaospacs_aio_url)
+    gateway_client = gateway or GatewayClient(
+        getattr(config, "gateway_url", "http://gateway:8060"),
+        getattr(config, "gateway_api_token", ""),
+    )
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "KaosPACSWeb/0.1"
@@ -124,6 +170,9 @@ def create_handler(
             if parsed.path.startswith("/thumbnail/"):
                 self._thumbnail(parsed.path.removeprefix("/thumbnail/"))
                 return
+            if parsed.path == "/imaging/worklist":
+                self._imaging_worklist_page(parsed.query)
+                return
             if parsed.path in ("/", "/emr.php"):
                 self._index(parsed.path, parsed.query)
                 return
@@ -142,6 +191,9 @@ def create_handler(
             if parsed.path.startswith("/api/aio/report/") and parsed.path.endswith("/review"):
                 report_id = parsed.path.removeprefix("/api/aio/report/").removesuffix("/review")
                 self._api_aio_review(report_id)
+                return
+            if parsed.path == "/imaging/worklist/mark-complete":
+                self._imaging_worklist_mark_complete()
                 return
             self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -250,6 +302,44 @@ def create_handler(
             self.end_headers()
             self.wfile.write(body)
 
+        def _imaging_worklist_page(self, query_string: str) -> None:
+            params = parse_qs(query_string)
+            message = _admin_status_message(params.get("status", [""])[0])
+            try:
+                payload = gateway_client.imaging_worklist(view="all")
+                entries = payload.get("entries", []) if isinstance(payload, dict) else []
+                counts = payload.get("counts", {}) if isinstance(payload, dict) else {}
+                body = render_imaging_worklist_admin(
+                    entries if isinstance(entries, list) else [],
+                    counts if isinstance(counts, dict) else {},
+                    message=message,
+                    error="",
+                )
+            except Exception as exc:
+                LOGGER.warning("Gateway imaging worklist failed exception=%s", exc.__class__.__name__)
+                body = render_imaging_worklist_admin(
+                    [],
+                    {},
+                    message="",
+                    error="Gateway is not reachable.",
+                )
+            self._html(body)
+
+        def _imaging_worklist_mark_complete(self) -> None:
+            content_length = int(self.headers.get("Content-Length") or "0")
+            raw = self.rfile.read(min(content_length, 8192)) if content_length else b""
+            params = parse_qs(raw.decode("utf-8", "replace"))
+            accession_number = params.get("AccessionNumber", [""])[0].strip()
+            if not accession_number:
+                self._redirect("/imaging/worklist?status=missing_accession")
+                return
+            try:
+                gateway_client.mark_complete(accession_number)
+                self._redirect("/imaging/worklist?status=complete_ok")
+            except Exception as exc:
+                LOGGER.warning("Gateway mark complete failed exception=%s", exc.__class__.__name__)
+                self._redirect("/imaging/worklist?status=complete_failed")
+
         def _index(self, path: str, query_string: str) -> None:
             params = parse_qs(query_string)
             query = params.get("q", [""])[0]
@@ -295,12 +385,21 @@ def create_handler(
                     upload_message="",
                     error="Orthanc is not reachable.",
                 )
+            self._html(body)
+
+        def _html(self, body: str) -> None:
             encoded = body.encode("utf-8")
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(encoded)))
             self.end_headers()
             self.wfile.write(encoded)
+
+        def _redirect(self, location: str) -> None:
+            self.send_response(HTTPStatus.SEE_OTHER)
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def _upload(self, query_string: str) -> None:
             params = parse_qs(query_string)
@@ -514,6 +613,117 @@ def render_index(
 <script>{AIO_PANEL_SCRIPT}</script>
 </body>
 </html>"""
+
+
+def render_imaging_worklist_admin(
+    entries: list[Any],
+    counts: dict[str, Any],
+    *,
+    message: str = "",
+    error: str = "",
+) -> str:
+    rows = "\n".join(
+        _imaging_worklist_row(entry)
+        for entry in entries
+        if isinstance(entry, dict)
+    )
+    if not rows and not error:
+        rows = '<tr><td colspan="9" class="empty-cell">No imaging worklist entries.</td></tr>'
+    count_items = ("active", "completed", "expired", "cancelled", "inactive")
+    count_html = "\n".join(
+        f'<div><span>{html.escape(label)}</span><strong>{html.escape(str(counts.get(label, 0)))}</strong></div>'
+        for label in count_items
+    )
+    message_html = f'<div class="upload-message">{html.escape(message)}</div>' if message else ""
+    error_html = f'<div class="error">{html.escape(error)}</div>' if error else ""
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KaosPACS Imaging Worklist</title>
+  <style>{CSS}</style>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>KaosPACS Imaging Worklist</h1>
+      <p>Imaging lifecycle and operator correction view</p>
+    </div>
+  </header>
+  <main>
+    {error_html}
+    {message_html}
+    <section class="admin-counts">{count_html}</section>
+    <section class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>State</th>
+            <th>Accession</th>
+            <th>Chart</th>
+            <th>Patient</th>
+            <th>Modality</th>
+            <th>Scheduled</th>
+            <th>Description</th>
+            <th>Terminal time</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>"""
+
+
+def _imaging_worklist_row(entry: dict[str, Any]) -> str:
+    accession = _entry_text(entry, "AccessionNumber")
+    state = _entry_text(entry, "state") or "inactive"
+    action = "-"
+    if state == "active" and accession:
+        action = (
+            '<form method="post" action="/imaging/worklist/mark-complete" class="inline-form">'
+            f'<input type="hidden" name="AccessionNumber" value="{html.escape(accession, quote=True)}">'
+            '<button type="submit">Mark Complete</button>'
+            "</form>"
+        )
+    return (
+        "<tr>"
+        f'<td><span class="state state-{html.escape(state)}">{html.escape(state)}</span></td>'
+        f"<td>{html.escape(accession or '-')}</td>"
+        f"<td>{html.escape(_entry_text(entry, 'PatientID') or '-')}</td>"
+        f"<td>{html.escape(_entry_text(entry, 'PatientName') or '-')}</td>"
+        f"<td>{html.escape(_entry_text(entry, 'Modality') or '-')}</td>"
+        f"<td>{html.escape(_entry_text(entry, 'ScheduledAt') or '-')}</td>"
+        f"<td>{html.escape(_entry_text(entry, 'Description') or '-')}</td>"
+        f"<td>{html.escape(_terminal_time(entry) or '-')}</td>"
+        f"<td>{action}</td>"
+        "</tr>"
+    )
+
+
+def _entry_text(entry: dict[str, Any], key: str) -> str:
+    value = entry.get(key)
+    return "" if value is None else str(value).strip()
+
+
+def _terminal_time(entry: dict[str, Any]) -> str:
+    return (
+        _entry_text(entry, "CompletedAt")
+        or _entry_text(entry, "ExpiredAt")
+        or _entry_text(entry, "CancelledAt")
+    )
+
+
+def _admin_status_message(status: str) -> str:
+    messages = {
+        "complete_ok": "Worklist entry marked complete.",
+        "complete_failed": "Could not mark worklist entry complete.",
+        "missing_accession": "No accession number was provided.",
+    }
+    return messages.get(status, "")
 
 
 def _study_card(config: Config, study: StudySummary) -> str:
@@ -844,6 +1054,23 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
 .aio-controls button[disabled] { opacity:.55; cursor:not-allowed; }
 .empty, .error { border:1px solid var(--border); background:#fff; border-radius:8px; padding:18px; }
 .error { border-color:#ef9a9a; color:#9f1239; }
+.admin-counts { display:grid; grid-template-columns:repeat(5, minmax(110px, 1fr)); gap:10px; margin-bottom:12px; }
+.admin-counts div { background:#fff; border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
+.admin-counts span { display:block; color:var(--muted); font-size:12px; }
+.admin-counts strong { display:block; margin-top:2px; font-size:18px; }
+.admin-table-wrap { overflow:auto; background:#fff; border:1px solid var(--border); border-radius:8px; }
+.admin-table { width:100%; border-collapse:collapse; min-width:980px; }
+.admin-table th, .admin-table td { padding:9px 10px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; font-size:13px; }
+.admin-table th { background:#f8fafc; color:#334155; font-weight:700; position:sticky; top:0; }
+.admin-table tr:last-child td { border-bottom:0; }
+.empty-cell { color:var(--muted); text-align:center; padding:22px !important; }
+.state { display:inline-flex; min-width:76px; justify-content:center; border-radius:999px; padding:3px 8px; background:#e2e8f0; color:#334155; font-weight:700; font-size:12px; }
+.state-active { background:#dcfce7; color:#166534; }
+.state-completed { background:#dbeafe; color:#1e40af; }
+.state-expired { background:#fef3c7; color:#92400e; }
+.state-cancelled { background:#fee2e2; color:#991b1b; }
+.inline-form { margin:0; }
+.inline-form button { min-height:30px; padding:5px 8px; font-size:13px; }
 @media (max-width: 720px) {
   .topbar { display:block; padding:18px; }
   .search { margin-top:14px; min-width:0; }
@@ -853,6 +1080,7 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
   .thumb { width:108px; }
   dl { grid-template-columns:1fr; }
   .patient-context { grid-template-columns:1fr 1fr; }
+  .admin-counts { grid-template-columns:1fr 1fr; }
 }
 """
 

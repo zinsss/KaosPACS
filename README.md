@@ -123,7 +123,9 @@ docker compose ps
 ## Test Endpoints
 
 - Orthanc HTTP: `http://192.168.0.200:8042`
-- KaosPACS Web: `http://192.168.0.200/emr.php`
+- KaosPACS Web patient view: `http://192.168.0.200:8070/emr.php`
+- KaosPACS Web imaging admin page for KaosEghis embed:
+  `http://192.168.0.200:8070/imaging/worklist`
 - Gateway production DICOM SCP: `192.168.0.200:104`, AET `VIEWREX`
 - Orthanc internal DICOM backend: `orthanc:11112`, AET `VIEWREX`
 - MWL SCP: `192.168.0.200:105`, AET `VIEWREX_WL`
@@ -217,14 +219,12 @@ status is operational only and reports counts by queue state plus retry worker
 enabled/running state; it does not expose patient demographics or dataset
 contents.
 
-`GET /imaging/worklist` is the operator-facing imaging lifecycle endpoint for
-KaosEghis-PACS UI. It reads the current MWL JSON through Gateway, derives
-imaging lifecycle state, and returns flat rows plus counts. By default it
-returns only `active`, `completed`, `expired`, and `cancelled` rows.
-`inactive` rows are included only when calling
-`GET /imaging/worklist?view=all`; inactive means a retained non-actionable row
-with no completion, expiry, or source cancellation timestamp. KaosEghis-PACS UI
-must not treat inactive rows as active orders.
+Gateway `GET /imaging/worklist` is the protected JSON imaging lifecycle API.
+KaosPACS Web renders that data as an operator/admin page at
+`http://192.168.0.200:8070/imaging/worklist`, which KaosEghis-PACS embeds in
+its PACS tab. The Web page includes active/completed/expired/cancelled rows and
+operator correction actions such as Mark Complete. Gateway remains on `8060`;
+Web remains on `8070`.
 
 `POST /orders/upsert` accepts UTF-8 JSON normalized by KaosEghis-PACS,
 preserves Korean text, and returns a stable response:
@@ -237,9 +237,10 @@ preserves Korean text, and returns a stable response:
 source/business cancellation. KaosPACS does not infer cancellation from missing
 source rows.
 
-KaosEghis-PACS UI should use `/imaging/worklist` instead of reading raw
-`public.mwl`, eGHIS tables, or MWL internals. Lower-level `GET /worklist`
-remains available for temporary compatibility, reconcile, and debug workflows.
+KaosEghis-PACS UI should embed the Web admin page
+`http://<pacs-host>:8070/imaging/worklist` instead of reading raw `public.mwl`,
+eGHIS tables, or MWL internals. Lower-level Gateway `GET /worklist` remains
+available for temporary compatibility, reconcile, and debug workflows.
 
 `POST /admin/worklist/prune` removes old inactive completed, cancelled, or
 expired entries from the runtime MWL worklist only. It defaults to

@@ -38,6 +38,9 @@ def test_config_defaults(monkeypatch) -> None:
         "WEB_ORTHANC_PUBLIC_URL",
         "WEASIS_DICOMWEB_URL",
         "KAOSPACS_AIO_URL",
+        "WEB_GATEWAY_URL",
+        "WEB_GATEWAY_API_TOKEN",
+        "GATEWAY_API_TOKEN",
         "WEB_STUDY_LIMIT",
         "WEB_UPLOAD_MAX_BYTES",
         "WEB_AUTH_USERNAME",
@@ -48,11 +51,13 @@ def test_config_defaults(monkeypatch) -> None:
     config = load_config()
 
     assert config.http_host == "0.0.0.0"
-    assert config.http_port == 8081
+    assert config.http_port == 8070
     assert config.orthanc_url == "http://orthanc:8042"
     assert config.orthanc_public_url == "http://192.168.0.200:8042"
     assert config.weasis_dicomweb_url == "http://192.168.0.200:8042/dicom-web"
     assert config.kaospacs_aio_url == "http://127.0.0.1:8056"
+    assert config.gateway_url == "http://gateway:8060"
+    assert config.gateway_api_token == ""
     assert config.study_limit == 100
     assert config.upload_max_bytes == 25 * 1024 * 1024
     assert config.auth_username == "kaospacs"
@@ -66,6 +71,8 @@ def test_config_env_overrides(monkeypatch) -> None:
     monkeypatch.setenv("WEB_ORTHANC_PUBLIC_URL", "http://pacs:8042/")
     monkeypatch.setenv("WEASIS_DICOMWEB_URL", "http://pacs:8042/dicom-web/")
     monkeypatch.setenv("KAOSPACS_AIO_URL", "http://aio:8056/")
+    monkeypatch.setenv("WEB_GATEWAY_URL", "http://gateway.local:8060/")
+    monkeypatch.setenv("WEB_GATEWAY_API_TOKEN", "web-token")
     monkeypatch.setenv("WEB_STUDY_LIMIT", "50")
     monkeypatch.setenv("WEB_UPLOAD_MAX_BYTES", "12345")
     monkeypatch.setenv("WEB_AUTH_USERNAME", "viewer")
@@ -79,6 +86,8 @@ def test_config_env_overrides(monkeypatch) -> None:
     assert config.orthanc_public_url == "http://pacs:8042"
     assert config.weasis_dicomweb_url == "http://pacs:8042/dicom-web"
     assert config.kaospacs_aio_url == "http://aio:8056"
+    assert config.gateway_url == "http://gateway.local:8060"
+    assert config.gateway_api_token == "web-token"
     assert config.study_limit == 50
     assert config.upload_max_bytes == 12345
     assert config.auth_username == "viewer"
@@ -204,6 +213,97 @@ def test_aio_proxy_endpoints_call_aio_client() -> None:
         response = urlopen(review, timeout=3)
         assert response.status == 200
         aio.mark_reviewed.assert_called_once_with("report-1")
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_imaging_worklist_admin_page_renders_gateway_entries() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    gateway = Mock()
+    gateway.imaging_worklist.return_value = {
+        "entries": [
+            {
+                "state": "active",
+                "AccessionNumber": "ACC-1",
+                "PatientID": "P1",
+                "PatientName": "TEST^PATIENT",
+                "Modality": "CR",
+                "ScheduledAt": "2026-07-08T09:00:00+09:00",
+                "Description": "CHEST",
+            }
+        ],
+        "counts": {"active": 1, "completed": 0, "expired": 0, "cancelled": 0, "inactive": 0},
+    }
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, Mock(), gateway=gateway),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        response = urlopen(f"{_server_url(server)}/imaging/worklist", timeout=3)
+
+        assert response.status == 200
+        html = response.read().decode("utf-8")
+        assert "KaosPACS Imaging Worklist" in html
+        assert "ACC-1" in html
+        assert "Mark Complete" in html
+        gateway.imaging_worklist.assert_called_once_with(view="all")
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_imaging_worklist_admin_page_renders_gateway_error() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    gateway = Mock()
+    gateway.imaging_worklist.side_effect = TimeoutError
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, Mock(), gateway=gateway),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        response = urlopen(f"{_server_url(server)}/imaging/worklist", timeout=3)
+
+        assert response.status == 200
+        html = response.read().decode("utf-8")
+        assert "Gateway is not reachable." in html
+        assert "No imaging worklist entries." not in html
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_imaging_worklist_mark_complete_calls_gateway() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    gateway = Mock()
+    gateway.mark_complete.return_value = {"updated": 1}
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, Mock(), gateway=gateway),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        request = Request(
+            f"{_server_url(server)}/imaging/worklist/mark-complete",
+            data=b"AccessionNumber=ACC-1",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        response = urlopen(request, timeout=3)
+        assert response.status == 200
+
+        gateway.mark_complete.assert_called_once_with("ACC-1")
     finally:
         _stop_test_server(server, thread)
 
