@@ -8,13 +8,14 @@ import json
 import logging
 import warnings
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, quote_plus, urlencode, urlparse
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 from .config import Config, load_config
 from .dicom_upload import create_upload_dicom
@@ -33,6 +34,7 @@ AIO_DISCLAIMER = (
     "ONLY for AI Testing and Assistance.\n"
     "Clinical Correlation and Physician review required."
 )
+SEOUL_TZ = ZoneInfo("Asia/Seoul")
 
 
 @dataclass(frozen=True)
@@ -328,6 +330,7 @@ def create_handler(
         def _imaging_worklist_page(self, query_string: str) -> None:
             params = parse_qs(query_string)
             message = _admin_status_message(params.get("status", [""])[0])
+            selected_date = _selected_worklist_date(params)
             try:
                 payload = gateway_client.imaging_worklist(view="all")
                 entries = payload.get("entries", []) if isinstance(payload, dict) else []
@@ -335,6 +338,7 @@ def create_handler(
                 body = render_imaging_worklist_admin(
                     entries if isinstance(entries, list) else [],
                     counts if isinstance(counts, dict) else {},
+                    selected_date=selected_date,
                     message=message,
                     error="",
                 )
@@ -343,6 +347,7 @@ def create_handler(
                 body = render_imaging_worklist_admin(
                     [],
                     {},
+                    selected_date=selected_date,
                     message="",
                     error="Gateway is not reachable.",
                 )
@@ -657,11 +662,18 @@ def render_imaging_worklist_admin(
     entries: list[Any],
     counts: dict[str, Any],
     *,
+    selected_date: str | None = None,
     message: str = "",
     error: str = "",
 ) -> str:
+    selected_date = selected_date if selected_date is not None else _today_string()
+    filter_date = None if selected_date == "all" else selected_date
     sorted_entries = sorted(
-        [entry for entry in entries if isinstance(entry, dict)],
+        [
+            entry
+            for entry in entries
+            if isinstance(entry, dict) and _entry_matches_scheduled_date(entry, filter_date)
+        ],
         key=_imaging_order_sort_key,
     )
     rows = "\n".join(
@@ -671,12 +683,14 @@ def render_imaging_worklist_admin(
     if not rows and not error:
         rows = '<tr><td colspan="9" class="empty-cell">No imaging worklist entries.</td></tr>'
     count_items = ("active", "completed", "expired", "cancelled", "inactive")
+    visible_counts = _state_counts(sorted_entries)
     count_html = "\n".join(
-        f'<div><span>{html.escape(label)}</span><strong>{html.escape(str(counts.get(label, 0)))}</strong></div>'
+        f'<div><span>{html.escape(label)}</span><strong>{html.escape(str(visible_counts.get(label, 0)))}</strong></div>'
         for label in count_items
     )
     message_html = f'<div class="upload-message">{html.escape(message)}</div>' if message else ""
     error_html = f'<div class="error">{html.escape(error)}</div>' if error else ""
+    nav_html = _worklist_date_nav(selected_date)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -695,6 +709,7 @@ def render_imaging_worklist_admin(
   <main>
     {error_html}
     {message_html}
+    {nav_html}
     <section class="admin-counts">{count_html}</section>
     <section class="admin-table-wrap">
       <table class="admin-table">
@@ -758,6 +773,67 @@ def _imaging_worklist_row(entry: dict[str, Any]) -> str:
         f"<td>{html.escape(_terminal_time(entry) or '-')}</td>"
         f"<td>{action}</td>"
         "</tr>"
+    )
+
+
+def _state_counts(entries: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {"active": 0, "completed": 0, "expired": 0, "cancelled": 0, "inactive": 0}
+    for entry in entries:
+        state = _entry_text(entry, "state") or "inactive"
+        if state not in counts:
+            state = "inactive"
+        counts[state] += 1
+    return counts
+
+
+def _selected_worklist_date(params: dict[str, list[str]]) -> str:
+    raw = params.get("date", [""])[0].strip()
+    if raw.lower() == "all":
+        return "all"
+    if _valid_date_string(raw):
+        return raw
+    return _today_string()
+
+
+def _today_string() -> str:
+    return datetime.now(SEOUL_TZ).date().isoformat()
+
+
+def _valid_date_string(value: str) -> bool:
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _entry_matches_scheduled_date(entry: dict[str, Any], selected_date: str | None) -> bool:
+    if selected_date is None:
+        return True
+    return _entry_text(entry, "ScheduledAt")[:10] == selected_date
+
+
+def _worklist_date_nav(selected_date: str) -> str:
+    if selected_date == "all":
+        today = _today_string()
+        return (
+            '<section class="date-nav">'
+            '<strong>Showing all dates</strong>'
+            f'<a href="/imaging/worklist?date={html.escape(today, quote=True)}">Today</a>'
+            "</section>"
+        )
+    current = date.fromisoformat(selected_date)
+    previous_date = (current - timedelta(days=1)).isoformat()
+    next_date = (current + timedelta(days=1)).isoformat()
+    today = _today_string()
+    return (
+        '<section class="date-nav">'
+        f'<a href="/imaging/worklist?date={html.escape(previous_date, quote=True)}">&larr; Previous</a>'
+        f'<strong>{html.escape(selected_date)}</strong>'
+        f'<a href="/imaging/worklist?date={html.escape(next_date, quote=True)}">Next &rarr;</a>'
+        f'<a href="/imaging/worklist?date={html.escape(today, quote=True)}">Today</a>'
+        '<a href="/imaging/worklist?date=all">All</a>'
+        "</section>"
     )
 
 
@@ -1149,6 +1225,8 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
 .empty, .error { border:1px solid var(--border); background:#fff; border-radius:8px; padding:18px; }
 .error { border-color:#ef9a9a; color:#9f1239; }
 .admin-counts { display:grid; grid-template-columns:repeat(5, minmax(110px, 1fr)); gap:10px; margin-bottom:12px; }
+.date-nav { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+.date-nav strong { min-height:36px; display:inline-flex; align-items:center; padding:7px 10px; border:1px solid var(--border); border-radius:6px; background:#fff; }
 .admin-counts div { background:#fff; border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
 .admin-counts span { display:block; color:var(--muted); font-size:12px; }
 .admin-counts strong { display:block; margin-top:2px; font-size:18px; }

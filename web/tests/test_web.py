@@ -280,9 +280,60 @@ def test_imaging_worklist_admin_sorts_by_scheduled_time_descending() -> None:
             },
         ],
         {},
+        selected_date="all",
     )
 
     assert html.index("NEW") < html.index("OLD")
+
+
+def test_imaging_worklist_admin_filters_by_selected_scheduled_date() -> None:
+    html = render_imaging_worklist_admin(
+        [
+            {
+                "state": "completed",
+                "AccessionNumber": "TODAY",
+                "ScheduledAt": "2026-07-08T09:00:00",
+            },
+            {
+                "state": "expired",
+                "AccessionNumber": "OLD",
+                "ScheduledAt": "2026-07-01T09:00:00",
+            },
+        ],
+        {},
+        selected_date="2026-07-08",
+    )
+
+    assert "TODAY" in html
+    assert "OLD" not in html
+    assert "<strong>1</strong>" in html
+    assert "2026-07-08" in html
+    assert "date=2026-07-07" in html
+    assert "date=2026-07-09" in html
+    assert "date=all" in html
+
+
+def test_imaging_worklist_admin_can_show_all_dates() -> None:
+    html = render_imaging_worklist_admin(
+        [
+            {
+                "state": "completed",
+                "AccessionNumber": "TODAY",
+                "ScheduledAt": "2026-07-08T09:00:00",
+            },
+            {
+                "state": "expired",
+                "AccessionNumber": "OLD",
+                "ScheduledAt": "2026-07-01T09:00:00",
+            },
+        ],
+        {},
+        selected_date="all",
+    )
+
+    assert "Showing all dates" in html
+    assert "TODAY" in html
+    assert "OLD" in html
 
 
 def test_imaging_worklist_admin_page_bypasses_basic_auth_for_embed() -> None:
