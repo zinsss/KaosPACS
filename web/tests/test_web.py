@@ -143,10 +143,14 @@ def test_study_grid_uses_full_width_rows() -> None:
 
 def test_aio_report_renders_three_expandable_sections() -> None:
     assert 'sections.className = "aio-sections"' in AIO_PANEL_SCRIPT
+    assert ".aio-sections { display:grid; grid-template-columns:minmax(0, 1fr);" in CSS
     assert 'section("Opinion"' in AIO_PANEL_SCRIPT
     assert 'section("Findings"' in AIO_PANEL_SCRIPT
     assert 'section("Routing / Review"' in AIO_PANEL_SCRIPT
     assert "document.createElement(\"details\")" in AIO_PANEL_SCRIPT
+    assert "scoresBlock(item)" in AIO_PANEL_SCRIPT
+    assert 'list.className = "aio-score-list"' in AIO_PANEL_SCRIPT
+    assert "formatScore" in AIO_PANEL_SCRIPT
 
 
 def test_aio_proxy_endpoints_call_aio_client() -> None:

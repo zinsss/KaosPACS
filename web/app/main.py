@@ -823,7 +823,7 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
 .aio-panel h3 { margin:0 0 8px; font-size:15px; line-height:1.25; letter-spacing:0; }
 .aio-disclaimer { margin:0 0 9px; padding:8px; border:1px solid #f2c94c; border-radius:6px; background:#fff8db; color:#4a3412; font:700 12px/1.35 system-ui, -apple-system, Segoe UI, sans-serif; white-space:pre-wrap; }
 .aio-content p { margin:0 0 8px; }
-.aio-sections { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px; align-items:start; margin-bottom:9px; }
+.aio-sections { display:grid; grid-template-columns:minmax(0, 1fr); gap:8px; align-items:start; margin-bottom:9px; }
 .aio-section { border:1px solid var(--border); border-radius:7px; background:#fff; overflow:hidden; }
 .aio-section summary { cursor:pointer; padding:8px 10px; font-weight:700; color:#152033; background:#eef4ff; border-bottom:1px solid var(--border); }
 .aio-section:not([open]) summary { border-bottom:0; }
@@ -836,6 +836,10 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
 .aio-finding:first-child { border-top:0; padding-top:0; margin-top:0; }
 .aio-finding strong { display:block; margin-bottom:3px; overflow-wrap:anywhere; }
 .aio-finding span { color:var(--muted); overflow-wrap:anywhere; }
+.aio-score-list { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:5px 10px; margin-top:7px; padding-top:7px; border-top:1px dashed var(--border); }
+.aio-score { display:flex; justify-content:space-between; gap:8px; color:var(--text); }
+.aio-score b { font-weight:600; overflow-wrap:anywhere; }
+.aio-score em { font-style:normal; color:var(--muted); font-variant-numeric:tabular-nums; }
 .aio-controls { display:flex; gap:8px; flex-wrap:wrap; }
 .aio-controls button[disabled] { opacity:.55; cursor:not-allowed; }
 .empty, .error { border:1px solid var(--border); background:#fff; border-radius:8px; padding:18px; }
@@ -849,7 +853,6 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
   .thumb { width:108px; }
   dl { grid-template-columns:1fr; }
   .patient-context { grid-template-columns:1fr 1fr; }
-  .aio-sections { grid-template-columns:1fr; }
 }
 """
 
@@ -1038,6 +1041,8 @@ AIO_PANEL_SCRIPT = r"""
       status.textContent = findingStatus(item);
       row.appendChild(title);
       row.appendChild(status);
+      const scores = scoresBlock(item);
+      if (scores) row.appendChild(scores);
       container.appendChild(row);
     });
     return container;
@@ -1055,6 +1060,35 @@ AIO_PANEL_SCRIPT = r"""
     if (item.score_type) parts.push(String(item.score_type));
     if (item.prototype_only === true) parts.push("prototype");
     return parts.length ? parts.join(" · ") : "-";
+  }
+
+  function scoresBlock(item) {
+    if (!item || typeof item !== "object" || !item.scores || typeof item.scores !== "object") {
+      return null;
+    }
+    const entries = Object.entries(item.scores)
+      .filter(function (entry) { return typeof entry[1] === "number"; })
+      .sort(function (left, right) { return right[1] - left[1]; });
+    if (!entries.length) return null;
+    const list = document.createElement("div");
+    list.className = "aio-score-list";
+    entries.forEach(function (entry) {
+      const row = document.createElement("div");
+      row.className = "aio-score";
+      const label = document.createElement("b");
+      label.textContent = entry[0];
+      const value = document.createElement("em");
+      value.textContent = formatScore(entry[1]);
+      row.appendChild(label);
+      row.appendChild(value);
+      list.appendChild(row);
+    });
+    return list;
+  }
+
+  function formatScore(value) {
+    if (typeof value !== "number" || !isFinite(value)) return "-";
+    return value.toFixed(3);
   }
 
   function routingReason(report) {
