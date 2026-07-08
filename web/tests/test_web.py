@@ -45,6 +45,7 @@ def test_config_defaults(monkeypatch) -> None:
         "WEB_UPLOAD_MAX_BYTES",
         "WEB_AUTH_USERNAME",
         "WEB_AUTH_PASSWORD",
+        "WEB_ADMIN_AUTH_REQUIRED",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -62,6 +63,7 @@ def test_config_defaults(monkeypatch) -> None:
     assert config.upload_max_bytes == 25 * 1024 * 1024
     assert config.auth_username == "kaospacs"
     assert config.auth_password == ""
+    assert config.admin_auth_required is False
 
 
 def test_config_env_overrides(monkeypatch) -> None:
@@ -77,6 +79,7 @@ def test_config_env_overrides(monkeypatch) -> None:
     monkeypatch.setenv("WEB_UPLOAD_MAX_BYTES", "12345")
     monkeypatch.setenv("WEB_AUTH_USERNAME", "viewer")
     monkeypatch.setenv("WEB_AUTH_PASSWORD", "secret")
+    monkeypatch.setenv("WEB_ADMIN_AUTH_REQUIRED", "true")
 
     config = load_config()
 
@@ -92,6 +95,7 @@ def test_config_env_overrides(monkeypatch) -> None:
     assert config.upload_max_bytes == 12345
     assert config.auth_username == "viewer"
     assert config.auth_password == "secret"
+    assert config.admin_auth_required is True
 
 
 def test_weasis_url_uses_dicomweb_study_query() -> None:
@@ -254,6 +258,61 @@ def test_imaging_worklist_admin_page_renders_gateway_entries() -> None:
         assert "Cancel" in html
         assert "Delete" in html
         gateway.imaging_worklist.assert_called_once_with(view="all")
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_imaging_worklist_admin_page_bypasses_basic_auth_for_embed() -> None:
+    config = Mock()
+    config.auth_username = "kaospacs"
+    config.auth_password = "secret"
+    config.admin_auth_required = False
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    gateway = Mock()
+    gateway.imaging_worklist.return_value = {"entries": [], "counts": {}}
+    orthanc = Mock()
+    orthanc.studies_for_patient.return_value = []
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, orthanc, gateway=gateway),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        response = urlopen(f"{_server_url(server)}/imaging/worklist", timeout=3)
+        assert response.status == 200
+
+        try:
+            urlopen(f"{_server_url(server)}/emr.php?m_patid=2735", timeout=3)
+            raise AssertionError("expected emr.php to remain protected")
+        except HTTPError as exc:
+            assert exc.code == 401
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_imaging_worklist_admin_page_can_require_basic_auth() -> None:
+    config = Mock()
+    config.auth_username = "kaospacs"
+    config.auth_password = "secret"
+    config.admin_auth_required = True
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    gateway = Mock()
+    gateway.imaging_worklist.return_value = {"entries": [], "counts": {}}
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, Mock(), gateway=gateway),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        try:
+            urlopen(f"{_server_url(server)}/imaging/worklist", timeout=3)
+            raise AssertionError("expected admin page to require auth")
+        except HTTPError as exc:
+            assert exc.code == 401
     finally:
         _stop_test_server(server, thread)
 

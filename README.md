@@ -225,7 +225,10 @@ KaosPACS Web renders that data as an operator/admin page at
 its PACS tab. The Web page includes active/completed/expired/cancelled rows and
 operator correction actions: Done, Cancel, and Delete. Delete is a soft
 operator cancellation routed through Gateway, not physical removal of DICOM or
-audit history. Gateway remains on `8060`; Web remains on `8070`.
+audit history. This embedded admin page bypasses Web Basic Auth by default
+(`WEB_ADMIN_AUTH_REQUIRED=false`) so KaosEghis can render it in an iframe; the
+Web service still talks to Gateway with the internal bearer token. Gateway
+remains on `8060`; Web remains on `8070`.
 
 `POST /orders/upsert` accepts UTF-8 JSON normalized by KaosEghis-PACS,
 preserves Korean text, and returns a stable response:

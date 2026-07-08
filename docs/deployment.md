@@ -135,6 +135,7 @@ manually type patient demographics. The upload size limit is controlled by:
 WEB_UPLOAD_MAX_BYTES=26214400
 WEB_AUTH_USERNAME=kaospacs
 WEB_AUTH_PASSWORD=<random-password>
+WEB_ADMIN_AUTH_REQUIRED=false
 ```
 
 Web does not own MWL state, infer completion/expiry, receive modality DICOM, or
@@ -144,6 +145,11 @@ Set `WEB_AUTH_PASSWORD` in `.env` for browser Basic Auth before exposing Web on
 the clinic LAN. Do not commit the production password. Leave
 `WEB_AUTH_PASSWORD` empty only for development. `GET /health` remains open for
 Docker health checks.
+
+`WEB_ADMIN_AUTH_REQUIRED=false` lets KaosEghis embed `/imaging/worklist`
+without a browser Basic Auth retry loop. Other Web pages, including `/emr.php`,
+still use `WEB_AUTH_PASSWORD` when it is set. The embedded admin page still
+performs state-changing actions through Gateway using the internal bearer token.
 
 Gateway DICOM front-door settings:
 

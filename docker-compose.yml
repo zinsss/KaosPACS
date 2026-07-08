@@ -162,6 +162,7 @@ services:
       WEB_UPLOAD_MAX_BYTES: ${WEB_UPLOAD_MAX_BYTES:-26214400}
       WEB_AUTH_USERNAME: ${WEB_AUTH_USERNAME:-kaospacs}
       WEB_AUTH_PASSWORD: ${WEB_AUTH_PASSWORD:-}
+      WEB_ADMIN_AUTH_REQUIRED: ${WEB_ADMIN_AUTH_REQUIRED:-false}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8070/health', timeout=2).read()"]
       interval: 10s

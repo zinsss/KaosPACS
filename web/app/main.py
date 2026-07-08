@@ -227,6 +227,12 @@ def create_handler(
             )
 
         def _require_auth(self, path: str) -> bool:
+            if _is_embedded_admin_path(path) and not getattr(
+                config,
+                "admin_auth_required",
+                False,
+            ):
+                return True
             if not config.auth_password:
                 return True
             if _check_basic_auth(
@@ -1002,6 +1008,15 @@ def _check_basic_auth(header: str, expected_username: str, expected_password: st
         password,
         expected_password,
     )
+
+
+def _is_embedded_admin_path(path: str) -> bool:
+    return path in {
+        "/imaging/worklist",
+        "/imaging/worklist/mark-complete",
+        "/imaging/worklist/cancel",
+        "/imaging/worklist/delete",
+    }
 
 
 def _upload_redirect_status(summary: UploadSummary) -> str:

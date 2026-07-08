@@ -18,6 +18,7 @@ class Config:
     upload_max_bytes: int
     auth_username: str
     auth_password: str
+    admin_auth_required: bool
 
 
 def load_config() -> Config:
@@ -42,6 +43,7 @@ def load_config() -> Config:
         upload_max_bytes=_int_env("WEB_UPLOAD_MAX_BYTES", 25 * 1024 * 1024),
         auth_username=os.getenv("WEB_AUTH_USERNAME", "kaospacs"),
         auth_password=os.getenv("WEB_AUTH_PASSWORD", ""),
+        admin_auth_required=_bool_env("WEB_ADMIN_AUTH_REQUIRED", False),
     )
 
 
@@ -54,3 +56,10 @@ def _int_env(name: str, default: int) -> int:
 
 def _strip_slash(value: str) -> str:
     return value.rstrip("/")
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw in (None, ""):
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
