@@ -25,6 +25,7 @@ from app.main import (
     CSS,
     create_handler,
     make_weasis_url,
+    render_imaging_worklist_admin,
     render_index,
 )
 from app.orthanc import OrthancClient, StudySummary
@@ -260,6 +261,28 @@ def test_imaging_worklist_admin_page_renders_gateway_entries() -> None:
         gateway.imaging_worklist.assert_called_once_with(view="all")
     finally:
         _stop_test_server(server, thread)
+
+
+def test_imaging_worklist_admin_sorts_by_scheduled_time_descending() -> None:
+    html = render_imaging_worklist_admin(
+        [
+            {
+                "state": "expired",
+                "AccessionNumber": "OLD",
+                "ScheduledAt": "2026-07-01T09:00:00",
+                "ExpiredAt": "2026-07-08T09:00:00+09:00",
+            },
+            {
+                "state": "completed",
+                "AccessionNumber": "NEW",
+                "ScheduledAt": "2026-07-08T09:00:00",
+                "CompletedAt": "2026-07-08T09:30:00+09:00",
+            },
+        ],
+        {},
+    )
+
+    assert html.index("NEW") < html.index("OLD")
 
 
 def test_imaging_worklist_admin_page_bypasses_basic_auth_for_embed() -> None:

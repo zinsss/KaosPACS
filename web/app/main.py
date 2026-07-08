@@ -8,6 +8,7 @@ import json
 import logging
 import warnings
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -659,10 +660,13 @@ def render_imaging_worklist_admin(
     message: str = "",
     error: str = "",
 ) -> str:
+    sorted_entries = sorted(
+        [entry for entry in entries if isinstance(entry, dict)],
+        key=_imaging_order_sort_key,
+    )
     rows = "\n".join(
         _imaging_worklist_row(entry)
-        for entry in entries
-        if isinstance(entry, dict)
+        for entry in sorted_entries
     )
     if not rows and not error:
         rows = '<tr><td colspan="9" class="empty-cell">No imaging worklist entries.</td></tr>'
@@ -755,6 +759,22 @@ def _imaging_worklist_row(entry: dict[str, Any]) -> str:
         f"<td>{action}</td>"
         "</tr>"
     )
+
+
+def _imaging_order_sort_key(entry: dict[str, Any]) -> tuple[float, str]:
+    return (-_datetime_sort_value(_entry_text(entry, "ScheduledAt")), _entry_text(entry, "AccessionNumber"))
+
+
+def _datetime_sort_value(value: str) -> float:
+    if not value:
+        return 0.0
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
 
 
 def _entry_text(entry: dict[str, Any], key: str) -> str:
