@@ -88,6 +88,8 @@ document upload surface. It is configured by:
 ```text
 WEB_HTTP_BIND=0.0.0.0
 WEB_PORT=8070
+WEB_LEGACY_HTTP_BIND=0.0.0.0
+WEB_LEGACY_PORT=80
 WEB_ORTHANC_PUBLIC_URL=http://192.168.0.200:8042
 WEASIS_DICOMWEB_URL=http://192.168.0.200:8042/dicom-web
 WEB_GATEWAY_URL=http://gateway:8060
@@ -100,6 +102,12 @@ admin page at:
 
 ```text
 http://<pacs-host>:8070/imaging/worklist
+```
+
+Legacy eGHIS PACS buttons that cannot include a port should continue to use:
+
+```text
+http://<pacs-host>/emr.php?m_patid=<chart_no>
 ```
 
 The embedded Web admin page provides fallback operator actions for active rows:

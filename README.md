@@ -123,7 +123,7 @@ docker compose ps
 ## Test Endpoints
 
 - Orthanc HTTP: `http://192.168.0.200:8042`
-- KaosPACS Web patient view: `http://192.168.0.200:8070/emr.php`
+- KaosPACS Web legacy EMR patient view: `http://192.168.0.200/emr.php`
 - KaosPACS Web imaging admin page for KaosEghis embed:
   `http://192.168.0.200:8070/imaging/worklist`
 - Gateway production DICOM SCP: `192.168.0.200:104`, AET `VIEWREX`
