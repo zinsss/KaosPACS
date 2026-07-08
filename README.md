@@ -223,8 +223,9 @@ Gateway `GET /imaging/worklist` is the protected JSON imaging lifecycle API.
 KaosPACS Web renders that data as an operator/admin page at
 `http://192.168.0.200:8070/imaging/worklist`, which KaosEghis-PACS embeds in
 its PACS tab. The Web page includes active/completed/expired/cancelled rows and
-operator correction actions such as Mark Complete. Gateway remains on `8060`;
-Web remains on `8070`.
+operator correction actions: Done, Cancel, and Delete. Delete is a soft
+operator cancellation routed through Gateway, not physical removal of DICOM or
+audit history. Gateway remains on `8060`; Web remains on `8070`.
 
 `POST /orders/upsert` accepts UTF-8 JSON normalized by KaosEghis-PACS,
 preserves Korean text, and returns a stable response:

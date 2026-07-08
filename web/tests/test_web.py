@@ -250,7 +250,9 @@ def test_imaging_worklist_admin_page_renders_gateway_entries() -> None:
         html = response.read().decode("utf-8")
         assert "KaosPACS Imaging Worklist" in html
         assert "ACC-1" in html
-        assert "Mark Complete" in html
+        assert "Done" in html
+        assert "Cancel" in html
+        assert "Delete" in html
         gateway.imaging_worklist.assert_called_once_with(view="all")
     finally:
         _stop_test_server(server, thread)
@@ -304,6 +306,62 @@ def test_imaging_worklist_mark_complete_calls_gateway() -> None:
         assert response.status == 200
 
         gateway.mark_complete.assert_called_once_with("ACC-1")
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_imaging_worklist_cancel_calls_gateway() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    gateway = Mock()
+    gateway.cancel_order.return_value = {"updated": 1}
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, Mock(), gateway=gateway),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        request = Request(
+            f"{_server_url(server)}/imaging/worklist/cancel",
+            data=b"AccessionNumber=ACC-1",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        response = urlopen(request, timeout=3)
+        assert response.status == 200
+
+        gateway.cancel_order.assert_called_once_with("ACC-1", "operator_manual_cancel")
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_imaging_worklist_delete_soft_cancels_through_gateway() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    gateway = Mock()
+    gateway.cancel_order.return_value = {"updated": 1}
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, Mock(), gateway=gateway),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        request = Request(
+            f"{_server_url(server)}/imaging/worklist/delete",
+            data=b"AccessionNumber=ACC-1",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        response = urlopen(request, timeout=3)
+        assert response.status == 200
+
+        gateway.cancel_order.assert_called_once_with("ACC-1", "operator_deleted_from_worklist")
     finally:
         _stop_test_server(server, thread)
 

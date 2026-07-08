@@ -108,6 +108,16 @@ class GatewayClient:
             {"AccessionNumber": accession_number},
         )
 
+    def cancel_order(self, accession_number: str, reason: str) -> dict[str, Any]:
+        return self._json(
+            "POST",
+            "/orders/cancel",
+            {
+                "AccessionNumber": accession_number,
+                "CancelReason": reason,
+            },
+        )
+
     def _json(
         self,
         method: str,
@@ -194,6 +204,12 @@ def create_handler(
                 return
             if parsed.path == "/imaging/worklist/mark-complete":
                 self._imaging_worklist_mark_complete()
+                return
+            if parsed.path == "/imaging/worklist/cancel":
+                self._imaging_worklist_cancel("operator_manual_cancel", "cancel_ok")
+                return
+            if parsed.path == "/imaging/worklist/delete":
+                self._imaging_worklist_cancel("operator_deleted_from_worklist", "delete_ok")
                 return
             self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -326,10 +342,7 @@ def create_handler(
             self._html(body)
 
         def _imaging_worklist_mark_complete(self) -> None:
-            content_length = int(self.headers.get("Content-Length") or "0")
-            raw = self.rfile.read(min(content_length, 8192)) if content_length else b""
-            params = parse_qs(raw.decode("utf-8", "replace"))
-            accession_number = params.get("AccessionNumber", [""])[0].strip()
+            accession_number = self._form_accession_number()
             if not accession_number:
                 self._redirect("/imaging/worklist?status=missing_accession")
                 return
@@ -339,6 +352,24 @@ def create_handler(
             except Exception as exc:
                 LOGGER.warning("Gateway mark complete failed exception=%s", exc.__class__.__name__)
                 self._redirect("/imaging/worklist?status=complete_failed")
+
+        def _imaging_worklist_cancel(self, reason: str, success_status: str) -> None:
+            accession_number = self._form_accession_number()
+            if not accession_number:
+                self._redirect("/imaging/worklist?status=missing_accession")
+                return
+            try:
+                gateway_client.cancel_order(accession_number, reason)
+                self._redirect(f"/imaging/worklist?status={success_status}")
+            except Exception as exc:
+                LOGGER.warning("Gateway cancel/delete failed exception=%s", exc.__class__.__name__)
+                self._redirect("/imaging/worklist?status=cancel_failed")
+
+        def _form_accession_number(self) -> str:
+            content_length = int(self.headers.get("Content-Length") or "0")
+            raw = self.rfile.read(min(content_length, 8192)) if content_length else b""
+            params = parse_qs(raw.decode("utf-8", "replace"))
+            return params.get("AccessionNumber", [""])[0].strip()
 
         def _index(self, path: str, query_string: str) -> None:
             params = parse_qs(query_string)
@@ -667,7 +698,7 @@ def render_imaging_worklist_admin(
             <th>Scheduled</th>
             <th>Description</th>
             <th>Terminal time</th>
-            <th>Action</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>{rows}</tbody>
@@ -683,11 +714,27 @@ def _imaging_worklist_row(entry: dict[str, Any]) -> str:
     state = _entry_text(entry, "state") or "inactive"
     action = "-"
     if state == "active" and accession:
-        action = (
-            '<form method="post" action="/imaging/worklist/mark-complete" class="inline-form">'
-            f'<input type="hidden" name="AccessionNumber" value="{html.escape(accession, quote=True)}">'
-            '<button type="submit">Mark Complete</button>'
-            "</form>"
+        action = ''.join(
+            [
+                _worklist_action_form(
+                    "/imaging/worklist/mark-complete",
+                    accession,
+                    "Done",
+                    "Mark this active worklist entry completed.",
+                ),
+                _worklist_action_form(
+                    "/imaging/worklist/cancel",
+                    accession,
+                    "Cancel",
+                    "Mark this active worklist entry cancelled.",
+                ),
+                _worklist_action_form(
+                    "/imaging/worklist/delete",
+                    accession,
+                    "Delete",
+                    "Soft-delete this entry by marking it cancelled with an operator delete reason.",
+                ),
+            ]
         )
     return (
         "<tr>"
@@ -717,10 +764,22 @@ def _terminal_time(entry: dict[str, Any]) -> str:
     )
 
 
+def _worklist_action_form(action: str, accession: str, label: str, title: str) -> str:
+    return (
+        f'<form method="post" action="{html.escape(action, quote=True)}" class="inline-form">'
+        f'<input type="hidden" name="AccessionNumber" value="{html.escape(accession, quote=True)}">'
+        f'<button type="submit" title="{html.escape(title, quote=True)}">{html.escape(label)}</button>'
+        "</form>"
+    )
+
+
 def _admin_status_message(status: str) -> str:
     messages = {
         "complete_ok": "Worklist entry marked complete.",
         "complete_failed": "Could not mark worklist entry complete.",
+        "cancel_ok": "Worklist entry marked cancelled.",
+        "delete_ok": "Worklist entry soft-deleted.",
+        "cancel_failed": "Could not update worklist entry.",
         "missing_accession": "No accession number was provided.",
     }
     return messages.get(status, "")
@@ -1069,7 +1128,8 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
 .state-completed { background:#dbeafe; color:#1e40af; }
 .state-expired { background:#fef3c7; color:#92400e; }
 .state-cancelled { background:#fee2e2; color:#991b1b; }
-.inline-form { margin:0; }
+.admin-table td:last-child { min-width:190px; }
+.inline-form { display:inline-flex; margin:0 4px 4px 0; }
 .inline-form button { min-height:30px; padding:5px 8px; font-size:13px; }
 @media (max-width: 720px) {
   .topbar { display:block; padding:18px; }

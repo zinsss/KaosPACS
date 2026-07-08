@@ -101,6 +101,10 @@ admin page at:
 ```text
 http://<pacs-host>:8070/imaging/worklist
 ```
+
+The embedded Web admin page provides fallback operator actions for active rows:
+Done, Cancel, and Delete. Delete is implemented as a soft operator cancellation
+through Gateway, not physical DICOM or audit deletion.
 Browsers open `http://192.168.0.200/emr.php`. The Weasis buttons use the
 configured DICOMweb URL, so client workstations must be able to reach Orthanc
 HTTP at `192.168.0.200:8042` and must have Weasis installed and registered for
