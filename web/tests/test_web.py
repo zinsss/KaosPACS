@@ -165,6 +165,10 @@ def test_aio_report_renders_details_and_findings_sections() -> None:
     assert "scoresBlock(item)" in AIO_PANEL_SCRIPT
     assert 'list.className = "aio-score-list"' in AIO_PANEL_SCRIPT
     assert "formatScore" in AIO_PANEL_SCRIPT
+    assert "generatedNoteBlock(item)" in AIO_PANEL_SCRIPT
+    assert "Copy to clipboard" in AIO_PANEL_SCRIPT
+    assert "Edit this summary" in AIO_PANEL_SCRIPT
+    assert ".aio-generated-note" in CSS
 
 
 def test_aio_proxy_endpoints_call_aio_client() -> None:

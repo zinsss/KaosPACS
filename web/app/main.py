@@ -1216,6 +1216,12 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
 .aio-finding:first-child { border-top:0; padding-top:0; margin-top:0; }
 .aio-finding strong { display:block; margin-bottom:3px; overflow-wrap:anywhere; }
 .aio-finding span { color:var(--muted); overflow-wrap:anywhere; }
+.aio-generated-note { margin-top:8px; display:grid; gap:7px; }
+.aio-generated-note pre,
+.aio-generated-note textarea { width:100%; box-sizing:border-box; margin:0; padding:8px; border:1px solid var(--border); border-radius:6px; background:#2E3440; color:var(--text); font:13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+.aio-generated-note textarea { min-height:118px; resize:vertical; }
+.aio-note-actions { display:flex; gap:7px; flex-wrap:wrap; }
+.aio-copy-status { color:var(--muted); font-size:12px; align-self:center; }
 .aio-score-list { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:5px 10px; margin-top:7px; padding-top:7px; border-top:1px dashed var(--border); }
 .aio-score { display:flex; justify-content:space-between; gap:8px; color:var(--text); }
 .aio-score b { font-weight:600; overflow-wrap:anywhere; }
@@ -1438,6 +1444,8 @@ AIO_PANEL_SCRIPT = r"""
       status.textContent = findingStatus(item);
       row.appendChild(title);
       row.appendChild(status);
+      const generatedNote = generatedNoteBlock(item);
+      if (generatedNote) row.appendChild(generatedNote);
       const scores = scoresBlock(item);
       if (scores) row.appendChild(scores);
       container.appendChild(row);
@@ -1457,6 +1465,97 @@ AIO_PANEL_SCRIPT = r"""
     if (item.score_type) parts.push(String(item.score_type));
     if (item.prototype_only === true) parts.push("prototype");
     return parts.length ? parts.join(" · ") : "-";
+  }
+
+  function generatedNoteBlock(item) {
+    if (!item || typeof item !== "object" || !item.generated_note) return null;
+    const wrapper = document.createElement("div");
+    wrapper.className = "aio-generated-note";
+
+    const display = document.createElement("pre");
+    display.textContent = String(item.generated_note);
+    display.dataset.aioGeneratedNoteText = display.textContent;
+
+    const actions = document.createElement("div");
+    actions.className = "aio-note-actions";
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.textContent = "Copy to clipboard";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.textContent = "Edit this summary";
+    const status = document.createElement("span");
+    status.className = "aio-copy-status";
+    status.setAttribute("aria-live", "polite");
+
+    copy.addEventListener("click", function () {
+      copyText(currentGeneratedNoteText(wrapper)).then(function () {
+        status.textContent = "Copied";
+      }).catch(function () {
+        status.textContent = "Copy failed";
+      });
+    });
+    edit.addEventListener("click", function () {
+      toggleGeneratedNoteEditor(wrapper, edit);
+      status.textContent = "";
+    });
+
+    actions.appendChild(copy);
+    actions.appendChild(edit);
+    actions.appendChild(status);
+    wrapper.appendChild(display);
+    wrapper.appendChild(actions);
+    return wrapper;
+  }
+
+  function currentGeneratedNoteText(wrapper) {
+    const editor = wrapper.querySelector("textarea");
+    if (editor) return editor.value;
+    const display = wrapper.querySelector("[data-aio-generated-note-text]");
+    return display ? display.textContent : "";
+  }
+
+  function toggleGeneratedNoteEditor(wrapper, button) {
+    const editor = wrapper.querySelector("textarea");
+    if (editor) {
+      const display = document.createElement("pre");
+      display.textContent = editor.value;
+      display.dataset.aioGeneratedNoteText = display.textContent;
+      wrapper.replaceChild(display, editor);
+      button.textContent = "Edit this summary";
+      return;
+    }
+    const display = wrapper.querySelector("[data-aio-generated-note-text]");
+    if (!display) return;
+    const textarea = document.createElement("textarea");
+    textarea.value = display.textContent || "";
+    textarea.setAttribute("aria-label", "Edit AIO generated summary");
+    wrapper.replaceChild(textarea, display);
+    button.textContent = "Done editing";
+    textarea.focus();
+  }
+
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        if (document.execCommand("copy")) resolve();
+        else reject(new Error("copy failed"));
+      } catch (error) {
+        reject(error);
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    });
   }
 
   function scoresBlock(item) {
