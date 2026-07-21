@@ -148,13 +148,20 @@ docker compose ps
   and registered for the `weasis://` protocol. When eGHIS opens
   `/emr.php?m_patid=<chart_no>&m_patname=<name>&m_dob=<yyyymmdd>&m_sex=<M|F|O>`,
   Web scopes the page to that PatientID, displays chart number/name/DOB/sex
-  from the launch context, and allows repeated pasted screenshots/images, JPG,
-  PNG, or PDF upload directly into Orthanc as DICOM for that patient. Pasted
-  images are queued before upload, can be removed or reordered with Move
-  up/Move down, and each pasted image becomes a separate DICOM Secondary
-  Capture object. PDF upload remains file-picker only. Pasted images can be
-  uploaded without saving a temporary file on the desktop. V1 upload does not
-  ask the operator to manually enter patient demographics.
+  from the launch context, and allows repeated pasted screenshots/images plus
+  dragged or file-picked JPG, PNG, or PDF upload directly into Orthanc as DICOM
+  for that patient. Clipboard paste remains image-only. Queued uploads can be
+  removed or reordered with Move up/Move down. Images become DICOM Secondary
+  Capture objects; each PDF page is rendered into a separate DICOM Secondary
+  Capture image so it can be viewed directly in Orthanc/Web/Weasis. PDF uploads
+  are limited to 10 pages. Pasted images can be uploaded without saving a
+  temporary file on the desktop. V1
+  upload does not ask the operator to manually enter patient demographics. If
+  the EMR launch provides only `m_patid` and local Orthanc/DICOM metadata has no
+  demographics yet, Web can optionally call the KaosEghis-PACS patient-context
+  API to fill missing name/DOB/sex before display or upload. This is a
+  read-only identity fallback only; KaosPACS still does not connect directly to
+  the eGHIS database or fetch orders, reports, diagnoses, or EMR notes.
 - Gateway DICOM front door: enabled by default as `VIEWREX:104`. It stores
   received DICOM objects under `/app/data/dicom-inbox` and forwards them to
   Orthanc at `orthanc:11112`. It appends non-PHI charset/tag inspection summaries to
@@ -203,11 +210,40 @@ KaosPACS Web supports browser Basic Auth for operator access:
 ```text
 WEB_AUTH_USERNAME=kaospacs
 WEB_AUTH_PASSWORD=<random-password>
+WEB_EMR_AUTH_REQUIRED=false
 ```
 
 Set a random local password in `.env` and do not commit it. Leaving
 `WEB_AUTH_PASSWORD` empty disables Web authentication for development only.
-`GET /health` remains unauthenticated for Docker health checks.
+`WEB_EMR_AUTH_REQUIRED=false` lets the legacy EMR launch `/emr.php` without a
+browser Basic Auth retry loop. Set it to `true` only if the EMR desktop can
+handle Basic Auth. `GET /health` remains unauthenticated for Docker health
+checks.
+
+Optional patient-context fallback for chart-only EMR launches:
+
+```text
+KAOSEGHIS_PACS_BASE_URL=http://192.168.0.100:8765
+KAOSPACS_INTEGRATION_TOKEN=<shared-token>
+KAOSEGHIS_PACS_TIMEOUT_SECONDS=3
+```
+
+When configured, Web calls KaosEghis-PACS
+`GET /api/kaospacs/patient-context?chart_no=<chart_no>` only when local launch
+parameters and Orthanc metadata are missing name, DOB, or sex. It fills only
+blank fields and does not log the token or returned demographics.
+
+Web also checks the local KaosPACS Gateway imaging worklist before calling
+KaosEghis-PACS, so already-synced imaging orders can fill demographics even
+before the first DICOM image exists. As a final browser-local fallback, the EMR
+desktop can call its own KaosEghis-PACS bridge at:
+
+```text
+WEB_LOCAL_PATIENT_CONTEXT_URL=http://127.0.0.1:8765
+```
+
+That browser-local path avoids exposing the shared integration token in the
+KaosPACS Web page.
 
 `GET /status` is an operational endpoint and is protected when
 `GATEWAY_API_TOKEN` is set. It reports dependency reachability and ownership

@@ -122,20 +122,28 @@ When eGHIS opens
 `http://192.168.0.200/emr.php?m_patid=<chart_no>&m_patname=<name>&m_dob=<yyyymmdd>&m_sex=<M|F|O>`,
 KaosPACS Web filters studies to that chart number, displays chart
 number/name/DOB/sex from the launch context, and shows a file upload control on
-the same patient page. V1 upload accepts repeated pasted clipboard images, JPG,
-PNG, and PDF only, creates DICOM objects with `PatientID=<chart_no>` plus the
-supplied name/DOB/sex when present, and uploads them to Orthanc. Pasted images
-are queued before upload in paste order, can be removed or reordered with Move
-up/Move down, and each pasted image becomes a separate DICOM Secondary Capture
-object. PDF upload remains file-picker only. Pasted clipboard images do not
-need to be saved as temporary desktop files. It does not ask the operator to
-manually type patient demographics. The upload size limit is controlled by:
+the same patient page. V1 upload accepts repeated pasted clipboard images and
+dragged or file-picked JPG, PNG, and PDF files, creates DICOM objects with
+`PatientID=<chart_no>` plus the supplied name/DOB/sex when present, and uploads
+them to Orthanc. Clipboard paste remains image-only. Queued uploads can be
+removed or reordered with Move up/Move down. Images become DICOM Secondary
+Capture objects; each PDF page is rendered into a separate DICOM Secondary
+Capture image so it can be viewed directly in Orthanc/Web/Weasis. PDF uploads
+are limited to 10 pages. Pasted clipboard images do not need to be saved as
+temporary desktop files. It does not ask the
+operator to manually type patient demographics. The upload size limit is
+controlled by:
 
 ```text
 WEB_UPLOAD_MAX_BYTES=26214400
 WEB_AUTH_USERNAME=kaospacs
 WEB_AUTH_PASSWORD=<random-password>
 WEB_ADMIN_AUTH_REQUIRED=false
+WEB_EMR_AUTH_REQUIRED=false
+KAOSEGHIS_PACS_BASE_URL=http://192.168.0.100:8765
+KAOSPACS_INTEGRATION_TOKEN=<shared-token>
+KAOSEGHIS_PACS_TIMEOUT_SECONDS=3
+WEB_LOCAL_PATIENT_CONTEXT_URL=http://127.0.0.1:8765
 ```
 
 Web does not own MWL state, infer completion/expiry, receive modality DICOM, or
@@ -147,9 +155,32 @@ the clinic LAN. Do not commit the production password. Leave
 Docker health checks.
 
 `WEB_ADMIN_AUTH_REQUIRED=false` lets KaosEghis embed `/imaging/worklist`
-without a browser Basic Auth retry loop. Other Web pages, including `/emr.php`,
-still use `WEB_AUTH_PASSWORD` when it is set. The embedded admin page still
+without a browser Basic Auth retry loop. `WEB_EMR_AUTH_REQUIRED=false` lets the
+legacy EMR launch `/emr.php` without a Basic Auth retry loop; set it to `true`
+only if the EMR desktop can handle Basic Auth. The embedded admin page still
 performs state-changing actions through Gateway using the internal bearer token.
+
+`KAOSEGHIS_PACS_BASE_URL` is optional. When set, KaosPACS Web can call the
+KaosEghis-PACS read-only patient-context endpoint for chart-only EMR launches:
+
+```text
+GET /api/kaospacs/patient-context?chart_no=<chart_no>
+Authorization: Bearer <KAOSPACS_INTEGRATION_TOKEN>
+```
+
+This fallback is used only when launch parameters and Orthanc/DICOM metadata are
+missing name, DOB, or sex. Web fills only blank fields before rendering and
+before generating upload DICOM metadata. It must not fetch eGHIS orders,
+reports, diagnoses, notes, phone numbers, addresses, resident IDs, or any other
+EMR data.
+
+Before using the server-to-server KaosEghis-PACS fallback, Web checks Gateway
+`/imaging/worklist` for already-synced order demographics. If the PACS server
+cannot reach `192.168.0.100:8765`, the page can still use
+`WEB_LOCAL_PATIENT_CONTEXT_URL=http://127.0.0.1:8765` from the EMR desktop
+browser. That browser-local path must not embed the shared bearer token in HTML;
+KaosEghis-PACS should allow loopback-only requests without a token while still
+requiring bearer authentication for non-loopback callers.
 
 Gateway DICOM front-door settings:
 

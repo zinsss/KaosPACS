@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 from app.api import audit_event, gateway_bad_gateway, json_response, mwl_client, text
 from app.clients.mwl import MwlHttpError, MwlUnavailableError
 
 
+SEOUL_TZ = ZoneInfo("Asia/Seoul")
 IMAGING_STATES = ("active", "completed", "expired", "cancelled")
 ALL_STATES = (*IMAGING_STATES, "inactive")
 
@@ -185,5 +187,5 @@ def _timestamp(value: str | None, *, future: bool = False) -> float:
     except ValueError:
         return float("inf") if future else 0.0
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=SEOUL_TZ)
     return parsed.timestamp()

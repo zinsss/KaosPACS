@@ -222,13 +222,29 @@ Upload is only enabled on patient-context pages such as:
 http://192.168.0.200/emr.php?m_patid=9426&m_patname=%EC%9D%B4%EC%A7%84%EC%84%B1&m_dob=19700101&m_sex=M
 ```
 
-V1 upload accepts repeated pasted clipboard images, JPG, PNG, and PDF files.
-Pasted images should appear as queued preview items before upload. Use Remove
-to drop an item, Clear all to empty the queue, and Move up/Move down to adjust
-the upload order. Each queued pasted image is converted to a separate DICOM
-Secondary Capture object and sent to Orthanc over the internal Docker network.
-PDF upload remains file-picker only. If the launch URL includes `m_patname`,
-`m_dob`, and `m_sex`, Web displays those values and stores them in the
+If the page opens with only `m_patid` and patient name/DOB/sex are blank, first
+check whether Orthanc already has prior DICOM demographics for that PatientID.
+If there are no prior studies, configure the optional KaosEghis-PACS
+patient-context fallback:
+
+```text
+KAOSEGHIS_PACS_BASE_URL=http://192.168.0.100:8765
+KAOSPACS_INTEGRATION_TOKEN=<shared-token>
+KAOSEGHIS_PACS_TIMEOUT_SECONDS=3
+```
+
+The fallback is read-only and only fills missing display/upload identity fields.
+It does not connect KaosPACS to the eGHIS database or fetch orders/reports.
+
+V1 upload accepts repeated pasted clipboard images and dragged or file-picked
+JPG, PNG, and PDF files. Clipboard paste remains image-only. Queued uploads
+should appear as preview/list items before upload. Use Remove to drop an item,
+Clear all to empty the queue, and Move up/Move down to adjust the upload order.
+Each queued image is converted to a separate DICOM Secondary Capture object and
+sent to Orthanc over the internal Docker network. Each PDF page is rendered into
+a separate DICOM Secondary Capture image so it can be viewed directly in
+Orthanc/Web/Weasis. PDF uploads are limited to 10 pages. If the launch URL includes
+`m_patname`, `m_dob`, and `m_sex`, Web displays those values and stores them in the
 generated DICOM upload object. The upload page still does not ask the operator
 to manually type patient demographics.
 
@@ -241,8 +257,10 @@ WEB_AUTH_PASSWORD
 ```
 
 If Web is reachable without a password on the clinic LAN, confirm
-`WEB_AUTH_PASSWORD` is set and restart the web service. `GET /health` remains
-open by design.
+`WEB_AUTH_PASSWORD` is set and restart the web service. The legacy EMR launch
+page can intentionally bypass Basic Auth when `WEB_EMR_AUTH_REQUIRED=false` so
+embedded EMR browsers do not get stuck in an auth retry loop. `GET /health`
+remains open by design.
 
 ## BMD Cannot Query Worklist
 

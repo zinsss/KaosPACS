@@ -18,7 +18,8 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from .config import Config, load_config
-from .dicom_upload import create_upload_dicom
+from .dicom_upload import create_upload_dicoms
+from .kaoseghis_pacs import KaosEghisPacsClient, PatientContextResult
 from .orthanc import OrthancClient, StudySummary
 
 with warnings.catch_warnings():
@@ -157,11 +158,17 @@ def create_handler(
     orthanc: OrthancClient,
     aio: AioClient | None = None,
     gateway: GatewayClient | None = None,
+    patient_context_client: KaosEghisPacsClient | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     aio_client = aio or AioClient(config.kaospacs_aio_url)
     gateway_client = gateway or GatewayClient(
         getattr(config, "gateway_url", "http://gateway:8060"),
         getattr(config, "gateway_api_token", ""),
+    )
+    fallback_patient_client = patient_context_client or KaosEghisPacsClient(
+        _safe_str(getattr(config, "kaoseghis_pacs_base_url", "")),
+        _safe_str(getattr(config, "kaospacs_integration_token", "")),
+        _safe_float(getattr(config, "kaoseghis_pacs_timeout_seconds", 3), 3.0),
     )
 
     class Handler(BaseHTTPRequestHandler):
@@ -230,6 +237,12 @@ def create_handler(
             )
 
         def _require_auth(self, path: str) -> bool:
+            if _is_emr_launch_path(path) and not getattr(
+                config,
+                "emr_auth_required",
+                False,
+            ):
+                return True
             if _is_embedded_admin_path(path) and not getattr(
                 config,
                 "admin_auth_required",
@@ -400,6 +413,15 @@ def create_handler(
                         query=query,
                         limit=config.study_limit,
                     )
+                    patient = _patient_context_from_studies(patient, studies)
+                    patient = _patient_context_with_gateway_worklist(
+                        patient,
+                        gateway_client.imaging_worklist,
+                    )
+                    patient = _patient_context_with_fallback(
+                        patient,
+                        fallback_patient_client.fetch_patient_context,
+                    )
                 elif path == "/emr.php":
                     studies = []
                 else:
@@ -417,6 +439,15 @@ def create_handler(
                 )
             except Exception as exc:
                 LOGGER.warning("Orthanc page query failed exception=%s", exc.__class__.__name__)
+                if path == "/emr.php" and patient.patient_id:
+                    patient = _patient_context_with_gateway_worklist(
+                        patient,
+                        gateway_client.imaging_worklist,
+                    )
+                    patient = _patient_context_with_fallback(
+                        patient,
+                        fallback_patient_client.fetch_patient_context,
+                    )
                 body = render_index(
                     config,
                     [],
@@ -450,6 +481,7 @@ def create_handler(
             if not patient.patient_id:
                 self._redirect_upload(params, "missing_patient")
                 return
+            patient = self._patient_context_for_upload(patient)
 
             content_length = int(self.headers.get("Content-Length") or "0")
             if content_length <= 0:
@@ -518,7 +550,7 @@ def create_handler(
                         raise ValueError("missing_file")
                     if len(content) > config.upload_max_bytes:
                         raise ValueError("too_large")
-                    result = create_upload_dicom(
+                    results = create_upload_dicoms(
                         patient_id=patient.patient_id,
                         patient_name=patient.patient_name,
                         patient_birth_date=patient.patient_birth_date,
@@ -529,15 +561,16 @@ def create_handler(
                         upload_index=index,
                         upload_count=upload_count,
                     )
-                    orthanc.upload_instance(result.dicom_bytes)
-                    uploaded_count += 1
-                    LOGGER.info(
-                        "Web upload stored event=upload_stored accession_number=%s modality=%s upload_index=%s upload_count=%s",
-                        result.accession_number,
-                        result.modality,
-                        index,
-                        upload_count,
-                    )
+                    for result in results:
+                        orthanc.upload_instance(result.dicom_bytes)
+                        uploaded_count += 1
+                        LOGGER.info(
+                            "Web upload stored event=upload_stored accession_number=%s modality=%s upload_index=%s upload_count=%s",
+                            result.accession_number,
+                            result.modality,
+                            index,
+                            upload_count,
+                        )
                 except ValueError as exc:
                     failed_count += 1
                     first_error = first_error or str(exc)
@@ -576,6 +609,29 @@ def create_handler(
             self.send_header("Location", location)
             self.send_header("Content-Length", "0")
             self.end_headers()
+
+        def _patient_context_for_upload(self, patient: PatientContext) -> PatientContext:
+            if not _patient_context_missing_demographics(patient):
+                return patient
+            try:
+                studies = orthanc.studies_for_patient(
+                    patient.patient_id,
+                    query="",
+                    limit=1,
+                )
+                patient = _patient_context_from_studies(patient, studies)
+            except Exception as exc:
+                LOGGER.info(
+                    "Patient upload context study lookup failed exception=%s",
+                    exc.__class__.__name__,
+                )
+            return _patient_context_with_fallback(
+                _patient_context_with_gateway_worklist(
+                    patient,
+                    gateway_client.imaging_worklist,
+                ),
+                fallback_patient_client.fetch_patient_context,
+            )
 
         def _json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
             encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -654,6 +710,7 @@ def render_index(
     <section class="grid">{rows}</section>
 </main>
 <script>{AIO_PANEL_SCRIPT}</script>
+<script>{_patient_context_browser_fallback_script(config, patient)}</script>
 </body>
 </html>"""
 
@@ -768,7 +825,7 @@ def _imaging_worklist_row(entry: dict[str, Any]) -> str:
         f"<td>{html.escape(_entry_text(entry, 'PatientID') or '-')}</td>"
         f"<td>{html.escape(_entry_text(entry, 'PatientName') or '-')}</td>"
         f"<td>{html.escape(_entry_text(entry, 'Modality') or '-')}</td>"
-        f"<td>{html.escape(_entry_text(entry, 'ScheduledAt') or '-')}</td>"
+        f"<td>{html.escape(_format_kst_datetime(_entry_text(entry, 'ScheduledAt')) or '-')}</td>"
         f"<td>{html.escape(_entry_text(entry, 'Description') or '-')}</td>"
         f"<td>{html.escape(_terminal_time(entry) or '-')}</td>"
         f"<td>{action}</td>"
@@ -849,7 +906,7 @@ def _datetime_sort_value(value: str) -> float:
     except ValueError:
         return 0.0
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=SEOUL_TZ)
     return parsed.timestamp()
 
 
@@ -859,11 +916,24 @@ def _entry_text(entry: dict[str, Any], key: str) -> str:
 
 
 def _terminal_time(entry: dict[str, Any]) -> str:
-    return (
+    return _format_kst_datetime(
         _entry_text(entry, "CompletedAt")
         or _entry_text(entry, "ExpiredAt")
         or _entry_text(entry, "CancelledAt")
     )
+
+
+def _format_kst_datetime(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=SEOUL_TZ)
+    local = parsed.astimezone(SEOUL_TZ)
+    return f"{local.strftime('%Y-%m-%d %H:%M:%S')} KST"
 
 
 def _worklist_action_form(action: str, accession: str, label: str, title: str) -> str:
@@ -961,15 +1031,15 @@ def _upload_form(
     )
     return f"""
 <section class="upload-panel">
-  <form method="post" action="{html.escape(action)}" enctype="multipart/form-data" data-paste-upload>
+  <form method="post" action="{html.escape(action)}" enctype="multipart/form-data" data-paste-upload data-patient-upload-form>
     <label for="file">Add image or PDF to this patient's PACS</label>
     <div id="paste-zone" class="paste-zone" tabindex="0">
-      <strong>Paste image here</strong>
-      <span>Copy one or more images or screenshots, click here, then press Ctrl+V. Nothing needs to be saved on the desktop.</span>
+      <strong>Paste image or drop files here</strong>
+      <span>Copy images/screenshots and press Ctrl+V, or drag JPG, PNG, or PDF files onto this box. Nothing needs to stay on the desktop.</span>
       <div id="paste-status" class="paste-status" aria-live="polite"></div>
     </div>
     <div class="paste-queue-bar">
-      <strong>Queued pasted images</strong>
+      <strong>Queued uploads</strong>
       <button type="button" id="paste-clear" class="secondary">Clear all</button>
     </div>
     <div id="paste-queue" class="paste-queue" aria-live="polite"></div>
@@ -977,7 +1047,7 @@ def _upload_form(
       <input id="file" name="file" type="file" accept="image/jpeg,image/png,application/pdf" multiple required>
       <button type="submit">Upload</button>
     </div>
-    <p>Paste one or more images, or choose JPG, PNG, or PDF. Each queued pasted image is stored as a separate DICOM in Orthanc for PatientID {html.escape(patient.patient_id)}. PDF upload remains file-picker only.</p>
+    <p>Paste one or more images, drag JPG/PNG/PDF files here, or choose files with the picker. Each queued image is stored as a separate DICOM in Orthanc for PatientID {html.escape(patient.patient_id)}. Each PDF page is stored as a viewable DICOM image. PDFs are limited to 10 pages.</p>
   </form>
   {message}
 </section>
@@ -996,6 +1066,23 @@ def _study_payload(study: StudySummary, config: Config) -> dict[str, Any]:
     return payload
 
 
+def _patient_context_browser_fallback_script(config: Config, patient: PatientContext) -> str:
+    if not patient.patient_id or not _patient_context_missing_demographics(patient):
+        return ""
+    raw_urls = _safe_str(getattr(config, "local_patient_context_url", ""))
+    urls = [url.strip().rstrip("/") for url in raw_urls.split(",") if url.strip()]
+    if not urls:
+        return ""
+    settings = {
+        "baseUrls": urls,
+        "chartNo": patient.patient_id,
+    }
+    return PATIENT_CONTEXT_BROWSER_FALLBACK_SCRIPT.replace(
+        "__PATIENT_CONTEXT_SETTINGS__",
+        json.dumps(settings, ensure_ascii=False),
+    )
+
+
 def _format_date(value: str) -> str:
     if len(value) == 8 and value.isdigit():
         return f"{value[:4]}-{value[4:6]}-{value[6:8]}"
@@ -1009,23 +1096,34 @@ def _safe_limit(raw: str) -> int:
         return 100
 
 
+def _safe_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_str(value: Any) -> str:
+    return value if isinstance(value, str) else ""
+
+
 def _patient_context_html(patient: PatientContext) -> str:
     if not patient.patient_id:
         return ""
     items = (
-        ("Chart no.", patient.patient_id),
-        ("Name", patient.patient_name),
-        ("DOB", patient.patient_birth_date),
-        ("Sex", patient.patient_sex),
+        ("Chart no.", "patient_id", patient.patient_id),
+        ("Name", "patient_name", patient.patient_name),
+        ("DOB", "patient_birth_date", patient.patient_birth_date),
+        ("Sex", "patient_sex", patient.patient_sex),
     )
     fields = "\n".join(
         "<div>"
         f"<span>{html.escape(label)}</span>"
-        f"<strong>{html.escape(value or '-')}</strong>"
+        f'<strong data-patient-field="{html.escape(field)}">{html.escape(value or "-")}</strong>'
         "</div>"
-        for label, value in items
+        for label, field, value in items
     )
-    return f'<section class="patient-context">{fields}</section>'
+    return f'<section class="patient-context" data-patient-context>{fields}</section>'
 
 
 def _patient_context_from_params(params: dict[str, list[str]]) -> PatientContext:
@@ -1061,6 +1159,71 @@ def _patient_context_from_studies(
         or _first_study_value(studies, "patient_birth_date"),
         patient_sex=patient.patient_sex or _first_study_value(studies, "patient_sex"),
     )
+
+
+def _patient_context_with_fallback(
+    patient: PatientContext,
+    fetch_patient_context: Any,
+) -> PatientContext:
+    if not patient.patient_id or not _patient_context_missing_demographics(patient):
+        return patient
+    try:
+        result = fetch_patient_context(patient.patient_id)
+    except Exception as exc:
+        LOGGER.info(
+            "Patient context fallback result=unavailable exception=%s",
+            exc.__class__.__name__,
+        )
+        return patient
+    if not isinstance(result, PatientContextResult) or not result.found:
+        return patient
+    return PatientContext(
+        patient_id=patient.patient_id or result.chart_no,
+        patient_name=patient.patient_name or result.patient_name,
+        patient_birth_date=patient.patient_birth_date or result.patient_birth_date,
+        patient_sex=patient.patient_sex or result.patient_sex,
+    )
+
+
+def _patient_context_with_gateway_worklist(
+    patient: PatientContext,
+    fetch_imaging_worklist: Any,
+) -> PatientContext:
+    if not patient.patient_id or not _patient_context_missing_demographics(patient):
+        return patient
+    try:
+        payload = fetch_imaging_worklist(view="all")
+    except Exception as exc:
+        LOGGER.info(
+            "Patient context Gateway worklist fallback unavailable exception=%s",
+            exc.__class__.__name__,
+        )
+        return patient
+    entries = payload.get("entries", []) if isinstance(payload, dict) else []
+    if not isinstance(entries, list):
+        return patient
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        entry_patient_id = (
+            _entry_text(entry, "PatientID")
+            or _entry_text(entry, "ChartNo")
+            or _entry_text(entry, "chart_no")
+        )
+        if entry_patient_id != patient.patient_id:
+            continue
+        return PatientContext(
+            patient_id=patient.patient_id,
+            patient_name=patient.patient_name or _entry_text(entry, "PatientName"),
+            patient_birth_date=patient.patient_birth_date
+            or _entry_text(entry, "PatientBirthDate"),
+            patient_sex=patient.patient_sex or _entry_text(entry, "PatientSex"),
+        )
+    return patient
+
+
+def _patient_context_missing_demographics(patient: PatientContext) -> bool:
+    return not patient.patient_name or not patient.patient_birth_date or not patient.patient_sex
 
 
 def _first_study_value(studies: list[StudySummary], field: str) -> str:
@@ -1115,6 +1278,17 @@ def _is_embedded_admin_path(path: str) -> bool:
     }
 
 
+def _is_emr_launch_path(path: str) -> bool:
+    return (
+        path == "/emr.php"
+        or path == "/favicon.ico"
+        or path.startswith("/thumbnail/")
+        or path.startswith("/api/aio/study/")
+        or path.startswith("/api/aio/infer/")
+        or (path.startswith("/api/aio/report/") and path.endswith("/review"))
+    )
+
+
 def _upload_redirect_status(summary: UploadSummary) -> str:
     if summary.uploaded_count and summary.failed_count:
         return "partial"
@@ -1137,6 +1311,8 @@ def _upload_status_message(status: str, uploaded_count: str = "", failed_count: 
         "too_large": "The selected file is too large.",
         "unsupported_upload_type": "Only JPG, PNG, and PDF files are supported.",
         "invalid_pdf": "The uploaded PDF file is not valid.",
+        "pdf_too_many_pages": "PDF upload is limited to 10 pages.",
+        "pdf_renderer_unavailable": "PDF rendering is not available.",
         "failed": "Upload failed while saving to PACS.",
     }
     return messages.get(status, "")
@@ -1150,42 +1326,64 @@ def _safe_count(raw: str) -> int:
 
 
 CSS = """
-:root { color-scheme: light; --border:#d8dee8; --text:#152033; --muted:#5f6c7b; --panel:#fff; --bg:#f5f7fa; --blue:#175cd3; }
+:root {
+  color-scheme: dark;
+  --bg:#2E3440;
+  --topbar:#2B303B;
+  --panel:#3B4252;
+  --panel-2:#434C5E;
+  --panel-3:#4C566A;
+  --border:#4C566A;
+  --text:#ECEFF4;
+  --text-soft:#E5E9F0;
+  --muted:#D8DEE9;
+  --blue:#5E81AC;
+  --accent:#88C0D0;
+  --green:#A3BE8C;
+  --yellow:#EBCB8B;
+  --red:#BF616A;
+  --shadow:rgba(15, 17, 22, .42);
+}
 * { box-sizing:border-box; }
 body { margin:0; font-family: system-ui, -apple-system, Segoe UI, sans-serif; background:var(--bg); color:var(--text); }
-.topbar { display:flex; gap:24px; align-items:end; justify-content:space-between; padding:24px 28px 18px; border-bottom:1px solid var(--border); background:#fff; }
+.topbar { display:flex; gap:24px; align-items:end; justify-content:space-between; padding:24px 28px 18px; border-bottom:1px solid var(--border); background:var(--topbar); box-shadow:0 10px 28px var(--shadow); }
 h1 { margin:0; font-size:24px; line-height:1.2; font-weight:700; letter-spacing:0; }
 p { margin:5px 0 0; color:var(--muted); }
 .search { display:flex; gap:8px; min-width:min(520px, 100%); }
-input { width:100%; min-height:40px; padding:8px 11px; border:1px solid var(--border); border-radius:6px; font:inherit; }
-button, a { min-height:36px; border-radius:6px; border:1px solid var(--border); padding:8px 11px; background:#fff; color:var(--text); text-decoration:none; font:inherit; display:inline-flex; align-items:center; justify-content:center; white-space:nowrap; }
-button, .primary { background:var(--blue); color:#fff; border-color:var(--blue); }
+input { width:100%; min-height:40px; padding:8px 11px; border:1px solid var(--border); border-radius:6px; font:inherit; background:var(--panel-2); color:var(--text); }
+input::placeholder { color:#AEB8C8; }
+button, a { min-height:36px; border-radius:6px; border:1px solid var(--border); padding:8px 11px; background:var(--panel-2); color:var(--text); text-decoration:none; font:inherit; display:inline-flex; align-items:center; justify-content:center; white-space:nowrap; }
+button:hover, a:hover { border-color:var(--accent); }
+button, .primary { background:var(--blue); color:#ECEFF4; border-color:var(--blue); }
 main { padding:18px 28px 32px; }
 .summary { color:var(--muted); margin-bottom:12px; }
-.patient-context, .upload-panel { background:#fff; border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:12px; }
+.patient-context, .upload-panel { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:12px; box-shadow:0 8px 20px var(--shadow); }
 .patient-context { display:grid; grid-template-columns:repeat(4, minmax(120px, 1fr)); gap:10px 14px; }
 .patient-context span { display:block; color:var(--muted); font-size:12px; margin-bottom:2px; }
 .patient-context strong { display:block; overflow-wrap:anywhere; }
+.patient-context-status { grid-column:1 / -1; color:var(--muted); font-size:12px; }
 .upload-panel label { display:block; font-weight:700; margin-bottom:8px; }
 .upload-row { display:flex; gap:8px; align-items:center; }
 .upload-row input { min-height:36px; }
 .upload-panel p { font-size:13px; }
-.upload-message { margin-top:8px; color:#0f766e; font-weight:700; }
-.paste-zone { border:1px dashed #9aa8b8; border-radius:8px; padding:12px; margin:8px 0 10px; background:#f8fafc; outline:none; }
-.paste-zone:focus { border-color:var(--blue); box-shadow:0 0 0 3px rgba(23,92,211,.12); }
+.upload-message { margin-top:8px; color:var(--green); font-weight:700; }
+.paste-zone { border:1px dashed #81A1C1; border-radius:8px; padding:12px; margin:8px 0 10px; background:var(--panel-2); outline:none; }
+.paste-zone:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(136,192,208,.18); }
+.paste-zone.drag-over { border-color:var(--accent); background:#3A4B5E; box-shadow:0 0 0 3px rgba(136,192,208,.2); }
 .paste-zone strong { display:block; margin-bottom:4px; }
 .paste-zone span, .paste-status { color:var(--muted); font-size:13px; }
 .paste-queue-bar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:8px 0; }
 .paste-queue-bar strong { font-size:14px; }
 .paste-queue { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:10px; margin-bottom:10px; }
-.paste-item { border:1px solid var(--border); border-radius:8px; background:#f8fafc; padding:8px; }
-.paste-item img { display:block; width:100%; height:120px; object-fit:contain; border:1px solid var(--border); border-radius:6px; background:#111827; }
+.paste-item { border:1px solid var(--border); border-radius:8px; background:var(--panel-2); padding:8px; }
+.paste-item img { display:block; width:100%; height:120px; object-fit:contain; border:1px solid var(--border); border-radius:6px; background:#1F242E; }
+.paste-file-preview { display:flex; align-items:center; justify-content:center; width:100%; height:120px; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:var(--text-soft); font-weight:700; }
 .paste-item-header { display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:7px; font-size:13px; }
 .paste-actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:7px; }
 .paste-actions button, .secondary { min-height:30px; font-size:13px; padding:5px 8px; }
 .paste-actions button:last-child { grid-column:1 / -1; }
-.secondary { background:#fff; color:var(--text); border-color:var(--border); }
-.notice { border:1px solid var(--border); background:#fff; border-radius:8px; padding:14px; margin-bottom:12px; }
+.secondary { background:var(--panel-2); color:var(--text); border-color:var(--border); }
+.notice { border:1px solid var(--border); background:var(--panel); border-radius:8px; padding:14px; margin-bottom:12px; }
 .grid { display:grid; grid-template-columns:minmax(0, 1fr); gap:12px; }
 .study { width:100%; display:grid; grid-template-columns:220px minmax(0, 1fr); min-height:220px; background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
 .thumb { width:220px; min-height:220px; background:#101820; display:flex; align-items:center; justify-content:center; color:#aab6c4; }
@@ -1193,19 +1391,19 @@ main { padding:18px 28px 32px; }
 .no-thumb { font-size:13px; }
 .study-body { min-width:0; padding:13px 14px 12px; }
 .line { display:flex; justify-content:space-between; gap:10px; color:var(--muted); font-size:13px; }
-.modality { color:#0f766e; font-weight:700; }
+.modality { color:var(--accent); font-weight:700; }
 h2 { margin:7px 0 10px; font-size:17px; line-height:1.25; letter-spacing:0; overflow-wrap:anywhere; }
 dl { display:grid; grid-template-columns:1fr 1fr; gap:7px 12px; margin:0; }
 dt { color:var(--muted); font-size:12px; }
 dd { margin:2px 0 0; overflow-wrap:anywhere; }
 .actions { display:flex; gap:8px; margin-top:13px; flex-wrap:wrap; }
-.aio-panel { margin-top:13px; border:1px solid var(--border); border-radius:8px; background:#f8fafc; padding:10px; }
+.aio-panel { margin-top:13px; border:1px solid var(--border); border-radius:8px; background:var(--panel-2); padding:10px; }
 .aio-panel h3 { margin:0 0 8px; font-size:15px; line-height:1.25; letter-spacing:0; }
-.aio-disclaimer { margin:0 0 9px; padding:8px; border:1px solid #f2c94c; border-radius:6px; background:#fff8db; color:#4a3412; font:700 12px/1.35 system-ui, -apple-system, Segoe UI, sans-serif; white-space:pre-wrap; }
+.aio-disclaimer { margin:0 0 9px; padding:8px; border:1px solid #D08770; border-radius:6px; background:#3A3230; color:var(--yellow); font:700 12px/1.35 system-ui, -apple-system, Segoe UI, sans-serif; white-space:pre-wrap; }
 .aio-content p { margin:0 0 8px; }
 .aio-sections { display:grid; grid-template-columns:minmax(0, 1fr); gap:8px; align-items:start; margin-bottom:9px; }
-.aio-section { border:1px solid var(--border); border-radius:7px; background:#fff; overflow:hidden; }
-.aio-section summary { cursor:pointer; padding:8px 10px; font-weight:700; color:#152033; background:#eef4ff; border-bottom:1px solid var(--border); }
+.aio-section { border:1px solid var(--border); border-radius:7px; background:var(--panel); overflow:hidden; }
+.aio-section summary { cursor:pointer; padding:8px 10px; font-weight:700; color:var(--text); background:var(--panel-2); border-bottom:1px solid var(--border); }
 .aio-section:not([open]) summary { border-bottom:0; }
 .aio-section-body { padding:9px 10px; }
 .aio-fields { display:grid; grid-template-columns:1fr; gap:6px; margin:0; }
@@ -1228,25 +1426,25 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
 .aio-score em { font-style:normal; color:var(--muted); font-variant-numeric:tabular-nums; }
 .aio-controls { display:flex; gap:8px; flex-wrap:wrap; }
 .aio-controls button[disabled] { opacity:.55; cursor:not-allowed; }
-.empty, .error { border:1px solid var(--border); background:#fff; border-radius:8px; padding:18px; }
-.error { border-color:#ef9a9a; color:#9f1239; }
+.empty, .error { border:1px solid var(--border); background:var(--panel); border-radius:8px; padding:18px; }
+.error { border-color:var(--red); color:#F2B8BE; }
 .admin-counts { display:grid; grid-template-columns:repeat(5, minmax(110px, 1fr)); gap:10px; margin-bottom:12px; }
 .date-nav { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
-.date-nav strong { min-height:36px; display:inline-flex; align-items:center; padding:7px 10px; border:1px solid var(--border); border-radius:6px; background:#fff; }
-.admin-counts div { background:#fff; border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
+.date-nav strong { min-height:36px; display:inline-flex; align-items:center; padding:7px 10px; border:1px solid var(--border); border-radius:6px; background:var(--panel); }
+.admin-counts div { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
 .admin-counts span { display:block; color:var(--muted); font-size:12px; }
 .admin-counts strong { display:block; margin-top:2px; font-size:18px; }
-.admin-table-wrap { overflow:auto; background:#fff; border:1px solid var(--border); border-radius:8px; }
+.admin-table-wrap { overflow:auto; background:var(--panel); border:1px solid var(--border); border-radius:8px; }
 .admin-table { width:100%; border-collapse:collapse; min-width:980px; }
 .admin-table th, .admin-table td { padding:9px 10px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; font-size:13px; }
-.admin-table th { background:#f8fafc; color:#334155; font-weight:700; position:sticky; top:0; }
+.admin-table th { background:var(--panel-2); color:var(--text); font-weight:700; position:sticky; top:0; }
 .admin-table tr:last-child td { border-bottom:0; }
 .empty-cell { color:var(--muted); text-align:center; padding:22px !important; }
-.state { display:inline-flex; min-width:76px; justify-content:center; border-radius:999px; padding:3px 8px; background:#e2e8f0; color:#334155; font-weight:700; font-size:12px; }
-.state-active { background:#dcfce7; color:#166534; }
-.state-completed { background:#dbeafe; color:#1e40af; }
-.state-expired { background:#fef3c7; color:#92400e; }
-.state-cancelled { background:#fee2e2; color:#991b1b; }
+.state { display:inline-flex; min-width:76px; justify-content:center; border-radius:999px; padding:3px 8px; background:var(--panel-3); color:var(--text); font-weight:700; font-size:12px; }
+.state-active { background:#31483A; color:#B8E0A4; }
+.state-completed { background:#30465D; color:#B7D7F0; }
+.state-expired { background:#4B412E; color:#F1D8A2; }
+.state-cancelled { background:#51323A; color:#F0B6BE; }
 .admin-table td:last-child { min-width:190px; }
 .inline-form { display:inline-flex; margin:0 4px 4px 0; }
 .inline-form button { min-height:30px; padding:5px 8px; font-size:13px; }
@@ -1597,6 +1795,83 @@ AIO_PANEL_SCRIPT = r"""
 """
 
 
+PATIENT_CONTEXT_BROWSER_FALLBACK_SCRIPT = r"""
+(function () {
+  const settings = __PATIENT_CONTEXT_SETTINGS__;
+  if (!settings || !Array.isArray(settings.baseUrls) || !settings.baseUrls.length || !settings.chartNo) return;
+  const section = document.querySelector("[data-patient-context]");
+  if (!section) return;
+  const fields = {
+    patient_name: section.querySelector('[data-patient-field="patient_name"]'),
+    patient_birth_date: section.querySelector('[data-patient-field="patient_birth_date"]'),
+    patient_sex: section.querySelector('[data-patient-field="patient_sex"]')
+  };
+  if (!isBlank(fields.patient_name) && !isBlank(fields.patient_birth_date) && !isBlank(fields.patient_sex)) {
+    return;
+  }
+  const status = document.createElement("div");
+  status.className = "patient-context-status";
+  status.textContent = "Checking EMR patient context...";
+  section.appendChild(status);
+
+  tryUrls(settings.baseUrls.slice())
+    .then(function (payload) {
+      applyField(fields.patient_name, payload.patient_name);
+      applyField(fields.patient_birth_date, payload.patient_birth_date);
+      applyField(fields.patient_sex, payload.patient_sex);
+      updateUploadAction(payload);
+      status.textContent = "Patient context loaded from EMR bridge.";
+    })
+    .catch(function () {
+      status.textContent = "EMR patient context bridge unavailable.";
+    });
+
+  function tryUrls(urls) {
+    if (!urls.length) {
+      return Promise.reject(new Error("patient context unavailable"));
+    }
+    const baseUrl = urls.shift().replace(/\/+$/, "");
+    const url = baseUrl + "/api/kaospacs/patient-context?chart_no=" + encodeURIComponent(settings.chartNo);
+    return fetch(url, { headers: { "Accept": "application/json; charset=utf-8" } })
+      .then(function (response) {
+        if (!response.ok) throw new Error("patient context unavailable");
+        return response.json();
+      })
+      .catch(function () {
+        return tryUrls(urls);
+      });
+  }
+
+  function isBlank(element) {
+    if (!element) return true;
+    const value = (element.textContent || "").trim();
+    return value === "" || value === "-";
+  }
+
+  function applyField(element, value) {
+    if (!element || !isBlank(element)) return;
+    const text = value == null ? "" : String(value).trim();
+    if (text) element.textContent = text;
+  }
+
+  function updateUploadAction(payload) {
+    const form = document.querySelector("[data-patient-upload-form]");
+    if (!form || !form.action) return;
+    const action = new URL(form.action, window.location.href);
+    setIfPresent(action.searchParams, "m_patname", payload.patient_name);
+    setIfPresent(action.searchParams, "m_dob", payload.patient_birth_date);
+    setIfPresent(action.searchParams, "m_sex", payload.patient_sex);
+    form.action = action.pathname + "?" + action.searchParams.toString();
+  }
+
+  function setIfPresent(params, key, value) {
+    const text = value == null ? "" : String(value).trim();
+    if (text && !params.get(key)) params.set(key, text);
+  }
+})();
+"""
+
+
 PASTE_SCRIPT = r"""
 (function () {
   const form = document.querySelector("[data-paste-upload]");
@@ -1607,9 +1882,11 @@ PASTE_SCRIPT = r"""
   const clear = form.querySelector("#paste-clear");
   const status = form.querySelector("#paste-status");
   if (!input || !zone || !queue || !clear || !status) return;
-  const pastedFiles = [];
+  const queuedFiles = [];
   const objectUrls = new Map();
   let syncingInput = false;
+
+  const allowedTypes = new Set(["image/jpeg", "image/png", "application/pdf"]);
 
   function setStatus(message) {
     status.textContent = message;
@@ -1621,7 +1898,7 @@ PASTE_SCRIPT = r"""
       return;
     }
     const transfer = new DataTransfer();
-    pastedFiles.forEach(function (file) { transfer.items.add(file); });
+    queuedFiles.forEach(function (file) { transfer.items.add(file); });
     syncingInput = true;
     input.files = transfer.files;
     syncingInput = false;
@@ -1637,13 +1914,7 @@ PASTE_SCRIPT = r"""
 
   function renderQueue() {
     queue.textContent = "";
-    pastedFiles.forEach(function (file, index) {
-      let url = objectUrls.get(file);
-      if (!url) {
-        url = URL.createObjectURL(file);
-        objectUrls.set(file, url);
-      }
-
+    queuedFiles.forEach(function (file, index) {
       const item = document.createElement("div");
       item.className = "paste-item";
 
@@ -1652,13 +1923,11 @@ PASTE_SCRIPT = r"""
       const title = document.createElement("strong");
       title.textContent = "Item " + (index + 1);
       const size = document.createElement("span");
-      size.textContent = Math.ceil(file.size / 1024) + " KB";
+      size.textContent = fileKind(file) + " · " + Math.ceil(file.size / 1024) + " KB";
       header.appendChild(title);
       header.appendChild(size);
 
-      const image = document.createElement("img");
-      image.alt = "Queued pasted image " + (index + 1);
-      image.src = url;
+      const preview = previewElement(file, index);
 
       const actions = document.createElement("div");
       actions.className = "paste-actions";
@@ -1666,20 +1935,45 @@ PASTE_SCRIPT = r"""
       const down = actionButton("Move down", function () { moveItem(index, 1); });
       const remove = actionButton("Remove", function () { removeItem(index); });
       up.disabled = index === 0;
-      down.disabled = index === pastedFiles.length - 1;
+      down.disabled = index === queuedFiles.length - 1;
       actions.appendChild(up);
       actions.appendChild(down);
       actions.appendChild(remove);
 
       item.appendChild(header);
-      item.appendChild(image);
+      item.appendChild(preview);
       item.appendChild(actions);
       queue.appendChild(item);
     });
-    clear.disabled = pastedFiles.length === 0;
-    if (pastedFiles.length > 0) {
-      setStatus(pastedFiles.length + " pasted image" + (pastedFiles.length === 1 ? "" : "s") + " queued. Press Upload to add them to PACS.");
+    clear.disabled = queuedFiles.length === 0;
+    if (queuedFiles.length > 0) {
+      setStatus(queuedFiles.length + " item" + (queuedFiles.length === 1 ? "" : "s") + " queued. Press Upload to add them to PACS.");
     }
+  }
+
+  function previewElement(file, index) {
+    if (file.type && file.type.startsWith("image/")) {
+      let url = objectUrls.get(file);
+      if (!url) {
+        url = URL.createObjectURL(file);
+        objectUrls.set(file, url);
+      }
+      const image = document.createElement("img");
+      image.alt = "Queued image " + (index + 1);
+      image.src = url;
+      return image;
+    }
+    const preview = document.createElement("div");
+    preview.className = "paste-file-preview";
+    preview.textContent = file.type === "application/pdf" ? "PDF document" : "File";
+    return preview;
+  }
+
+  function fileKind(file) {
+    if (file.type === "application/pdf") return "PDF";
+    if (file.type === "image/png") return "PNG";
+    if (file.type === "image/jpeg") return "JPG";
+    return "File";
   }
 
   function actionButton(label, onClick) {
@@ -1693,35 +1987,63 @@ PASTE_SCRIPT = r"""
 
   function moveItem(index, direction) {
     const next = index + direction;
-    if (next < 0 || next >= pastedFiles.length) return;
-    const current = pastedFiles[index];
-    pastedFiles[index] = pastedFiles[next];
-    pastedFiles[next] = current;
+    if (next < 0 || next >= queuedFiles.length) return;
+    const current = queuedFiles[index];
+    queuedFiles[index] = queuedFiles[next];
+    queuedFiles[next] = current;
     syncInputFiles();
     renderQueue();
   }
 
   function removeItem(index) {
-    const removed = pastedFiles.splice(index, 1)[0];
+    const removed = queuedFiles.splice(index, 1)[0];
     if (removed) revokeUrl(removed);
     syncInputFiles();
     renderQueue();
-    if (pastedFiles.length === 0) setStatus("Paste images, or use the file picker.");
+    if (queuedFiles.length === 0) setStatus("Paste images, drop files, or use the file picker.");
   }
 
   function clearQueue() {
-    pastedFiles.splice(0).forEach(revokeUrl);
+    queuedFiles.splice(0).forEach(revokeUrl);
     if (window.DataTransfer) input.files = new DataTransfer().files;
     renderQueue();
-    setStatus("Pasted image queue cleared.");
+    setStatus("Upload queue cleared.");
   }
 
   function addPastedFile(file) {
-    const name = "pasted-image-" + String(pastedFiles.length + 1).padStart(2, "0") + ".png";
+    const name = "pasted-image-" + String(queuedFiles.length + 1).padStart(2, "0") + ".png";
     const pasted = new File([file], name, { type: file.type || "image/png" });
-    pastedFiles.push(pasted);
+    queuedFiles.push(pasted);
     syncInputFiles();
     renderQueue();
+  }
+
+  function addDroppedFiles(files) {
+    let accepted = 0;
+    let rejected = 0;
+    Array.from(files || []).forEach(function (file) {
+      if (isAllowedUpload(file)) {
+        queuedFiles.push(file);
+        accepted += 1;
+      } else {
+        rejected += 1;
+      }
+    });
+    if (accepted > 0) {
+      syncInputFiles();
+      renderQueue();
+    }
+    if (rejected > 0 && accepted === 0) {
+      setStatus("Only JPG, PNG, and PDF files can be dropped here.");
+    } else if (rejected > 0) {
+      setStatus(accepted + " item" + (accepted === 1 ? "" : "s") + " queued; unsupported files were ignored.");
+    }
+  }
+
+  function isAllowedUpload(file) {
+    if (file.type && allowedTypes.has(file.type)) return true;
+    const name = (file.name || "").toLowerCase();
+    return name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".pdf");
   }
 
   function handlePaste(event) {
@@ -1740,12 +2062,37 @@ PASTE_SCRIPT = r"""
     setStatus("Clipboard does not contain an image.");
   }
 
+  function handleDragOver(event) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    zone.classList.add("drag-over");
+  }
+
+  function handleDragLeave(event) {
+    if (!zone.contains(event.relatedTarget)) {
+      zone.classList.remove("drag-over");
+    }
+  }
+
+  function handleDrop(event) {
+    event.preventDefault();
+    zone.classList.remove("drag-over");
+    if (!event.dataTransfer || !event.dataTransfer.files || event.dataTransfer.files.length === 0) {
+      setStatus("No files were dropped.");
+      return;
+    }
+    addDroppedFiles(event.dataTransfer.files);
+  }
+
   zone.addEventListener("click", function () { zone.focus(); });
   zone.addEventListener("paste", handlePaste);
+  zone.addEventListener("dragover", handleDragOver);
+  zone.addEventListener("dragleave", handleDragLeave);
+  zone.addEventListener("drop", handleDrop);
   clear.addEventListener("click", clearQueue);
   input.addEventListener("change", function () {
-    if (syncingInput || pastedFiles.length === 0) return;
-    pastedFiles.splice(0).forEach(revokeUrl);
+    if (syncingInput || queuedFiles.length === 0) return;
+    queuedFiles.splice(0).forEach(revokeUrl);
     queue.textContent = "";
     clear.disabled = true;
     setStatus("File picker selection will be uploaded.");

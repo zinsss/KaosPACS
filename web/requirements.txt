@@ -1,3 +1,4 @@
 pytest==8.3.4
 pydicom==3.0.1
 Pillow==11.1.0
+pypdfium2==5.11.0

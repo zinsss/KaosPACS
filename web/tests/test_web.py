@@ -15,16 +15,19 @@ from unittest.mock import Mock
 
 from PIL import Image
 from pydicom import dcmread
-from pydicom.uid import EncapsulatedPDFStorage, SecondaryCaptureImageStorage
+from pydicom.uid import SecondaryCaptureImageStorage
 
 from app.config import load_config
-from app.dicom_upload import create_upload_dicom
+from app.dicom_upload import create_upload_dicom, create_upload_dicoms
+from app.kaoseghis_pacs import KaosEghisPacsClient, PatientContextResult
 from app.main import (
     AIO_DISCLAIMER,
     AIO_PANEL_SCRIPT,
     CSS,
     create_handler,
     make_weasis_url,
+    _patient_context_with_fallback,
+    PatientContext,
     render_imaging_worklist_admin,
     render_index,
 )
@@ -42,11 +45,16 @@ def test_config_defaults(monkeypatch) -> None:
         "WEB_GATEWAY_URL",
         "WEB_GATEWAY_API_TOKEN",
         "GATEWAY_API_TOKEN",
+        "KAOSEGHIS_PACS_BASE_URL",
+        "KAOSPACS_INTEGRATION_TOKEN",
+        "KAOSEGHIS_PACS_TIMEOUT_SECONDS",
+        "WEB_LOCAL_PATIENT_CONTEXT_URL",
         "WEB_STUDY_LIMIT",
         "WEB_UPLOAD_MAX_BYTES",
         "WEB_AUTH_USERNAME",
         "WEB_AUTH_PASSWORD",
         "WEB_ADMIN_AUTH_REQUIRED",
+        "WEB_EMR_AUTH_REQUIRED",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -60,11 +68,16 @@ def test_config_defaults(monkeypatch) -> None:
     assert config.kaospacs_aio_url == "http://127.0.0.1:8056"
     assert config.gateway_url == "http://gateway:8060"
     assert config.gateway_api_token == ""
+    assert config.kaoseghis_pacs_base_url == ""
+    assert config.kaospacs_integration_token == ""
+    assert config.kaoseghis_pacs_timeout_seconds == 3
+    assert config.local_patient_context_url == "http://127.0.0.1:8765,http://localhost:8765"
     assert config.study_limit == 100
     assert config.upload_max_bytes == 25 * 1024 * 1024
     assert config.auth_username == "kaospacs"
     assert config.auth_password == ""
     assert config.admin_auth_required is False
+    assert config.emr_auth_required is False
 
 
 def test_config_env_overrides(monkeypatch) -> None:
@@ -76,11 +89,16 @@ def test_config_env_overrides(monkeypatch) -> None:
     monkeypatch.setenv("KAOSPACS_AIO_URL", "http://aio:8056/")
     monkeypatch.setenv("WEB_GATEWAY_URL", "http://gateway.local:8060/")
     monkeypatch.setenv("WEB_GATEWAY_API_TOKEN", "web-token")
+    monkeypatch.setenv("KAOSEGHIS_PACS_BASE_URL", "http://kaoseghis.local:8765/")
+    monkeypatch.setenv("KAOSPACS_INTEGRATION_TOKEN", "integration-token")
+    monkeypatch.setenv("KAOSEGHIS_PACS_TIMEOUT_SECONDS", "4")
+    monkeypatch.setenv("WEB_LOCAL_PATIENT_CONTEXT_URL", "http://localhost:8765/")
     monkeypatch.setenv("WEB_STUDY_LIMIT", "50")
     monkeypatch.setenv("WEB_UPLOAD_MAX_BYTES", "12345")
     monkeypatch.setenv("WEB_AUTH_USERNAME", "viewer")
     monkeypatch.setenv("WEB_AUTH_PASSWORD", "secret")
     monkeypatch.setenv("WEB_ADMIN_AUTH_REQUIRED", "true")
+    monkeypatch.setenv("WEB_EMR_AUTH_REQUIRED", "true")
 
     config = load_config()
 
@@ -92,11 +110,141 @@ def test_config_env_overrides(monkeypatch) -> None:
     assert config.kaospacs_aio_url == "http://aio:8056"
     assert config.gateway_url == "http://gateway.local:8060"
     assert config.gateway_api_token == "web-token"
+    assert config.kaoseghis_pacs_base_url == "http://kaoseghis.local:8765"
+    assert config.kaospacs_integration_token == "integration-token"
+    assert config.kaoseghis_pacs_timeout_seconds == 4
+    assert config.local_patient_context_url == "http://localhost:8765"
     assert config.study_limit == 50
     assert config.upload_max_bytes == 12345
     assert config.auth_username == "viewer"
     assert config.auth_password == "secret"
     assert config.admin_auth_required is True
+    assert config.emr_auth_required is True
+
+
+def test_kaoseghis_patient_context_blank_base_url_noop() -> None:
+    client = KaosEghisPacsClient("", token="secret")
+
+    result = client.fetch_patient_context("2735")
+
+    assert result.found is False
+    assert result.status == "not_configured"
+
+
+def test_kaoseghis_patient_context_success_preserves_korean(monkeypatch, caplog) -> None:
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "chart_no": "2735",
+                    "patient_name": "홍길동",
+                    "patient_birth_date": "19700101",
+                    "patient_sex": "M",
+                    "source": "eghis",
+                    "confidence": "exact",
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["authorization"] = request.get_header("Authorization")
+        captured["accept"] = request.get_header("Accept")
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr("app.kaoseghis_pacs.urlopen", fake_urlopen)
+    client = KaosEghisPacsClient(
+        "http://192.168.0.100:8765",
+        token="integration-token",
+        timeout=4,
+    )
+    caplog.set_level(logging.INFO, logger="kaospacs.web")
+
+    result = client.fetch_patient_context("2735")
+
+    assert result.found is True
+    assert result.patient_name == "홍길동"
+    assert result.patient_birth_date == "19700101"
+    assert result.patient_sex == "M"
+    assert result.source == "eghis"
+    assert result.confidence == "exact"
+    assert captured["url"].endswith("/api/kaospacs/patient-context?chart_no=2735")
+    assert captured["authorization"] == "Bearer integration-token"
+    assert captured["accept"] == "application/json; charset=utf-8"
+    assert captured["timeout"] == 4
+    assert "integration-token" not in caplog.text
+    assert "홍길동" not in caplog.text
+    assert "19700101" not in caplog.text
+
+
+def test_kaoseghis_patient_context_http_errors_are_safe(monkeypatch) -> None:
+    def error_for(code: int):
+        def fake_urlopen(request, timeout):
+            raise HTTPError(request.full_url, code, "error", hdrs={}, fp=BytesIO())
+
+        return fake_urlopen
+
+    expected = {
+        400: "bad_request",
+        401: "unauthorized",
+        404: "not_found",
+        409: "ambiguous",
+        503: "unavailable",
+    }
+    client = KaosEghisPacsClient("http://kaoseghis")
+
+    for code, status in expected.items():
+        monkeypatch.setattr("app.kaoseghis_pacs.urlopen", error_for(code))
+        result = client.fetch_patient_context("2735")
+        assert result.found is False
+        assert result.status == status
+
+
+def test_kaoseghis_patient_context_unavailable_is_safe(monkeypatch) -> None:
+    def fake_urlopen(request, timeout):
+        raise URLError("connection refused")
+
+    monkeypatch.setattr("app.kaoseghis_pacs.urlopen", fake_urlopen)
+    client = KaosEghisPacsClient("http://kaoseghis")
+
+    result = client.fetch_patient_context("2735")
+
+    assert result.found is False
+    assert result.status == "unavailable"
+
+
+def test_patient_context_fallback_only_fills_missing_fields() -> None:
+    patient = PatientContext(
+        patient_id="2735",
+        patient_name="Existing",
+        patient_birth_date="",
+        patient_sex="",
+    )
+
+    result = _patient_context_with_fallback(
+        patient,
+        lambda chart_no: PatientContextResult(
+            chart_no=chart_no,
+            patient_name="홍길동",
+            patient_birth_date="19700101",
+            patient_sex="M",
+            status="ok",
+        ),
+    )
+
+    assert result.patient_id == "2735"
+    assert result.patient_name == "Existing"
+    assert result.patient_birth_date == "19700101"
+    assert result.patient_sex == "M"
 
 
 def test_weasis_url_uses_dicomweb_study_query() -> None:
@@ -150,9 +298,64 @@ def test_render_index_escapes_values() -> None:
     assert "<script>alert(1)</script>" not in html
 
 
+def test_render_index_includes_browser_local_patient_context_fallback_when_missing() -> None:
+    config = Mock()
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    config.local_patient_context_url = "http://127.0.0.1:8765"
+    config.kaospacs_integration_token = "secret-token"
+
+    html = render_index(
+        config,
+        [],
+        query="",
+        patient_id="2735",
+        patient_name="",
+        patient_birth_date="",
+        patient_sex="",
+        error="",
+    )
+
+    assert "patient-context?chart_no=" in html
+    assert "http://127.0.0.1:8765" in html
+    assert "EMR patient context bridge unavailable." in html
+    assert "secret-token" not in html
+    assert 'data-patient-field="patient_name"' in html
+    assert "data-patient-upload-form" in html
+
+
+def test_render_index_skips_browser_local_patient_context_when_complete() -> None:
+    config = Mock()
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    config.local_patient_context_url = "http://127.0.0.1:8765"
+
+    html = render_index(
+        config,
+        [],
+        query="",
+        patient_id="2735",
+        patient_name="홍길동",
+        patient_birth_date="19700101",
+        patient_sex="M",
+        error="",
+    )
+
+    assert "patient-context?chart_no=" not in html
+
+
 def test_study_grid_uses_full_width_rows() -> None:
     assert ".grid { display:grid; grid-template-columns:minmax(0, 1fr);" in CSS
     assert ".study { width:100%; display:grid; grid-template-columns:220px minmax(0, 1fr);" in CSS
+
+
+def test_web_css_uses_nord_dark_theme() -> None:
+    assert "color-scheme: dark" in CSS
+    assert "--bg:#2E3440" in CSS
+    assert "--panel:#3B4252" in CSS
+    assert "--accent:#88C0D0" in CSS
+    assert "background:#fff" not in CSS
+    assert "color-scheme: light" not in CSS
 
 
 def test_aio_report_renders_details_and_findings_sections() -> None:
@@ -253,7 +456,7 @@ def test_imaging_worklist_admin_page_renders_gateway_entries() -> None:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        response = urlopen(f"{_server_url(server)}/imaging/worklist", timeout=3)
+        response = urlopen(f"{_server_url(server)}/imaging/worklist?date=all", timeout=3)
 
         assert response.status == 200
         html = response.read().decode("utf-8")
@@ -288,6 +491,24 @@ def test_imaging_worklist_admin_sorts_by_scheduled_time_descending() -> None:
     )
 
     assert html.index("NEW") < html.index("OLD")
+
+
+def test_imaging_worklist_admin_displays_scheduled_and_terminal_times_as_kst() -> None:
+    html = render_imaging_worklist_admin(
+        [
+            {
+                "state": "completed",
+                "AccessionNumber": "KST-1",
+                "ScheduledAt": "2026-07-08T09:00:00",
+                "CompletedAt": "2026-07-08T00:30:00Z",
+            },
+        ],
+        {},
+        selected_date="2026-07-08",
+    )
+
+    assert "2026-07-08 09:00:00 KST" in html
+    assert "2026-07-08 09:30:00 KST" in html
 
 
 def test_imaging_worklist_admin_filters_by_selected_scheduled_date() -> None:
@@ -360,12 +581,52 @@ def test_imaging_worklist_admin_page_bypasses_basic_auth_for_embed() -> None:
     try:
         response = urlopen(f"{_server_url(server)}/imaging/worklist", timeout=3)
         assert response.status == 200
+    finally:
+        _stop_test_server(server, thread)
 
+
+def test_emr_launch_page_bypasses_basic_auth_by_default() -> None:
+    config = Mock()
+    config.auth_username = "kaospacs"
+    config.auth_password = "secret"
+    config.emr_auth_required = False
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    orthanc = Mock()
+    orthanc.studies_for_patient.return_value = []
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, orthanc),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        response = urlopen(f"{_server_url(server)}/emr.php?m_patid=2735", timeout=3)
+        assert response.status == 200
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_favicon_does_not_trigger_basic_auth_prompt() -> None:
+    config = Mock()
+    config.auth_username = "kaospacs"
+    config.auth_password = "secret"
+    config.emr_auth_required = False
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, Mock()),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
         try:
-            urlopen(f"{_server_url(server)}/emr.php?m_patid=2735", timeout=3)
-            raise AssertionError("expected emr.php to remain protected")
+            urlopen(f"{_server_url(server)}/favicon.ico", timeout=3)
+            raise AssertionError("expected favicon to be missing")
         except HTTPError as exc:
-            assert exc.code == 401
+            assert exc.code == 404
+            assert "WWW-Authenticate" not in exc.headers
     finally:
         _stop_test_server(server, thread)
 
@@ -549,6 +810,7 @@ def test_web_protected_page_requires_auth_when_password_configured(caplog) -> No
     config = Mock()
     config.auth_username = "kaospacs"
     config.auth_password = "secret"
+    config.emr_auth_required = True
     config.weasis_dicomweb_url = "http://pacs/dicom-web"
     config.orthanc_public_url = "http://pacs"
     orthanc = Mock()
@@ -583,6 +845,7 @@ def test_web_protected_page_allows_correct_basic_auth(caplog) -> None:
     config = Mock()
     config.auth_username = "kaospacs"
     config.auth_password = "secret"
+    config.emr_auth_required = True
     config.weasis_dicomweb_url = "http://pacs/dicom-web"
     config.orthanc_public_url = "http://pacs"
     orthanc = Mock()
@@ -601,6 +864,91 @@ def test_web_protected_page_allows_correct_basic_auth(caplog) -> None:
         assert orthanc.studies_for_patient.called
         assert "secret" not in caplog.text
         assert "Authorization" not in caplog.text
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_emr_page_fills_missing_demographics_from_kaoseghis_fallback() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.emr_auth_required = False
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    config.study_limit = 100
+    orthanc = Mock()
+    orthanc.studies_for_patient.return_value = []
+    patient_context = Mock()
+    patient_context.fetch_patient_context.return_value = PatientContextResult(
+        chart_no="2735",
+        patient_name="홍길동",
+        patient_birth_date="19700101",
+        patient_sex="M",
+        source="eghis",
+        confidence="exact",
+        status="ok",
+    )
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, orthanc, patient_context_client=patient_context),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        response = urlopen(f"{_server_url(server)}/emr.php?m_patid=2735", timeout=3)
+        body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert "홍길동" in body
+        assert "19700101" in body
+        assert "m_patname=%ED%99%8D%EA%B8%B8%EB%8F%99" in body
+        patient_context.fetch_patient_context.assert_called_once_with("2735")
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_emr_page_fills_missing_demographics_from_gateway_worklist() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.emr_auth_required = False
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    config.study_limit = 100
+    orthanc = Mock()
+    orthanc.studies_for_patient.return_value = []
+    gateway = Mock()
+    gateway.imaging_worklist.return_value = {
+        "entries": [
+            {
+                "PatientID": "2735",
+                "PatientName": "홍길동",
+                "PatientBirthDate": "19700101",
+                "PatientSex": "M",
+            }
+        ]
+    }
+    patient_context = Mock()
+    patient_context.fetch_patient_context.return_value = PatientContextResult(status="not_found")
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(
+            config,
+            orthanc,
+            gateway=gateway,
+            patient_context_client=patient_context,
+        ),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        response = urlopen(f"{_server_url(server)}/emr.php?m_patid=2735", timeout=3)
+        body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert "홍길동" in body
+        assert "19700101" in body
+        assert "m_patname=%ED%99%8D%EA%B8%B8%EB%8F%99" in body
+        gateway.imaging_worklist.assert_called()
+        patient_context.fetch_patient_context.assert_not_called()
     finally:
         _stop_test_server(server, thread)
 
@@ -630,8 +978,9 @@ def test_patient_context_page_contains_upload_without_manual_patient_fields() ->
     assert "19700101" in html
     assert "Sex" in html
     assert "M" in html
-    assert "Paste image here" in html
-    assert "Nothing needs to be saved on the desktop" in html
+    assert "Paste image or drop files here" in html
+    assert "drag JPG, PNG, or PDF files" in html
+    assert "PDFs are limited to 10 pages" in html
     assert "data-paste-upload" in html
     assert 'id="paste-queue"' in html
     assert 'id="paste-clear"' in html
@@ -791,6 +1140,113 @@ def test_web_upload_accepts_single_file_field() -> None:
         _stop_test_server(server, thread)
 
 
+def test_web_upload_uses_kaoseghis_fallback_when_demographics_missing() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.emr_auth_required = False
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    config.upload_max_bytes = 25 * 1024 * 1024
+    config.study_limit = 100
+    orthanc = Mock()
+    orthanc.studies_for_patient.return_value = []
+    patient_context = Mock()
+    patient_context.fetch_patient_context.return_value = PatientContextResult(
+        chart_no="9426",
+        patient_name="이진성",
+        patient_birth_date="19700101",
+        patient_sex="M",
+        status="ok",
+    )
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(config, orthanc, patient_context_client=patient_context),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        body, content_type = _multipart_body(
+            [("file", "single.png", "image/png", _png_bytes((20, 30, 40)))]
+        )
+        request = Request(
+            f"{_server_url(server)}/emr.php?m_patid=9426",
+            data=body,
+            headers={"Content-Type": content_type},
+            method="POST",
+        )
+        response = urlopen(request, timeout=3)
+
+        assert response.status == 200
+        assert orthanc.upload_instance.call_count == 1
+        dataset = dcmread(BytesIO(orthanc.upload_instance.call_args.args[0]))
+        assert dataset.PatientID == "9426"
+        assert str(dataset.PatientName) == "이진성"
+        assert dataset.PatientBirthDate == "19700101"
+        assert dataset.PatientSex == "M"
+        assert dataset.SpecificCharacterSet == "ISO_IR 192"
+        patient_context.fetch_patient_context.assert_any_call("9426")
+    finally:
+        _stop_test_server(server, thread)
+
+
+def test_web_upload_uses_gateway_worklist_demographics_before_kaoseghis() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.emr_auth_required = False
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    config.upload_max_bytes = 25 * 1024 * 1024
+    config.study_limit = 100
+    orthanc = Mock()
+    orthanc.studies_for_patient.return_value = []
+    gateway = Mock()
+    gateway.imaging_worklist.return_value = {
+        "entries": [
+            {
+                "PatientID": "9426",
+                "PatientName": "이진성",
+                "PatientBirthDate": "19700101",
+                "PatientSex": "M",
+            }
+        ]
+    }
+    patient_context = Mock()
+    patient_context.fetch_patient_context.return_value = PatientContextResult(status="not_found")
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        create_handler(
+            config,
+            orthanc,
+            gateway=gateway,
+            patient_context_client=patient_context,
+        ),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        body, content_type = _multipart_body(
+            [("file", "single.png", "image/png", _png_bytes((20, 30, 40)))]
+        )
+        request = Request(
+            f"{_server_url(server)}/emr.php?m_patid=9426",
+            data=body,
+            headers={"Content-Type": content_type},
+            method="POST",
+        )
+        response = urlopen(request, timeout=3)
+
+        assert response.status == 200
+        dataset = dcmread(BytesIO(orthanc.upload_instance.call_args.args[0]))
+        assert dataset.PatientID == "9426"
+        assert str(dataset.PatientName) == "이진성"
+        assert dataset.PatientBirthDate == "19700101"
+        assert dataset.PatientSex == "M"
+        gateway.imaging_worklist.assert_called()
+        patient_context.fetch_patient_context.assert_not_called()
+    finally:
+        _stop_test_server(server, thread)
+
+
 def test_web_upload_accepts_multiple_file_fields_and_logs_no_phi(caplog) -> None:
     config = Mock()
     config.auth_password = ""
@@ -849,6 +1305,7 @@ def test_web_upload_post_requires_auth_when_password_configured() -> None:
     config = Mock()
     config.auth_username = "kaospacs"
     config.auth_password = "secret"
+    config.emr_auth_required = True
     config.weasis_dicomweb_url = "http://pacs/dicom-web"
     config.orthanc_public_url = "http://pacs"
     config.upload_max_bytes = 25 * 1024 * 1024
@@ -924,23 +1381,104 @@ def test_uploaded_png_can_include_patient_context_demographics() -> None:
     assert dataset.PatientSex == "M"
 
 
-def test_uploaded_pdf_becomes_encapsulated_pdf_dicom() -> None:
+def test_uploaded_pdf_becomes_secondary_capture_image_dicom() -> None:
     result = create_upload_dicom(
         patient_id="9426",
         patient_name="",
         filename="report.pdf",
         content_type="application/pdf",
-        content=b"%PDF-1.4\nfake pdf\n%%EOF",
+        content=_pdf_bytes(),
         now=datetime(2026, 7, 3, 9, 10, 11),
     )
 
     dataset = dcmread(BytesIO(result.dicom_bytes))
-    assert dataset.SOPClassUID == EncapsulatedPDFStorage
+    assert dataset.SOPClassUID == SecondaryCaptureImageStorage
     assert dataset.PatientID == "9426"
     assert dataset.AccessionNumber == "UP260703091011"
-    assert dataset.StudyDescription == "Uploaded PDF"
-    assert dataset.MIMETypeOfEncapsulatedDocument == "application/pdf"
-    assert dataset.EncapsulatedDocument.startswith(b"%PDF")
+    assert dataset.StudyDescription == "Uploaded PDF as images"
+    assert dataset.SeriesDescription == "KaosPACS PDF upload"
+    assert dataset.SpecificCharacterSet == "ISO_IR 192"
+    assert dataset.Rows > 0
+    assert dataset.Columns > 0
+    assert dataset.PixelData
+    assert not hasattr(dataset, "EncapsulatedDocument")
+
+
+def test_uploaded_multipage_pdf_becomes_multiple_secondary_capture_instances() -> None:
+    results = create_upload_dicoms(
+        patient_id="9426",
+        patient_name="이진성",
+        filename="report.pdf",
+        content_type="application/pdf",
+        content=_pdf_bytes(page_count=2),
+        patient_birth_date="19700101",
+        patient_sex="F",
+        now=datetime(2026, 7, 3, 9, 10, 11),
+    )
+
+    assert len(results) == 2
+    datasets = [dcmread(BytesIO(result.dicom_bytes)) for result in results]
+    assert all(dataset.SOPClassUID == SecondaryCaptureImageStorage for dataset in datasets)
+    assert all(dataset.PatientID == "9426" for dataset in datasets)
+    assert all(str(dataset.PatientName) == "이진성" for dataset in datasets)
+    assert all(dataset.PatientBirthDate == "19700101" for dataset in datasets)
+    assert all(dataset.PatientSex == "F" for dataset in datasets)
+    assert {dataset.StudyInstanceUID for dataset in datasets} and len(
+        {dataset.StudyInstanceUID for dataset in datasets}
+    ) == 1
+    assert len({dataset.SOPInstanceUID for dataset in datasets}) == 2
+    assert [dataset.InstanceNumber for dataset in datasets] == ["1", "2"]
+    assert datasets[0].ImageComments.endswith("PDF page 1 of 2.")
+    assert datasets[1].ImageComments.endswith("PDF page 2 of 2.")
+
+
+def test_uploaded_pdf_over_page_limit_is_rejected() -> None:
+    try:
+        create_upload_dicoms(
+            patient_id="9426",
+            patient_name="",
+            filename="report.pdf",
+            content_type="application/pdf",
+            content=_pdf_bytes(page_count=11),
+            now=datetime(2026, 7, 3, 9, 10, 11),
+        )
+        raise AssertionError("expected over-limit PDF rejection")
+    except ValueError as exc:
+        assert str(exc) == "pdf_too_many_pages"
+
+
+def test_web_upload_pdf_uploads_each_rendered_page() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    config.upload_max_bytes = 25 * 1024 * 1024
+    config.study_limit = 100
+    orthanc = Mock()
+    orthanc.studies_for_patient.return_value = []
+    server, thread = _start_test_server(config, orthanc)
+    try:
+        body, content_type = _multipart_body(
+            [("file", "report.pdf", "application/pdf", _pdf_bytes(page_count=2))]
+        )
+        request = Request(
+            f"{_server_url(server)}/emr.php?m_patid=9426&m_patname=%EC%9D%B4%EC%A7%84%EC%84%B1",
+            data=body,
+            headers={"Content-Type": content_type},
+            method="POST",
+        )
+        response = urlopen(request, timeout=3)
+
+        assert response.status == 200
+        assert orthanc.upload_instance.call_count == 2
+        datasets = [
+            dcmread(BytesIO(call.args[0]))
+            for call in orthanc.upload_instance.call_args_list
+        ]
+        assert all(dataset.SOPClassUID == SecondaryCaptureImageStorage for dataset in datasets)
+        assert all(dataset.StudyDescription == "Uploaded PDF as images" for dataset in datasets)
+    finally:
+        _stop_test_server(server, thread)
 
 
 def _start_test_server(config: Mock, orthanc: Mock) -> tuple[ThreadingHTTPServer, threading.Thread]:
@@ -965,6 +1503,17 @@ def _png_bytes(color: tuple[int, int, int]) -> bytes:
     image = Image.new("RGB", (2, 1), color=color)
     buffer = BytesIO()
     image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _pdf_bytes(page_count: int = 1) -> bytes:
+    first = Image.new("RGB", (16, 12), color=(240, 240, 240))
+    pages = [
+        Image.new("RGB", (16, 12), color=(240 - index * 20, 240, 240))
+        for index in range(1, page_count)
+    ]
+    buffer = BytesIO()
+    first.save(buffer, format="PDF", save_all=True, append_images=pages)
     return buffer.getvalue()
 
 

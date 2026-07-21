@@ -248,15 +248,25 @@ For patient-context web launch, eGHIS opens:
 
 KaosPACS Web uses `m_patid` as the Orthanc/DICOM `PatientID`, displays the
 provided chart number/name/DOB/sex, shows only that patient's studies, and lets
-the operator paste one or more clipboard images or upload JPG, PNG, or PDF
-files into Orthanc as DICOM for that same patient. Pasted images are queued
-before upload in paste order, can be removed or reordered with Move up/Move
-down, and each pasted image becomes a separate DICOM Secondary Capture object.
-Uploaded DICOM objects include the provided name/DOB/sex when present and use
-safe UTF-8 metadata. PDF upload remains file-picker only. Pasted images avoid
-leaving a temporary patient-sensitive file on the desktop. V1 upload
-intentionally does not have a separate upload page or manual patient
+the operator paste one or more clipboard images, drag/drop JPG/PNG/PDF files,
+or choose JPG, PNG, or PDF files into Orthanc as DICOM for that same patient.
+Clipboard paste remains image-only. Queued uploads can be removed or reordered
+with Move up/Move down. Uploaded DICOM objects include the provided
+name/DOB/sex when present and use safe UTF-8 metadata. Images become DICOM
+Secondary Capture objects; each PDF page is rendered into a separate DICOM
+Secondary Capture image so it can be viewed directly in Orthanc/Web/Weasis. PDF
+uploads are limited to 10 pages. Pasted images avoid leaving a temporary
+patient-sensitive file on the desktop. V1
+upload intentionally does not have a separate upload page or manual patient
 demographic entry.
+
+If the EMR launch contains only `m_patid=<chart_no>`, Web first checks existing
+Orthanc/DICOM study metadata for that PatientID. If name, DOB, or sex are still
+missing and `KAOSEGHIS_PACS_BASE_URL` is configured, Web calls the
+KaosEghis-PACS read-only patient-context API and fills only blank fields before
+display or upload. This is a patient identity fallback only. It does not fetch
+orders, reports, diagnoses, or EMR notes, and KaosPACS still does not connect
+directly to the eGHIS database.
 
 Current default direct-mode Gateway DICOM flow:
 

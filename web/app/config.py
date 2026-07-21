@@ -14,11 +14,16 @@ class Config:
     kaospacs_aio_url: str
     gateway_url: str
     gateway_api_token: str
+    kaoseghis_pacs_base_url: str
+    kaospacs_integration_token: str
+    kaoseghis_pacs_timeout_seconds: int
+    local_patient_context_url: str
     study_limit: int
     upload_max_bytes: int
     auth_username: str
     auth_password: str
     admin_auth_required: bool
+    emr_auth_required: bool
 
 
 def load_config() -> Config:
@@ -39,11 +44,21 @@ def load_config() -> Config:
         gateway_url=_strip_slash(os.getenv("WEB_GATEWAY_URL", "http://gateway:8060")),
         gateway_api_token=os.getenv("WEB_GATEWAY_API_TOKEN")
         or os.getenv("GATEWAY_API_TOKEN", ""),
+        kaoseghis_pacs_base_url=_strip_slash(os.getenv("KAOSEGHIS_PACS_BASE_URL", "")),
+        kaospacs_integration_token=os.getenv("KAOSPACS_INTEGRATION_TOKEN", ""),
+        kaoseghis_pacs_timeout_seconds=_int_env("KAOSEGHIS_PACS_TIMEOUT_SECONDS", 3),
+        local_patient_context_url=_strip_slash(
+            os.getenv(
+                "WEB_LOCAL_PATIENT_CONTEXT_URL",
+                "http://127.0.0.1:8765,http://localhost:8765",
+            )
+        ),
         study_limit=_int_env("WEB_STUDY_LIMIT", 100),
         upload_max_bytes=_int_env("WEB_UPLOAD_MAX_BYTES", 25 * 1024 * 1024),
         auth_username=os.getenv("WEB_AUTH_USERNAME", "kaospacs"),
         auth_password=os.getenv("WEB_AUTH_PASSWORD", ""),
         admin_auth_required=_bool_env("WEB_ADMIN_AUTH_REQUIRED", False),
+        emr_auth_required=_bool_env("WEB_EMR_AUTH_REQUIRED", False),
     )
 
 

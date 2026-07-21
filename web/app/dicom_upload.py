@@ -7,7 +7,6 @@ from datetime import datetime
 from PIL import Image
 from pydicom.dataset import Dataset, FileMetaDataset
 from pydicom.uid import (
-    EncapsulatedPDFStorage,
     ExplicitVRLittleEndian,
     SecondaryCaptureImageStorage,
     generate_uid,
@@ -16,6 +15,8 @@ from pydicom.uid import (
 
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png"}
 SUPPORTED_PDF_TYPES = {"application/pdf"}
+PDF_RENDER_SCALE = 2.0
+PDF_MAX_PAGES = 10
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,33 @@ def create_upload_dicom(
     upload_count: int = 1,
     now: datetime | None = None,
 ) -> UploadDicomResult:
+    return create_upload_dicoms(
+        patient_id=patient_id,
+        patient_name=patient_name,
+        filename=filename,
+        content_type=content_type,
+        content=content,
+        patient_birth_date=patient_birth_date,
+        patient_sex=patient_sex,
+        upload_index=upload_index,
+        upload_count=upload_count,
+        now=now,
+    )[0]
+
+
+def create_upload_dicoms(
+    *,
+    patient_id: str,
+    patient_name: str,
+    filename: str,
+    content_type: str,
+    content: bytes,
+    patient_birth_date: str = "",
+    patient_sex: str = "",
+    upload_index: int = 1,
+    upload_count: int = 1,
+    now: datetime | None = None,
+) -> list[UploadDicomResult]:
     normalized_type = _content_type(content_type, filename)
     now = now or datetime.now()
     accession_number = _upload_accession_number(now, upload_index, upload_count)
@@ -56,9 +84,16 @@ def create_upload_dicom(
             upload_index=upload_index,
             upload_count=upload_count,
         )
-        description = "Uploaded image"
+        return [
+            UploadDicomResult(
+                dicom_bytes=_write_dataset(dataset),
+                modality="DOC",
+                study_description="Uploaded image",
+                accession_number=accession_number,
+            )
+        ]
     elif normalized_type in SUPPORTED_PDF_TYPES:
-        dataset = _pdf_dataset(
+        return _pdf_datasets(
             patient_id=patient_id,
             patient_name=patient_name,
             patient_birth_date=patient_birth_date,
@@ -70,16 +105,8 @@ def create_upload_dicom(
             upload_index=upload_index,
             upload_count=upload_count,
         )
-        description = "Uploaded PDF"
-    else:
-        raise ValueError("unsupported_upload_type")
 
-    return UploadDicomResult(
-        dicom_bytes=_write_dataset(dataset),
-        modality="DOC",
-        study_description=description,
-        accession_number=accession_number,
-    )
+    raise ValueError("unsupported_upload_type")
 
 
 def _base_dataset(
@@ -95,6 +122,9 @@ def _base_dataset(
     study_description: str,
     upload_index: int,
     upload_count: int,
+    study_instance_uid: str | None = None,
+    series_instance_uid: str | None = None,
+    instance_number: int | None = None,
 ) -> Dataset:
     sop_instance_uid = generate_uid()
     dataset = Dataset()
@@ -107,8 +137,8 @@ def _base_dataset(
     dataset.SpecificCharacterSet = "ISO_IR 192"
     dataset.SOPClassUID = sop_class_uid
     dataset.SOPInstanceUID = sop_instance_uid
-    dataset.StudyInstanceUID = generate_uid()
-    dataset.SeriesInstanceUID = generate_uid()
+    dataset.StudyInstanceUID = study_instance_uid or generate_uid()
+    dataset.SeriesInstanceUID = series_instance_uid or generate_uid()
     dataset.StudyDate = now.strftime("%Y%m%d")
     dataset.StudyTime = now.strftime("%H%M%S")
     dataset.ContentDate = dataset.StudyDate
@@ -129,6 +159,8 @@ def _base_dataset(
     dataset.Manufacturer = "KaosPACS"
     dataset.ConversionType = "WSD"
     dataset.ImageComments = _upload_comment(upload_index, upload_count)
+    if instance_number is not None:
+        dataset.InstanceNumber = str(instance_number)
     return dataset
 
 
@@ -144,6 +176,11 @@ def _image_dataset(
     accession_number: str,
     upload_index: int,
     upload_count: int,
+    image: Image.Image | None = None,
+    study_instance_uid: str | None = None,
+    series_instance_uid: str | None = None,
+    instance_number: int | None = None,
+    study_description: str = "Uploaded image",
 ) -> Dataset:
     dataset = _base_dataset(
         patient_id=patient_id,
@@ -154,11 +191,14 @@ def _image_dataset(
         now=now,
         accession_number=accession_number,
         sop_class_uid=SecondaryCaptureImageStorage,
-        study_description="Uploaded image",
+        study_description=study_description,
         upload_index=upload_index,
         upload_count=upload_count,
+        study_instance_uid=study_instance_uid,
+        series_instance_uid=series_instance_uid,
+        instance_number=instance_number,
     )
-    image = Image.open(io.BytesIO(content))
+    image = image or Image.open(io.BytesIO(content))
     if image.mode not in ("L", "RGB"):
         image = image.convert("RGB")
     dataset.Rows = image.height
@@ -178,7 +218,7 @@ def _image_dataset(
     return dataset
 
 
-def _pdf_dataset(
+def _pdf_datasets(
     *,
     patient_id: str,
     patient_name: str,
@@ -190,26 +230,82 @@ def _pdf_dataset(
     accession_number: str,
     upload_index: int,
     upload_count: int,
-) -> Dataset:
+) -> list[UploadDicomResult]:
     if not content.startswith(b"%PDF"):
         raise ValueError("invalid_pdf")
-    dataset = _base_dataset(
-        patient_id=patient_id,
-        patient_name=patient_name,
-        patient_birth_date=patient_birth_date,
-        patient_sex=patient_sex,
-        filename=filename,
-        now=now,
-        accession_number=accession_number,
-        sop_class_uid=EncapsulatedPDFStorage,
-        study_description="Uploaded PDF",
-        upload_index=upload_index,
-        upload_count=upload_count,
-    )
-    dataset.MIMETypeOfEncapsulatedDocument = "application/pdf"
-    dataset.EncapsulatedDocument = content
-    dataset.BurnedInAnnotation = "NO"
-    return dataset
+    images = _render_pdf_pages(content)
+    if not images:
+        raise ValueError("invalid_pdf")
+    study_instance_uid = generate_uid()
+    series_instance_uid = generate_uid()
+    page_count = len(images)
+    results: list[UploadDicomResult] = []
+    for page_index, image in enumerate(images, start=1):
+        page_accession = accession_number if page_count == 1 else f"{accession_number}{page_index:02d}"
+        dataset = _image_dataset(
+            patient_id=patient_id,
+            patient_name=patient_name,
+            patient_birth_date=patient_birth_date,
+            patient_sex=patient_sex,
+            filename=filename,
+            content=b"",
+            now=now,
+            accession_number=page_accession,
+            upload_index=page_index,
+            upload_count=page_count,
+            image=image,
+            study_instance_uid=study_instance_uid,
+            series_instance_uid=series_instance_uid,
+            instance_number=page_index,
+            study_description="Uploaded PDF as images",
+        )
+        dataset.SeriesDescription = "KaosPACS PDF upload"
+        dataset.ImageComments = f"Uploaded through KaosPACS Web. PDF page {page_index} of {page_count}."
+        results.append(
+            UploadDicomResult(
+                dicom_bytes=_write_dataset(dataset),
+                modality="DOC",
+                study_description="Uploaded PDF as images",
+                accession_number=page_accession,
+            )
+        )
+    return results
+
+
+def _render_pdf_pages(content: bytes) -> list[Image.Image]:
+    try:
+        import pypdfium2 as pdfium
+    except ImportError as exc:
+        raise ValueError("pdf_renderer_unavailable") from exc
+
+    try:
+        document = pdfium.PdfDocument(content)
+    except Exception as exc:
+        raise ValueError("invalid_pdf") from exc
+
+    images: list[Image.Image] = []
+    try:
+        document_page_count = len(document)
+        if document_page_count > PDF_MAX_PAGES:
+            raise ValueError("pdf_too_many_pages")
+        page_count = document_page_count
+        for page_index in range(page_count):
+            page = document[page_index]
+            try:
+                bitmap = page.render(scale=PDF_RENDER_SCALE)
+                image = bitmap.to_pil()
+                if image.mode != "RGB":
+                    image = image.convert("RGB")
+                images.append(image)
+            finally:
+                close = getattr(page, "close", None)
+                if callable(close):
+                    close()
+    finally:
+        close = getattr(document, "close", None)
+        if callable(close):
+            close()
+    return images
 
 
 def _write_dataset(dataset: Dataset) -> bytes:
