@@ -11,7 +11,7 @@ class Config:
     orthanc_url: str
     orthanc_public_url: str
     weasis_dicomweb_url: str
-    kaospacs_aio_url: str
+    kaosaio_url: str
     gateway_url: str
     gateway_api_token: str
     kaoseghis_pacs_base_url: str
@@ -38,8 +38,9 @@ def load_config() -> Config:
         weasis_dicomweb_url=_strip_slash(
             os.getenv("WEASIS_DICOMWEB_URL", f"{orthanc_public_url}/dicom-web")
         ),
-        kaospacs_aio_url=_strip_slash(
-            os.getenv("KAOSPACS_AIO_URL", "http://127.0.0.1:8056")
+        kaosaio_url=_strip_slash(
+            os.getenv("KAOSAIO_URL")
+            or os.getenv("KAOSPACS_AIO_URL", "http://127.0.0.1:8056")
         ),
         gateway_url=_strip_slash(os.getenv("WEB_GATEWAY_URL", "http://gateway:8060")),
         gateway_api_token=os.getenv("WEB_GATEWAY_API_TOKEN")

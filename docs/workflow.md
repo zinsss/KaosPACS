@@ -80,6 +80,12 @@ metadata such as event type, request path, accession number, status, success,
 error code, and timestamp. It does not store patient demographics or full
 worklist payloads.
 
+KaosAIO is a standalone optional AI Opinion companion service. KaosPACS Web may
+call KaosAIO to display AI Opinion panels for stored studies, but this is not
+part of DICOM acquisition, MWL state, Gateway completion, or Orthanc storage.
+If KaosAIO is unavailable, KaosPACS still receives, stores, views, and uploads
+studies normally.
+
 ## BMD Path
 
 OsteoPro BMD can send images to Orthanc storage, and normal scheduled workflow

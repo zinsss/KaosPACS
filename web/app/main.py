@@ -30,7 +30,7 @@ with warnings.catch_warnings():
 LOGGER = logging.getLogger("kaospacs.web")
 
 AIO_DISCLAIMER = (
-    "KaosPACS AI Opinion\n\n"
+    "KaosAIO Opinion\n\n"
     "NOT official YHSHFM Report.\n"
     "ONLY for AI Testing and Assistance.\n"
     "Clinical Correlation and Physician review required."
@@ -160,7 +160,7 @@ def create_handler(
     gateway: GatewayClient | None = None,
     patient_context_client: KaosEghisPacsClient | None = None,
 ) -> type[BaseHTTPRequestHandler]:
-    aio_client = aio or AioClient(config.kaospacs_aio_url)
+    aio_client = aio or AioClient(config.kaosaio_url)
     gateway_client = gateway or GatewayClient(
         getattr(config, "gateway_url", "http://gateway:8060"),
         getattr(config, "gateway_api_token", ""),
@@ -1000,7 +1000,7 @@ def _aio_panel(study: StudySummary) -> str:
       data-aio-panel
       data-study-instance-uid="{html.escape(study.study_instance_uid, quote=True)}"
       data-orthanc-study-id="{html.escape(study.orthanc_id, quote=True)}">
-      <h3>KaosPACS AI Opinion</h3>
+      <h3>KaosAIO Opinion</h3>
       <pre class="aio-disclaimer">{html.escape(AIO_DISCLAIMER)}</pre>
       <div class="aio-content" aria-live="polite">
         <p>No AI Opinion yet</p>
