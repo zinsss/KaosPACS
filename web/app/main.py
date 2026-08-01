@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 from .config import Config, load_config
 from .dicom_upload import create_upload_dicoms
+from .ecg_waveform import render_ecg_waveform_svg
 from .kaoseghis_pacs import KaosEghisPacsClient, PatientContextResult
 from .orthanc import OrthancClient, StudySummary
 
@@ -330,9 +331,23 @@ def create_handler(
             try:
                 body, content_type = orthanc.preview(instance_id)
             except Exception as exc:
-                LOGGER.warning("Orthanc thumbnail failed exception=%s", exc.__class__.__name__)
-                self.send_error(HTTPStatus.NOT_FOUND)
-                return
+                LOGGER.info(
+                    "Orthanc thumbnail unavailable; trying ECG waveform preview exception=%s",
+                    exc.__class__.__name__,
+                )
+                try:
+                    preview = render_ecg_waveform_svg(orthanc.instance_file(instance_id))
+                except Exception as render_exc:
+                    LOGGER.warning(
+                        "ECG waveform preview failed exception=%s",
+                        render_exc.__class__.__name__,
+                    )
+                    self.send_error(HTTPStatus.NOT_FOUND)
+                    return
+                if preview is None:
+                    self.send_error(HTTPStatus.NOT_FOUND)
+                    return
+                body, content_type = preview.svg, preview.content_type
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", content_type)
             self.send_header("Cache-Control", "private, max-age=60")

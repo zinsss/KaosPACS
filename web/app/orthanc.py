@@ -101,6 +101,10 @@ class OrthancClient:
             content_type = response.headers.get("Content-Type", "image/png")
             return response.read(), content_type
 
+    def instance_file(self, instance_id: str) -> bytes:
+        with urlopen(f"{self.base_url}/instances/{instance_id}/file", timeout=self.timeout) as response:
+            return response.read()
+
     def _summary(self, study: dict[str, Any]) -> StudySummary:
         study_id = str(study.get("ID", ""))
         study_tags = study.get("MainDicomTags") or {}

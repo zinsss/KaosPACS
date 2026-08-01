@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import os
+import struct
 import threading
 from datetime import datetime
 from http.server import ThreadingHTTPServer
@@ -14,11 +15,15 @@ from urllib.request import Request, urlopen
 from unittest.mock import Mock
 
 from PIL import Image
+from pydicom.dataset import Dataset, FileDataset
 from pydicom import dcmread
+from pydicom.sequence import Sequence
 from pydicom.uid import SecondaryCaptureImageStorage
+from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
 from app.config import load_config
 from app.dicom_upload import create_upload_dicom, create_upload_dicoms
+from app.ecg_waveform import render_ecg_waveform_svg
 from app.kaoseghis_pacs import KaosEghisPacsClient, PatientContextResult
 from app.main import (
     AIO_DISCLAIMER,
@@ -1115,6 +1120,51 @@ def test_orthanc_summary_falls_back_to_instance_patient_tags() -> None:
     assert summary.patient_sex == "M"
 
 
+def test_ecg_waveform_renderer_returns_non_phi_svg() -> None:
+    dicom_bytes = _ecg_waveform_dicom_bytes()
+
+    preview = render_ecg_waveform_svg(dicom_bytes)
+
+    assert preview is not None
+    text = preview.svg.decode("utf-8")
+    assert preview.content_type == "image/svg+xml; charset=utf-8"
+    assert "<svg" in text
+    assert "Lead I" in text
+    assert "Lead II" in text
+    assert "trace" in text
+    assert "SECRET^PATIENT" not in text
+    assert "PID-SECRET" not in text
+    assert "19700101" not in text
+
+
+def test_thumbnail_falls_back_to_ecg_waveform_svg() -> None:
+    config = Mock()
+    config.auth_password = ""
+    config.emr_auth_required = False
+    config.admin_auth_required = False
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+    config.study_limit = 100
+    orthanc = Mock()
+    orthanc.preview.side_effect = RuntimeError("unsupported")
+    orthanc.instance_file.return_value = _ecg_waveform_dicom_bytes()
+    server, thread = _start_test_server(config, orthanc)
+    try:
+        response = urlopen(f"{_server_url(server)}/thumbnail/instance-ecg", timeout=3)
+        body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert response.headers.get_content_type() == "image/svg+xml"
+        assert "ECG waveform preview" in body
+        assert "Lead I" in body
+        assert "SECRET^PATIENT" not in body
+        assert "PID-SECRET" not in body
+        orthanc.preview.assert_called_once_with("instance-ecg")
+        orthanc.instance_file.assert_called_once_with("instance-ecg")
+    finally:
+        _stop_test_server(server, thread)
+
+
 def test_web_upload_accepts_single_file_field() -> None:
     config = Mock()
     config.auth_password = ""
@@ -1526,6 +1576,65 @@ def _pdf_bytes(page_count: int = 1) -> bytes:
     buffer = BytesIO()
     first.save(buffer, format="PDF", save_all=True, append_images=pages)
     return buffer.getvalue()
+
+
+def _ecg_waveform_dicom_bytes() -> bytes:
+    file_meta = Dataset()
+    file_meta.FileMetaInformationVersion = b"\x00\x01"
+    file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.9.1.1"
+    file_meta.MediaStorageSOPInstanceUID = generate_uid()
+    file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    file_meta.ImplementationClassUID = generate_uid()
+
+    dataset = FileDataset(None, {}, file_meta=file_meta, preamble=b"\0" * 128)
+    dataset.is_little_endian = True
+    dataset.is_implicit_VR = False
+    dataset.SOPClassUID = file_meta.MediaStorageSOPClassUID
+    dataset.SOPInstanceUID = file_meta.MediaStorageSOPInstanceUID
+    dataset.StudyInstanceUID = generate_uid()
+    dataset.SeriesInstanceUID = generate_uid()
+    dataset.Modality = "ECG"
+    dataset.PatientName = "SECRET^PATIENT"
+    dataset.PatientID = "PID-SECRET"
+    dataset.PatientBirthDate = "19700101"
+    dataset.PatientSex = "F"
+    dataset.StudyDate = "20260802"
+    dataset.StudyTime = "085000"
+
+    channel_count = 2
+    sample_count = 12
+    waveform = Dataset()
+    waveform.MultiplexGroupLabel = "RHYTHM"
+    waveform.NumberOfWaveformChannels = channel_count
+    waveform.NumberOfWaveformSamples = sample_count
+    waveform.SamplingFrequency = 500
+    waveform.WaveformBitsAllocated = 16
+    waveform.WaveformSampleInterpretation = "SS"
+    waveform.ChannelDefinitionSequence = Sequence(
+        [_channel_definition("Lead I"), _channel_definition("Lead II")]
+    )
+    values: list[int] = []
+    for index in range(sample_count):
+        values.extend([index * 12 - 40, 40 - index * 10])
+    waveform.WaveformData = struct.pack("<" + "h" * len(values), *values)
+    dataset.WaveformSequence = Sequence([waveform])
+
+    buffer = BytesIO()
+    dataset.save_as(buffer, write_like_original=False)
+    return buffer.getvalue()
+
+
+def _channel_definition(label: str) -> Dataset:
+    source = Dataset()
+    source.CodeValue = label
+    source.CodingSchemeDesignator = "99TEST"
+    source.CodeMeaning = label
+    channel = Dataset()
+    channel.ChannelSourceSequence = Sequence([source])
+    channel.ChannelSensitivity = 1
+    channel.ChannelSensitivityCorrectionFactor = 1
+    channel.ChannelBaseline = 0
+    return channel
 
 
 def _multipart_body(
