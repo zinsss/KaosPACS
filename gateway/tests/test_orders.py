@@ -1,5 +1,6 @@
 from app.api.orders import (
     default_expires_at,
+    normalized_station_aet,
     order_to_mwl_entry,
     parse_order_datetime,
     upsert_worklist_entry,
@@ -63,6 +64,27 @@ def test_order_to_mwl_entry_defaults_optional_fields_and_expires_at() -> None:
     assert entry["ScheduledProcedureStepStartDate"] == "20260629"
     assert entry["ScheduledProcedureStepStartTime"] == "100000"
     assert entry["ExpiresAt"] == "2026-06-29T23:59:59+09:00"
+
+
+def test_order_to_mwl_entry_normalizes_ecg_station_aet() -> None:
+    entry = order_to_mwl_entry(
+        valid_order_payload(
+            StudyType="ECG",
+            Modality="ECG",
+            StationAET="INNOVISION",
+            Description="심전도검사-심전도기록및판독[표준12유도]",
+        )
+    )
+
+    assert entry["Modality"] == "ECG"
+    assert entry["ScheduledStationAETitle"] == "ECG"
+    assert entry["ScheduledProcedureStepDescription"] == "심전도검사-심전도기록및판독[표준12유도]"
+
+
+def test_normalized_station_aet_keeps_known_modality_defaults() -> None:
+    assert normalized_station_aet(valid_order_payload(Modality="CR", StationAET="BMD")) == "INNOVISION"
+    assert normalized_station_aet(valid_order_payload(Modality="BMD", StationAET="INNOVISION")) == "BMD"
+    assert normalized_station_aet(valid_order_payload(Modality="OT", StudyType="OT", StationAET="CUSTOM")) == "CUSTOM"
 
 
 def test_default_expires_at_is_end_of_scheduled_date_in_seoul() -> None:

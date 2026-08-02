@@ -134,6 +134,11 @@ than raw MWL JSON. Gateway validates those events, converts them into MWL
 entries, and updates the internal MWL API. Raw Gateway `/worklist` endpoints
 remain internal/development helpers.
 
+Gateway applies KaosPACS-owned station defaults at this boundary so legacy
+modalities see the expected worklist station. Current defaults are
+`CR/DX -> INNOVISION`, `BMD -> BMD`, and `ECG -> ECG`. This prevents an ECG
+order from being published to MWL as the X-ray station.
+
 KaosEghis-PACS operator UI should read imaging lifecycle state from Gateway:
 
 ```text

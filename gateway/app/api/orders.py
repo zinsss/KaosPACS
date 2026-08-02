@@ -37,6 +37,12 @@ TERMINAL_STATE_FIELDS = (
     "CancelledAt",
     "CancelReason",
 )
+MODALITY_STATION_DEFAULTS = {
+    "CR": "INNOVISION",
+    "DX": "INNOVISION",
+    "BMD": "BMD",
+    "ECG": "ECG",
+}
 
 
 def text(value: Any) -> str:
@@ -110,7 +116,7 @@ def order_to_mwl_entry(payload: dict[str, Any]) -> dict[str, Any]:
         "PatientSex": text(payload.get("PatientSex")) or "O",
         "AccessionNumber": accession_number,
         "Modality": text(payload["Modality"]),
-        "ScheduledStationAETitle": text(payload["StationAET"]),
+        "ScheduledStationAETitle": normalized_station_aet(payload),
         "ScheduledProcedureStepDescription": description,
         "StudyDescription": description,
         "RequestedProcedureDescription": description,
@@ -123,6 +129,16 @@ def order_to_mwl_entry(payload: dict[str, Any]) -> dict[str, Any]:
         "StudyType": text(payload["StudyType"]),
         "SpecificCharacterSet": "ISO_IR 192",
     }
+
+
+def normalized_station_aet(payload: dict[str, Any]) -> str:
+    modality = text(payload.get("Modality")).upper()
+    study_type = text(payload.get("StudyType")).upper()
+    station_aet = text(payload.get("StationAET")).upper()
+    default_station = MODALITY_STATION_DEFAULTS.get(modality) or MODALITY_STATION_DEFAULTS.get(study_type)
+    if default_station:
+        return default_station
+    return station_aet
 
 
 def upsert_worklist_entry(worklist_payload: Any, entry: dict[str, Any]) -> dict[str, Any]:
