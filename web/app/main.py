@@ -1551,18 +1551,18 @@ AIO_PANEL_SCRIPT = r"""
     sections.className = "aio-sections";
 
     const details = fieldsBlock([
-      ["status", report.status],
+      ["result", reportStatusText(report)],
       ["ai_domain", report.ai_domain],
       ["summary", report.summary || "-"],
       ["model_name", report.model_name || "-"],
       ["model_version", report.model_version || "-"],
       ["routing reason", routingReason(report)],
-      ["review", report.physician_review_status || "-"]
+      ["review", reviewStatusText(report)]
     ]);
     sections.appendChild(section("Details", details, true));
 
     const findings = findingsBlock(report);
-    sections.appendChild(section("Findings", findings, false));
+    sections.appendChild(section("Findings", findings, hasFindings(report)));
 
     const controls = document.createElement("div");
     controls.className = "aio-controls";
@@ -1664,6 +1664,24 @@ AIO_PANEL_SCRIPT = r"""
       container.appendChild(row);
     });
     return container;
+  }
+
+  function hasFindings(report) {
+    return !!(report && Array.isArray(report.findings_json) && report.findings_json.length);
+  }
+
+  function reportStatusText(report) {
+    if (!report || !report.status) return "-";
+    if (report.status === "completed") return "Generated";
+    if (report.status === "unsupported") return "Unsupported";
+    return String(report.status);
+  }
+
+  function reviewStatusText(report) {
+    if (!report || !report.physician_review_status) return "-";
+    if (report.physician_review_status === "pending") return "Needs physician review";
+    if (report.physician_review_status === "approved") return "Reviewed";
+    return String(report.physician_review_status);
   }
 
   function findingTitle(item) {
