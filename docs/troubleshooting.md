@@ -154,6 +154,37 @@ After several successful clinical days and a backup/mirror plan, the old
 `/srv/docker/kaospacs/orthanc-storage` copy can be deleted. Never delete
 `/srv/orthanc-storage` while KaosPACS is in use.
 
+## Orthanc Storage Mirror Issue
+
+The live Orthanc DICOM store is:
+
+```text
+/srv/orthanc-storage
+```
+
+The local near-live mirror is:
+
+```text
+/srv/backups/kaospacs/orthanc-storage
+```
+
+Check the mirror service:
+
+```bash
+docker compose ps storage-mirror
+docker compose logs --tail=100 storage-mirror
+cat /srv/backups/kaospacs/orthanc-storage/.kaospacs-mirror-status.json
+```
+
+The mirror does not propagate deletes by default:
+
+```text
+ORTHANC_MIRROR_DELETE=false
+```
+
+Keep this default unless an exact destructive mirror is intentionally required.
+Synology/NAS backup should be handled separately on a timed schedule.
+
 ## DICOM Association Rejected
 
 Legacy modalities must call:

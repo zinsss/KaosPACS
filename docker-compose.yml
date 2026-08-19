@@ -49,12 +49,36 @@ services:
       POSTGRESQL_PLUGIN_ENABLED: "true"
     volumes:
       - ./orthanc/orthanc.json:/etc/orthanc/orthanc.json:ro
-      - ${ORTHANC_STORAGE:-/srv/docker/kaospacs/orthanc-storage}:/var/lib/orthanc/storage
+      - ${ORTHANC_STORAGE:-/srv/orthanc-storage}:/var/lib/orthanc/storage
     healthcheck:
       test: ["CMD", "python3", "/probes/test-aliveness.py"]
       interval: 10s
       timeout: 5s
       retries: 12
+
+  storage-mirror:
+    build:
+      context: ./storage-mirror
+    container_name: kaospacs-storage-mirror
+    restart: unless-stopped
+    depends_on:
+      orthanc:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Seoul}
+      MIRROR_SOURCE: /source
+      MIRROR_DESTINATION: /dest
+      MIRROR_STATUS_PATH: /dest/.kaospacs-mirror-status.json
+      MIRROR_INTERVAL_SECONDS: ${ORTHANC_MIRROR_INTERVAL_SECONDS:-60}
+      MIRROR_DELETE: ${ORTHANC_MIRROR_DELETE:-false}
+    volumes:
+      - ${ORTHANC_STORAGE:-/srv/orthanc-storage}:/source:ro
+      - ${ORTHANC_MIRROR_TARGET:-/srv/backups/kaospacs/orthanc-storage}:/dest
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,time; p='/dest/.kaospacs-mirror-status.json'; s=json.load(open(p)); assert s.get('ok') is True; assert time.time() - __import__('datetime').datetime.fromisoformat(s['finished_at']).timestamp() < 180"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   mwl:
     build:

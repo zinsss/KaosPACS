@@ -120,6 +120,16 @@ NVMe-backed rollback copy, if present at
 `/srv/docker/kaospacs/orthanc-storage`, can be deleted later after several
 successful clinical days confirm Orthanc is reading from `/srv/orthanc-storage`.
 
+Live DICOM storage is mirrored locally by the `storage-mirror` service:
+
+```text
+/srv/orthanc-storage                         live store
+/srv/backups/kaospacs/orthanc-storage        near-live local mirror
+```
+
+The mirror copies new/changed files on a short interval and does not propagate
+deletes by default. Synology/NAS backup is intended as a later timed backup.
+
 ## First Run
 
 ```bash

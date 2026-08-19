@@ -27,6 +27,29 @@ disk. On the clinic server this is `/dev/sdb1`. Keep `/dev/sda1` available for
 backup/mirror use and keep the system NVMe for the OS, containers, and smaller
 runtime data.
 
+Live DICOM storage layout:
+
+```text
+/srv/orthanc-storage                         live Orthanc DICOM store on /dev/sdb1
+/srv/backups/kaospacs/orthanc-storage        near-live local mirror on /dev/sda1
+```
+
+The local mirror is maintained by the `storage-mirror` service. It copies new
+or changed files from the live Orthanc store to `/srv/backups` on a short
+interval. By default it does not propagate deletes:
+
+```text
+ORTHANC_MIRROR_INTERVAL_SECONDS=60
+ORTHANC_MIRROR_DELETE=false
+```
+
+This is intentional. A delete-propagating mirror can copy accidental deletions
+or corruption to the backup disk. Keep `ORTHANC_MIRROR_DELETE=false` unless an
+exact destructive mirror is explicitly required.
+
+Synology/NAS backup should be added later as a timed backup from the live store
+and/or local mirror.
+
 ## Environment
 
 Create the runtime environment file:
@@ -474,6 +497,7 @@ Backup target:
 Future backup jobs should cover:
 
 - Orthanc DICOM file storage under `ORTHANC_STORAGE`.
+- Local Orthanc DICOM mirror under `ORTHANC_MIRROR_TARGET`.
 - PostgreSQL database dumps from `POSTGRES_DB`.
 - MWL runtime data under `/srv/docker/kaospacs/mwl`, including
   `worklist.json` and `mwl_audit.sqlite3`.
