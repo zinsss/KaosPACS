@@ -111,8 +111,14 @@ kaospacs/
 
 ```bash
 sudo mkdir -p /srv/projects
-sudo mkdir -p /srv/docker/kaospacs/{orthanc-storage,postgres,logs,backups,mwl,gateway,web}
+sudo mkdir -p /srv/orthanc-storage
+sudo mkdir -p /srv/docker/kaospacs/{postgres,logs,backups,mwl,gateway,web}
 ```
+
+`/srv/orthanc-storage` is the dedicated live DICOM storage mount. The previous
+NVMe-backed rollback copy, if present at
+`/srv/docker/kaospacs/orthanc-storage`, can be deleted later after several
+successful clinical days confirm Orthanc is reading from `/srv/orthanc-storage`.
 
 ## First Run
 

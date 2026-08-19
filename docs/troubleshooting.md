@@ -126,15 +126,33 @@ Orthanc stores DICOM files under `ORTHANC_STORAGE`.
 Default:
 
 ```text
-/srv/docker/kaospacs/orthanc-storage
+/srv/orthanc-storage
 ```
 
 Create the directory and verify Docker can write to it:
 
 ```bash
-sudo mkdir -p /srv/docker/kaospacs/orthanc-storage
+sudo mkdir -p /srv/orthanc-storage
 docker compose logs orthanc
 ```
+
+If an older directory remains at `/srv/docker/kaospacs/orthanc-storage`, treat
+it as a temporary rollback copy after the storage migration. Do not delete it
+until the live Orthanc mount is confirmed:
+
+```bash
+docker inspect kaospacs-orthanc --format '{{range .Mounts}}{{if eq .Destination "/var/lib/orthanc/storage"}}{{.Source}}{{end}}{{end}}'
+```
+
+Expected output:
+
+```text
+/srv/orthanc-storage
+```
+
+After several successful clinical days and a backup/mirror plan, the old
+`/srv/docker/kaospacs/orthanc-storage` copy can be deleted. Never delete
+`/srv/orthanc-storage` while KaosPACS is in use.
 
 ## DICOM Association Rejected
 

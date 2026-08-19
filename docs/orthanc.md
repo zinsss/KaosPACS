@@ -55,8 +55,21 @@ the container at:
 Default host path:
 
 ```text
-/srv/docker/kaospacs/orthanc-storage
+/srv/orthanc-storage
 ```
+
+The live deployment moved Orthanc DICOM storage to the dedicated `/dev/sdb1`
+mount at `/srv/orthanc-storage` to avoid filling the system NVMe disk. If an
+older rollback copy remains at `/srv/docker/kaospacs/orthanc-storage`, keep it
+until several successful clinical days have passed, then it can be deleted
+after verifying:
+
+```bash
+docker inspect kaospacs-orthanc --format '{{range .Mounts}}{{if eq .Destination "/var/lib/orthanc/storage"}}{{.Source}}{{end}}{{end}}'
+docker compose ps
+```
+
+The first command should print `/srv/orthanc-storage`.
 
 Modalities should not send directly to Orthanc. Gateway receives studies,
 stores the original received DICOM, inspects charset, applies guarded Korean

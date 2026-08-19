@@ -18,8 +18,14 @@ Recommended host setup:
 
 ```bash
 sudo mkdir -p /srv/projects
-sudo mkdir -p /srv/docker/kaospacs/{orthanc-storage,postgres,logs,backups,mwl,gateway,web}
+sudo mkdir -p /srv/orthanc-storage
+sudo mkdir -p /srv/docker/kaospacs/{postgres,logs,backups,mwl,gateway,web}
 ```
+
+`/srv/orthanc-storage` should be mounted on the dedicated live DICOM storage
+disk. On the clinic server this is `/dev/sdb1`. Keep `/dev/sda1` available for
+backup/mirror use and keep the system NVMe for the OS, containers, and smaller
+runtime data.
 
 ## Environment
 
@@ -476,3 +482,22 @@ Future backup jobs should cover:
 - Future Gateway DICOM quarantine/staging directories once DICOM ingress is
   implemented.
 - KaosPACS configuration and operational logs.
+
+## Old Orthanc Storage Rollback Copy
+
+Older deployments stored Orthanc DICOM files under:
+
+```text
+/srv/docker/kaospacs/orthanc-storage
+```
+
+After moving live storage to `/srv/orthanc-storage`, keep the old NVMe-backed
+directory temporarily as a rollback copy. It is safe to delete later only after:
+
+- `docker inspect kaospacs-orthanc` shows `/srv/orthanc-storage` mounted at
+  `/var/lib/orthanc/storage`.
+- Orthanc Web, KaosPACS Web, Weasis launch, and new modality sends work for
+  several clinical days.
+- A backup/mirror plan exists for `/srv/orthanc-storage`.
+
+Do not delete `/srv/orthanc-storage`. That is the live DICOM store.
