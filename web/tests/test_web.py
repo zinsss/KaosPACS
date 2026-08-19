@@ -391,7 +391,11 @@ def test_aio_report_renders_details_and_findings_sections() -> None:
     assert "generatedNoteBlock(item)" in AIO_PANEL_SCRIPT
     assert "Copy to clipboard" in AIO_PANEL_SCRIPT
     assert "Edit this summary" in AIO_PANEL_SCRIPT
+    assert "Temporary AI Second Opinion" in AIO_PANEL_SCRIPT
+    assert "/api/aio/temporary/cxr-opinion/" in AIO_PANEL_SCRIPT
+    assert "Not saved." in AIO_PANEL_SCRIPT
     assert ".aio-generated-note" in CSS
+    assert ".aio-temporary-result" in CSS
 
 
 def test_aio_proxy_endpoints_call_aio_client() -> None:
@@ -415,6 +419,13 @@ def test_aio_proxy_endpoints_call_aio_client() -> None:
         "physician_review_status": "approved",
         "disclaimer_text": AIO_DISCLAIMER,
     }
+    aio.temporary_cxr_opinion.return_value = {
+        "status": "completed",
+        "temporary": True,
+        "stored": False,
+        "opinion_text": "*** AI assisted Opinion, not clinical report",
+        "disclaimer_text": AIO_DISCLAIMER,
+    }
     server = ThreadingHTTPServer(
         ("127.0.0.1", 0),
         create_handler(config, Mock(), aio),
@@ -436,6 +447,15 @@ def test_aio_proxy_endpoints_call_aio_client() -> None:
         response = urlopen(infer, timeout=3)
         assert response.status == 201
         aio.infer.assert_called_once_with("orthanc-id")
+
+        temporary = Request(
+            f"{_server_url(server)}/api/aio/temporary/cxr-opinion/orthanc-id",
+            data=b"",
+            method="POST",
+        )
+        response = urlopen(temporary, timeout=3)
+        assert response.status == 200
+        aio.temporary_cxr_opinion.assert_called_once_with("orthanc-id")
 
         review = Request(
             f"{_server_url(server)}/api/aio/report/report-1/review",

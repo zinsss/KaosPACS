@@ -65,6 +65,9 @@ class AioClient:
     def infer(self, orthanc_study_id: str) -> dict[str, Any]:
         return self._json("POST", f"/api/aio/infer/{quote(orthanc_study_id, safe='')}")
 
+    def temporary_cxr_opinion(self, orthanc_study_id: str) -> dict[str, Any]:
+        return self._json("POST", f"/api/aio/temporary/cxr-opinion/{quote(orthanc_study_id, safe='')}")
+
     def mark_reviewed(self, report_id: str) -> dict[str, Any]:
         return self._json(
             "POST",
@@ -206,6 +209,10 @@ def create_handler(
             if parsed.path == "/emr.php":
                 self._upload(parsed.query)
                 return
+            if parsed.path.startswith("/api/aio/temporary/cxr-opinion/"):
+                orthanc_study_id = parsed.path.removeprefix("/api/aio/temporary/cxr-opinion/")
+                self._api_aio_temporary_cxr_opinion(orthanc_study_id)
+                return
             if parsed.path.startswith("/api/aio/infer/"):
                 self._api_aio_infer(parsed.path.removeprefix("/api/aio/infer/"))
                 return
@@ -312,6 +319,23 @@ def create_handler(
                 self._json(aio_client.infer(orthanc_study_id), HTTPStatus.CREATED)
             except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
                 LOGGER.warning("AIO infer failed exception=%s", exc.__class__.__name__)
+                self._json({"error": "aio_unavailable"}, HTTPStatus.BAD_GATEWAY)
+
+        def _api_aio_temporary_cxr_opinion(self, orthanc_study_id: str) -> None:
+            if not orthanc_study_id:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            try:
+                self._json(aio_client.temporary_cxr_opinion(orthanc_study_id))
+            except HTTPError as exc:
+                try:
+                    payload = json.loads(exc.read().decode("utf-8"))
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                    payload = {"error": "aio_unavailable"}
+                LOGGER.warning("AIO temporary CXR opinion failed status=%s", exc.code)
+                self._json(payload, HTTPStatus(exc.code))
+            except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+                LOGGER.warning("AIO temporary CXR opinion failed exception=%s", exc.__class__.__name__)
                 self._json({"error": "aio_unavailable"}, HTTPStatus.BAD_GATEWAY)
 
         def _api_aio_review(self, report_id: str) -> None:
@@ -1019,7 +1043,11 @@ def _aio_panel(study: StudySummary) -> str:
       <pre class="aio-disclaimer">{html.escape(AIO_DISCLAIMER)}</pre>
       <div class="aio-content" aria-live="polite">
         <p>No AI Opinion yet</p>
-        <button type="button" data-aio-run>Run AI Opinion</button>
+        <div class="aio-controls">
+          <button type="button" data-aio-run>Run AI Opinion</button>
+          <button type="button" data-aio-temporary-cxr>Temporary AI Second Opinion</button>
+        </div>
+        <div class="aio-temporary-result" data-aio-temporary-result></div>
       </div>
     </section>"""
 
@@ -1300,6 +1328,7 @@ def _is_emr_launch_path(path: str) -> bool:
         or path.startswith("/thumbnail/")
         or path.startswith("/api/aio/study/")
         or path.startswith("/api/aio/infer/")
+        or path.startswith("/api/aio/temporary/cxr-opinion/")
         or (path.startswith("/api/aio/report/") and path.endswith("/review"))
     )
 
@@ -1435,6 +1464,10 @@ dd { margin:2px 0 0; overflow-wrap:anywhere; }
 .aio-generated-note textarea { min-height:118px; resize:vertical; }
 .aio-note-actions { display:flex; gap:7px; flex-wrap:wrap; }
 .aio-copy-status { color:var(--muted); font-size:12px; align-self:center; }
+.aio-temporary-result { margin-top:8px; }
+.aio-temporary-warning,
+.aio-temporary-opinion { width:100%; box-sizing:border-box; margin:0 0 8px; padding:8px; border:1px solid var(--border); border-radius:6px; background:#2E3440; color:var(--text); font:13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+.aio-temporary-warning { border-color:#D08770; color:var(--yellow); }
 .aio-score-list { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:5px 10px; margin-top:7px; padding-top:7px; border-top:1px dashed var(--border); }
 .aio-score { display:flex; justify-content:space-between; gap:8px; color:var(--text); }
 .aio-score b { font-weight:600; overflow-wrap:anywhere; }
@@ -1510,12 +1543,17 @@ AIO_PANEL_SCRIPT = r"""
     content.textContent = "";
     const message = document.createElement("p");
     message.textContent = "No AI Opinion yet";
+    const controls = document.createElement("div");
+    controls.className = "aio-controls";
     const run = document.createElement("button");
     run.type = "button";
     run.textContent = "Run AI Opinion";
     run.addEventListener("click", function () { runOpinion(panel, run); });
+    controls.appendChild(run);
+    appendTemporaryCxrButton(panel, controls);
     content.appendChild(message);
-    content.appendChild(run);
+    content.appendChild(controls);
+    content.appendChild(temporaryResultContainer());
   }
 
   function runOpinion(panel, button) {
@@ -1594,8 +1632,105 @@ AIO_PANEL_SCRIPT = r"""
 
     controls.appendChild(reviewed);
     controls.appendChild(reject);
+    appendTemporaryCxrButton(panel, controls);
     content.appendChild(sections);
     content.appendChild(controls);
+    content.appendChild(temporaryResultContainer());
+  }
+
+  function appendTemporaryCxrButton(panel, controls) {
+    const temporary = document.createElement("button");
+    temporary.type = "button";
+    temporary.textContent = "Temporary AI Second Opinion";
+    temporary.title = "Sends a metadata-stripped rendered CXR image only. Result is not saved.";
+    temporary.addEventListener("click", function () {
+      runTemporaryCxrOpinion(panel, temporary);
+    });
+    controls.appendChild(temporary);
+  }
+
+  function runTemporaryCxrOpinion(panel, button) {
+    const orthancStudyId = panel.dataset.orthancStudyId || "";
+    if (!orthancStudyId) return;
+    button.disabled = true;
+    button.textContent = "Running temporary opinion";
+    renderTemporaryMessage(panel, "Temporary opinion is running. Result will not be saved.");
+    fetch("/api/aio/temporary/cxr-opinion/" + encodeURIComponent(orthancStudyId), {
+      method: "POST",
+      headers: { "Accept": "application/json" }
+    })
+      .then(function (response) {
+        if (!response.ok) {
+          return response.json().catch(function () { return {}; }).then(function (payload) {
+            throw payload;
+          });
+        }
+        return response.json();
+      })
+      .then(function (payload) {
+        renderTemporaryOpinion(panel, payload);
+      })
+      .catch(function (payload) {
+        const message = payload && payload.message ? payload.message : "Temporary opinion provider is not configured.";
+        renderTemporaryMessage(panel, message);
+      })
+      .finally(function () {
+        button.disabled = false;
+        button.textContent = "Temporary AI Second Opinion";
+      });
+  }
+
+  function temporaryResultContainer() {
+    const container = document.createElement("div");
+    container.className = "aio-temporary-result";
+    container.dataset.aioTemporaryResult = "";
+    return container;
+  }
+
+  function existingTemporaryResultContainer(panel) {
+    let container = panel.querySelector("[data-aio-temporary-result]");
+    if (!container) {
+      const content = panel.querySelector(".aio-content");
+      container = temporaryResultContainer();
+      content.appendChild(container);
+    }
+    return container;
+  }
+
+  function renderTemporaryMessage(panel, message) {
+    const container = existingTemporaryResultContainer(panel);
+    container.textContent = "";
+    const notice = document.createElement("p");
+    notice.className = "aio-temporary-warning";
+    notice.textContent = message;
+    container.appendChild(notice);
+  }
+
+  function renderTemporaryOpinion(panel, payload) {
+    const container = existingTemporaryResultContainer(panel);
+    container.textContent = "";
+    const body = document.createElement("div");
+    const warning = document.createElement("pre");
+    warning.className = "aio-temporary-warning";
+    warning.textContent = [
+      "Temporary AI Second Opinion",
+      "Not saved.",
+      "Not official report.",
+      payload.warning_text || "*** AI assisted Opinion, not clinical report",
+      "Physician review required."
+    ].join("\n");
+    const opinion = document.createElement("pre");
+    opinion.className = "aio-temporary-opinion";
+    opinion.textContent = payload.opinion_text || "-";
+    const fields = fieldsBlock([
+      ["stored", payload.stored === false ? "No" : "-"],
+      ["input", temporaryInputText(payload)],
+      ["metadata sent", payload.input && payload.input.dicom_metadata_sent === false ? "No" : "-"]
+    ]);
+    body.appendChild(warning);
+    body.appendChild(fields);
+    body.appendChild(opinion);
+    container.appendChild(section("Temporary Second Opinion", body, true));
   }
 
   function renderUnavailable(panel) {
@@ -1821,6 +1956,13 @@ AIO_PANEL_SCRIPT = r"""
   function routingReason(report) {
     if (!report || !report.routing_json) return "-";
     return report.routing_json.reason || "-";
+  }
+
+  function temporaryInputText(payload) {
+    if (!payload || !payload.input) return "-";
+    const width = payload.input.width || "-";
+    const height = payload.input.height || "-";
+    return "rendered PNG from DICOM PixelData (" + width + " x " + height + ")";
   }
 
   panels.forEach(loadPanel);
