@@ -31,6 +31,7 @@ from app.main import (
     CSS,
     create_handler,
     make_weasis_url,
+    _aio_panel,
     _patient_context_with_fallback,
     PatientContext,
     render_imaging_worklist_admin,
@@ -303,6 +304,7 @@ def test_render_index_escapes_values() -> None:
     assert "2026-07-02" in html
     assert "weasis://?" in html
     assert "KaosAIO Opinion" in html
+    assert "Temporary AI Second Opinion" in html
     assert "NOT official YHSHFM Report." in html
     assert "ONLY for AI Testing and Assistance." in html
     assert "Clinical Correlation and Physician review required." in html
@@ -392,10 +394,35 @@ def test_aio_report_renders_details_and_findings_sections() -> None:
     assert "Copy to clipboard" in AIO_PANEL_SCRIPT
     assert "Edit this summary" in AIO_PANEL_SCRIPT
     assert "Temporary AI Second Opinion" in AIO_PANEL_SCRIPT
-    assert "/api/aio/temporary/cxr-opinion/" in AIO_PANEL_SCRIPT
+    assert "/api/aio/temporary/image-opinion/" in AIO_PANEL_SCRIPT
+    assert "temporaryOpinionEligible" in AIO_PANEL_SCRIPT
     assert "Not saved." in AIO_PANEL_SCRIPT
     assert ".aio-generated-note" in CSS
     assert ".aio-temporary-result" in CSS
+
+
+def test_aio_panel_hides_temporary_button_for_bmd() -> None:
+    study = StudySummary(
+        orthanc_id="orthanc-id",
+        study_instance_uid="1.2.3",
+        accession_number="ACC",
+        patient_id="9426",
+        patient_name="",
+        patient_birth_date="",
+        patient_sex="",
+        study_date="20260708",
+        study_time="",
+        study_description="BMD Measurement",
+        modalities=["BMD"],
+        series_count=1,
+        instance_count=1,
+        thumbnail_instance_id="inst",
+    )
+
+    html = _aio_panel(study)
+
+    assert 'data-temporary-opinion-eligible="false"' in html
+    assert "Temporary AI Second Opinion" not in html
 
 
 def test_aio_proxy_endpoints_call_aio_client() -> None:
@@ -419,7 +446,7 @@ def test_aio_proxy_endpoints_call_aio_client() -> None:
         "physician_review_status": "approved",
         "disclaimer_text": AIO_DISCLAIMER,
     }
-    aio.temporary_cxr_opinion.return_value = {
+    aio.temporary_image_opinion.return_value = {
         "status": "completed",
         "temporary": True,
         "stored": False,
@@ -449,13 +476,13 @@ def test_aio_proxy_endpoints_call_aio_client() -> None:
         aio.infer.assert_called_once_with("orthanc-id")
 
         temporary = Request(
-            f"{_server_url(server)}/api/aio/temporary/cxr-opinion/orthanc-id",
+            f"{_server_url(server)}/api/aio/temporary/image-opinion/orthanc-id",
             data=b"",
             method="POST",
         )
         response = urlopen(temporary, timeout=3)
         assert response.status == 200
-        aio.temporary_cxr_opinion.assert_called_once_with("orthanc-id")
+        aio.temporary_image_opinion.assert_called_once_with("orthanc-id")
 
         review = Request(
             f"{_server_url(server)}/api/aio/report/report-1/review",

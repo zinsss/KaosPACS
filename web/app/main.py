@@ -65,8 +65,11 @@ class AioClient:
     def infer(self, orthanc_study_id: str) -> dict[str, Any]:
         return self._json("POST", f"/api/aio/infer/{quote(orthanc_study_id, safe='')}")
 
+    def temporary_image_opinion(self, orthanc_study_id: str) -> dict[str, Any]:
+        return self._json("POST", f"/api/aio/temporary/image-opinion/{quote(orthanc_study_id, safe='')}")
+
     def temporary_cxr_opinion(self, orthanc_study_id: str) -> dict[str, Any]:
-        return self._json("POST", f"/api/aio/temporary/cxr-opinion/{quote(orthanc_study_id, safe='')}")
+        return self.temporary_image_opinion(orthanc_study_id)
 
     def mark_reviewed(self, report_id: str) -> dict[str, Any]:
         return self._json(
@@ -209,9 +212,17 @@ def create_handler(
             if parsed.path == "/emr.php":
                 self._upload(parsed.query)
                 return
+            if parsed.path.startswith("/api/aio/temporary/image-opinion/"):
+                orthanc_study_id = parsed.path.removeprefix("/api/aio/temporary/image-opinion/")
+                self._api_aio_temporary_image_opinion(orthanc_study_id)
+                return
+            if parsed.path.startswith("/api/aio/temporary/xray-opinion/"):
+                orthanc_study_id = parsed.path.removeprefix("/api/aio/temporary/xray-opinion/")
+                self._api_aio_temporary_image_opinion(orthanc_study_id)
+                return
             if parsed.path.startswith("/api/aio/temporary/cxr-opinion/"):
                 orthanc_study_id = parsed.path.removeprefix("/api/aio/temporary/cxr-opinion/")
-                self._api_aio_temporary_cxr_opinion(orthanc_study_id)
+                self._api_aio_temporary_image_opinion(orthanc_study_id)
                 return
             if parsed.path.startswith("/api/aio/infer/"):
                 self._api_aio_infer(parsed.path.removeprefix("/api/aio/infer/"))
@@ -321,21 +332,21 @@ def create_handler(
                 LOGGER.warning("AIO infer failed exception=%s", exc.__class__.__name__)
                 self._json({"error": "aio_unavailable"}, HTTPStatus.BAD_GATEWAY)
 
-        def _api_aio_temporary_cxr_opinion(self, orthanc_study_id: str) -> None:
+        def _api_aio_temporary_image_opinion(self, orthanc_study_id: str) -> None:
             if not orthanc_study_id:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             try:
-                self._json(aio_client.temporary_cxr_opinion(orthanc_study_id))
+                self._json(aio_client.temporary_image_opinion(orthanc_study_id))
             except HTTPError as exc:
                 try:
                     payload = json.loads(exc.read().decode("utf-8"))
                 except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                     payload = {"error": "aio_unavailable"}
-                LOGGER.warning("AIO temporary CXR opinion failed status=%s", exc.code)
+                LOGGER.warning("AIO temporary image opinion failed status=%s", exc.code)
                 self._json(payload, HTTPStatus(exc.code))
             except (URLError, TimeoutError, json.JSONDecodeError) as exc:
-                LOGGER.warning("AIO temporary CXR opinion failed exception=%s", exc.__class__.__name__)
+                LOGGER.warning("AIO temporary image opinion failed exception=%s", exc.__class__.__name__)
                 self._json({"error": "aio_unavailable"}, HTTPStatus.BAD_GATEWAY)
 
         def _api_aio_review(self, report_id: str) -> None:
@@ -1034,22 +1045,78 @@ def _study_card(config: Config, study: StudySummary) -> str:
 
 
 def _aio_panel(study: StudySummary) -> str:
+    temporary_eligible = "true" if _temporary_image_opinion_eligible(study) else "false"
+    temporary_button = (
+        '<button type="button" data-aio-temporary-image>Temporary AI Second Opinion</button>'
+        if temporary_eligible == "true"
+        else ""
+    )
     return f"""
     <section class="aio-panel"
       data-aio-panel
       data-study-instance-uid="{html.escape(study.study_instance_uid, quote=True)}"
-      data-orthanc-study-id="{html.escape(study.orthanc_id, quote=True)}">
+      data-orthanc-study-id="{html.escape(study.orthanc_id, quote=True)}"
+      data-temporary-opinion-eligible="{temporary_eligible}">
       <h3>KaosAIO Opinion</h3>
       <pre class="aio-disclaimer">{html.escape(AIO_DISCLAIMER)}</pre>
       <div class="aio-content" aria-live="polite">
         <p>No AI Opinion yet</p>
         <div class="aio-controls">
           <button type="button" data-aio-run>Run AI Opinion</button>
-          <button type="button" data-aio-temporary-cxr>Temporary AI Second Opinion</button>
+          {temporary_button}
         </div>
         <div class="aio-temporary-result" data-aio-temporary-result></div>
       </div>
     </section>"""
+
+
+def _temporary_image_opinion_eligible(study: StudySummary) -> bool:
+    modalities = {value.strip().upper() for value in study.modalities if value.strip()}
+    searchable = " ".join(
+        value.strip().upper()
+        for value in (
+            study.study_description,
+            ",".join(study.modalities),
+        )
+        if value
+    )
+    if modalities & {"CT", "MR", "US", "BMD", "DOC"}:
+        return bool(_contains_any(searchable, _TEMPORARY_XRAY_TERMS + _TEMPORARY_ECG_TERMS))
+    return bool(
+        modalities & {"CR", "DX", "DR", "XR", "RG", "ECG", "EKG"}
+        or _contains_any(searchable, _TEMPORARY_XRAY_TERMS + _TEMPORARY_ECG_TERMS)
+    )
+
+
+_TEMPORARY_XRAY_TERMS = (
+    "X-RAY",
+    "XRAY",
+    "RADIOGRAPH",
+    "CHEST",
+    "CXR",
+    "흉부",
+    "복부",
+    "수관절",
+    "족관절",
+    "족골",
+    "수골",
+    "슬관절",
+    "요추",
+    "경추",
+    "견갑골",
+    "고관절",
+    "대퇴골",
+    "하퇴골",
+    "전박골",
+    "상박골",
+    "늑골",
+    "천골미골",
+)
+_TEMPORARY_ECG_TERMS = ("ECG", "EKG", "ELECTROCARDIO", "심전도")
+
+
+def _contains_any(value: str, terms: tuple[str, ...]) -> bool:
+    return any(term in value for term in terms)
 
 
 def _upload_form(
@@ -1328,6 +1395,8 @@ def _is_emr_launch_path(path: str) -> bool:
         or path.startswith("/thumbnail/")
         or path.startswith("/api/aio/study/")
         or path.startswith("/api/aio/infer/")
+        or path.startswith("/api/aio/temporary/image-opinion/")
+        or path.startswith("/api/aio/temporary/xray-opinion/")
         or path.startswith("/api/aio/temporary/cxr-opinion/")
         or (path.startswith("/api/aio/report/") and path.endswith("/review"))
     )
@@ -1639,10 +1708,11 @@ AIO_PANEL_SCRIPT = r"""
   }
 
   function appendTemporaryCxrButton(panel, controls) {
+    if ((panel.dataset.temporaryOpinionEligible || "") !== "true") return;
     const temporary = document.createElement("button");
     temporary.type = "button";
     temporary.textContent = "Temporary AI Second Opinion";
-    temporary.title = "Sends a metadata-stripped rendered CXR image only. Result is not saved.";
+    temporary.title = "Sends a metadata-stripped rendered X-ray or ECG/EKG image only. Result is not saved.";
     temporary.addEventListener("click", function () {
       runTemporaryCxrOpinion(panel, temporary);
     });
@@ -1655,7 +1725,7 @@ AIO_PANEL_SCRIPT = r"""
     button.disabled = true;
     button.textContent = "Running temporary opinion";
     renderTemporaryMessage(panel, "Temporary opinion is running. Result will not be saved.");
-    fetch("/api/aio/temporary/cxr-opinion/" + encodeURIComponent(orthancStudyId), {
+    fetch("/api/aio/temporary/image-opinion/" + encodeURIComponent(orthancStudyId), {
       method: "POST",
       headers: { "Accept": "application/json" }
     })
