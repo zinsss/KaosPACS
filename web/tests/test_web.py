@@ -304,7 +304,7 @@ def test_render_index_escapes_values() -> None:
     assert "2026-07-02" in html
     assert "weasis://?" in html
     assert "KaosPACS-aio Opinion" in html
-    assert "Temporary AI Second Opinion" in html
+    assert ">AIO</button>" in html
     assert "NOT official YHSHFM Report." in html
     assert "ONLY for AI Testing and Assistance." in html
     assert "Clinical Correlation and Physician review required." in html
@@ -393,7 +393,7 @@ def test_aio_report_renders_details_and_findings_sections() -> None:
     assert "generatedNoteBlock(item)" in AIO_PANEL_SCRIPT
     assert "Copy to clipboard" in AIO_PANEL_SCRIPT
     assert "Edit this summary" in AIO_PANEL_SCRIPT
-    assert "Temporary AI Second Opinion" in AIO_PANEL_SCRIPT
+    assert 'temporary.textContent = "AIO";' in AIO_PANEL_SCRIPT
     assert "/api/aio/temporary/image-opinion/" in AIO_PANEL_SCRIPT
     assert "temporaryOpinionEligible" in AIO_PANEL_SCRIPT
     assert "Temporary opinion is running. Result will not be saved." in AIO_PANEL_SCRIPT
@@ -427,7 +427,7 @@ def test_aio_panel_hides_temporary_button_for_bmd() -> None:
     html = _aio_panel(study)
 
     assert 'data-temporary-opinion-eligible="false"' in html
-    assert "Temporary AI Second Opinion" not in html
+    assert ">AIO</button>" not in html
 
 
 def test_aio_proxy_endpoints_call_aio_client() -> None:

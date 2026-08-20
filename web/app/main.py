@@ -1047,7 +1047,7 @@ def _study_card(config: Config, study: StudySummary) -> str:
 def _aio_panel(study: StudySummary) -> str:
     temporary_eligible = "true" if _temporary_image_opinion_eligible(study) else "false"
     temporary_button = (
-        '<button type="button" data-aio-temporary-image>Temporary AI Second Opinion</button>'
+        '<button type="button" data-aio-temporary-image>AIO</button>'
         if temporary_eligible == "true"
         else ""
     )
@@ -1711,7 +1711,7 @@ AIO_PANEL_SCRIPT = r"""
     if ((panel.dataset.temporaryOpinionEligible || "") !== "true") return;
     const temporary = document.createElement("button");
     temporary.type = "button";
-    temporary.textContent = "Temporary AI Second Opinion";
+    temporary.textContent = "AIO";
     temporary.title = "Sends a metadata-stripped rendered X-ray or ECG/EKG image only. Result is not saved.";
     temporary.addEventListener("click", function () {
       runTemporaryCxrOpinion(panel, temporary);
@@ -1746,7 +1746,7 @@ AIO_PANEL_SCRIPT = r"""
       })
       .finally(function () {
         button.disabled = false;
-        button.textContent = "Temporary AI Second Opinion";
+        button.textContent = "AIO";
       });
   }
 
@@ -1783,7 +1783,7 @@ AIO_PANEL_SCRIPT = r"""
     const warning = document.createElement("pre");
     warning.className = "aio-temporary-warning";
     warning.textContent = [
-      "Temporary AI Second Opinion",
+      "AIO",
       "Not saved.",
       "Not official report.",
       payload.warning_text || "*** AI assisted Opinion, not clinical report",
@@ -1800,7 +1800,7 @@ AIO_PANEL_SCRIPT = r"""
     body.appendChild(warning);
     body.appendChild(fields);
     body.appendChild(opinion);
-    container.appendChild(section("Temporary Second Opinion", body, true));
+    container.appendChild(section("AIO", body, true));
   }
 
   function temporaryOpinionErrorMessage(payload) {
