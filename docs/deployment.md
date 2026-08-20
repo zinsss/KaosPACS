@@ -123,16 +123,17 @@ WEB_ORTHANC_PUBLIC_URL=http://192.168.0.200:8042
 WEASIS_DICOMWEB_URL=http://192.168.0.200:8042/dicom-web
 WEB_GATEWAY_URL=http://gateway:8060
 WEB_STUDY_LIMIT=100
-KAOSAIO_URL=http://kaosaio:8000
+KAOSPACS_AIO_URL=http://kaospacs-aio:8000
+KAOSAIO_URL=
 ```
 
 The web container talks to Orthanc internally at `http://orthanc:8042` and to
-Gateway internally at `http://gateway:8060`. If the optional standalone
-KaosAIO service is deployed on the shared Docker network, Web calls it through
-`KAOSAIO_URL` for AI Opinion panels. KaosPACS Web treats KaosAIO as optional;
-study browsing, Weasis launch, and upload remain usable if KaosAIO is
-unavailable. `KAOSPACS_AIO_URL` is kept only as a temporary compatibility
-fallback. KaosEghis should embed the Web admin page at:
+Gateway internally at `http://gateway:8060`. If the optional KaosPACS-aio
+service is deployed on the shared Docker network, Web calls it through
+`KAOSPACS_AIO_URL` for AI Opinion panels. KaosPACS Web treats KaosPACS-aio as
+optional; study browsing, Weasis launch, and upload remain usable if
+KaosPACS-aio is unavailable. `KAOSAIO_URL` remains as a legacy fallback only.
+KaosEghis should embed the Web admin page at:
 
 ```text
 http://<pacs-host>:8070/imaging/worklist

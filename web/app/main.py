@@ -1693,14 +1693,7 @@ AIO_PANEL_SCRIPT = r"""
         });
     });
 
-    const reject = document.createElement("button");
-    reject.type = "button";
-    reject.textContent = "Reject/Hide";
-    reject.disabled = true;
-    reject.title = "TODO: enable when the AIO API supports hide/reject workflow semantics.";
-
     controls.appendChild(reviewed);
-    controls.appendChild(reject);
     appendTemporaryCxrButton(panel, controls);
     content.appendChild(sections);
     content.appendChild(controls);

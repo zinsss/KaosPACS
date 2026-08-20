@@ -57,9 +57,9 @@ Current runtime:
   completion/expiry, receive modality DICOM, or change Gateway
   receive/forward/charset behavior. Web uploads write generated JPG/PNG/PDF-
   derived DICOM directly to Orthanc.
-- KaosAIO is an optional standalone AI Opinion companion service. KaosPACS Web
-  can call it through `KAOSAIO_URL`, but KaosPACS storage, MWL, Gateway,
-  viewing, and upload workflows must continue to work when KaosAIO is absent.
+- KaosPACS-aio is an optional AI Opinion helper service. KaosPACS Web can call
+  it through `KAOSPACS_AIO_URL`, but KaosPACS storage, MWL, Gateway, viewing,
+  and upload workflows must continue to work when KaosPACS-aio is absent.
 - KaosEghis-PACS will remain the EMR-aware adapter that reads eGHIS with
   read-only access, normalizes orders, and sends worklist events to Gateway.
   It should not call MWL directly in production, call Orthanc directly, or
@@ -158,10 +158,10 @@ docker compose ps
 - Gateway normalized order API:
   - `POST http://127.0.0.1:8060/orders/upsert`
   - `POST http://127.0.0.1:8060/orders/cancel`
-- Optional KaosAIO service for AI Opinion panels:
-  `http://kaosaio:8000/api/aio/health` from inside the KaosPACS Docker network,
-  or `http://127.0.0.1:8056/api/aio/health` on the PACS host when KaosAIO is
-  deployed locally.
+- Optional KaosPACS-aio service for AI Opinion panels:
+  `http://kaospacs-aio:8000/api/aio/health` from inside the KaosPACS Docker
+  network, or `http://127.0.0.1:8056/api/aio/health` on the PACS host when
+  KaosPACS-aio is deployed locally.
 - Gateway protected admin API:
   - `POST http://127.0.0.1:8060/admin/worklist/prune`
 - KaosPACS Web is an Orthanc study browser, Weasis launcher, and

@@ -393,6 +393,8 @@ def test_aio_report_renders_details_and_findings_sections() -> None:
     assert "generatedNoteBlock(item)" in AIO_PANEL_SCRIPT
     assert "Copy to clipboard" in AIO_PANEL_SCRIPT
     assert "Edit this summary" in AIO_PANEL_SCRIPT
+    assert "Reject/Hide" not in AIO_PANEL_SCRIPT
+    assert "hide/reject workflow" not in AIO_PANEL_SCRIPT
     assert 'temporary.textContent = "AIO";' in AIO_PANEL_SCRIPT
     assert "/api/aio/temporary/image-opinion/" in AIO_PANEL_SCRIPT
     assert "temporaryOpinionEligible" in AIO_PANEL_SCRIPT
