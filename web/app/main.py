@@ -31,7 +31,7 @@ with warnings.catch_warnings():
 LOGGER = logging.getLogger("kaospacs.web")
 
 AIO_DISCLAIMER = (
-    "KaosAIO Opinion\n\n"
+    "KaosPACS-aio Opinion\n\n"
     "NOT official YHSHFM Report.\n"
     "ONLY for AI Testing and Assistance.\n"
     "Clinical Correlation and Physician review required."
@@ -1057,7 +1057,7 @@ def _aio_panel(study: StudySummary) -> str:
       data-study-instance-uid="{html.escape(study.study_instance_uid, quote=True)}"
       data-orthanc-study-id="{html.escape(study.orthanc_id, quote=True)}"
       data-temporary-opinion-eligible="{temporary_eligible}">
-      <h3>KaosAIO Opinion</h3>
+      <h3>KaosPACS-aio Opinion</h3>
       <pre class="aio-disclaimer">{html.escape(AIO_DISCLAIMER)}</pre>
       <div class="aio-content" aria-live="polite">
         <p>No AI Opinion yet</p>

@@ -93,8 +93,8 @@ def test_config_env_overrides(monkeypatch) -> None:
     monkeypatch.setenv("WEB_ORTHANC_URL", "http://orthanc.local:8042/")
     monkeypatch.setenv("WEB_ORTHANC_PUBLIC_URL", "http://pacs:8042/")
     monkeypatch.setenv("WEASIS_DICOMWEB_URL", "http://pacs:8042/dicom-web/")
-    monkeypatch.setenv("KAOSAIO_URL", "http://kaosaio:8000/")
-    monkeypatch.setenv("KAOSPACS_AIO_URL", "http://old-aio:8056/")
+    monkeypatch.setenv("KAOSAIO_URL", "http://old-aio:8000/")
+    monkeypatch.setenv("KAOSPACS_AIO_URL", "http://kaospacs-aio:8000/")
     monkeypatch.setenv("WEB_GATEWAY_URL", "http://gateway.local:8060/")
     monkeypatch.setenv("WEB_GATEWAY_API_TOKEN", "web-token")
     monkeypatch.setenv("KAOSEGHIS_PACS_BASE_URL", "http://kaoseghis.local:8765/")
@@ -115,7 +115,7 @@ def test_config_env_overrides(monkeypatch) -> None:
     assert config.orthanc_url == "http://orthanc.local:8042"
     assert config.orthanc_public_url == "http://pacs:8042"
     assert config.weasis_dicomweb_url == "http://pacs:8042/dicom-web"
-    assert config.kaosaio_url == "http://kaosaio:8000"
+    assert config.kaosaio_url == "http://kaospacs-aio:8000"
     assert config.gateway_url == "http://gateway.local:8060"
     assert config.gateway_api_token == "web-token"
     assert config.kaoseghis_pacs_base_url == "http://kaoseghis.local:8765"
@@ -131,8 +131,8 @@ def test_config_env_overrides(monkeypatch) -> None:
 
 
 def test_config_uses_legacy_aio_url_when_kaosaio_url_missing(monkeypatch) -> None:
-    monkeypatch.delenv("KAOSAIO_URL", raising=False)
-    monkeypatch.setenv("KAOSPACS_AIO_URL", "http://legacy-aio:8056/")
+    monkeypatch.delenv("KAOSPACS_AIO_URL", raising=False)
+    monkeypatch.setenv("KAOSAIO_URL", "http://legacy-aio:8056/")
 
     config = load_config()
 
@@ -303,7 +303,7 @@ def test_render_index_escapes_values() -> None:
     assert "&lt;b&gt;NAME&lt;/b&gt;" in html
     assert "2026-07-02" in html
     assert "weasis://?" in html
-    assert "KaosAIO Opinion" in html
+    assert "KaosPACS-aio Opinion" in html
     assert "Temporary AI Second Opinion" in html
     assert "NOT official YHSHFM Report." in html
     assert "ONLY for AI Testing and Assistance." in html
