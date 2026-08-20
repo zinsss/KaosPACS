@@ -1732,6 +1732,7 @@ AIO_PANEL_SCRIPT = r"""
       .then(function (response) {
         if (!response.ok) {
           return response.json().catch(function () { return {}; }).then(function (payload) {
+            payload.httpStatus = response.status;
             throw payload;
           });
         }
@@ -1741,8 +1742,7 @@ AIO_PANEL_SCRIPT = r"""
         renderTemporaryOpinion(panel, payload);
       })
       .catch(function (payload) {
-        const message = payload && payload.message ? payload.message : "Temporary opinion provider is not configured.";
-        renderTemporaryMessage(panel, message);
+        renderTemporaryMessage(panel, temporaryOpinionErrorMessage(payload));
       })
       .finally(function () {
         button.disabled = false;
@@ -1801,6 +1801,25 @@ AIO_PANEL_SCRIPT = r"""
     body.appendChild(fields);
     body.appendChild(opinion);
     container.appendChild(section("Temporary Second Opinion", body, true));
+  }
+
+  function temporaryOpinionErrorMessage(payload) {
+    const status = payload && payload.httpStatus ? Number(payload.httpStatus) : 0;
+    const code = payload && payload.error_code ? payload.error_code : "";
+    if (status === 409 || code === "governor_second_look_conflict") {
+      return "Temporary opinion request conflicted with an existing or expired result. It is safe to retry.";
+    }
+    if (status === 429 || code === "governor_second_look_rate_limited") {
+      return "Too many temporary opinion requests. Please wait and try again.";
+    }
+    if (status === 502 || code === "governor_second_look_provider_unavailable") {
+      return "AI second-look provider is unavailable. Please try again later.";
+    }
+    if (status === 504 || code === "governor_second_look_timeout") {
+      return "AI second-look request timed out. Please retry.";
+    }
+    if (payload && payload.message) return payload.message;
+    return "Temporary opinion provider is not configured.";
   }
 
   function renderUnavailable(panel) {

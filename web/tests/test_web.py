@@ -396,6 +396,11 @@ def test_aio_report_renders_details_and_findings_sections() -> None:
     assert "Temporary AI Second Opinion" in AIO_PANEL_SCRIPT
     assert "/api/aio/temporary/image-opinion/" in AIO_PANEL_SCRIPT
     assert "temporaryOpinionEligible" in AIO_PANEL_SCRIPT
+    assert "Temporary opinion is running. Result will not be saved." in AIO_PANEL_SCRIPT
+    assert "Temporary opinion request conflicted with an existing or expired result. It is safe to retry." in AIO_PANEL_SCRIPT
+    assert "Too many temporary opinion requests. Please wait and try again." in AIO_PANEL_SCRIPT
+    assert "AI second-look provider is unavailable. Please try again later." in AIO_PANEL_SCRIPT
+    assert "AI second-look request timed out. Please retry." in AIO_PANEL_SCRIPT
     assert "Not saved." in AIO_PANEL_SCRIPT
     assert ".aio-generated-note" in CSS
     assert ".aio-temporary-result" in CSS
