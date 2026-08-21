@@ -28,6 +28,7 @@ from app.kaoseghis_pacs import KaosEghisPacsClient, PatientContextResult
 from app.main import (
     AIO_DISCLAIMER,
     AIO_PANEL_SCRIPT,
+    AioClient,
     CSS,
     create_handler,
     make_weasis_url,
@@ -201,6 +202,36 @@ def test_kaoseghis_patient_context_success_preserves_korean(monkeypatch, caplog)
     assert "integration-token" not in caplog.text
     assert "홍길동" not in caplog.text
     assert "19700101" not in caplog.text
+
+
+def test_aio_temporary_image_opinion_uses_longer_timeout(monkeypatch) -> None:
+    captured: list[float] = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self) -> bytes:
+            return b"{}"
+
+    def fake_urlopen(request, timeout):
+        captured.append(timeout)
+        return FakeResponse()
+
+    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    client = AioClient(
+        "http://kaospacs-aio:8000",
+        timeout=5,
+        temporary_opinion_timeout=60,
+    )
+
+    client.study_report("1.2.3")
+    client.temporary_image_opinion("orthanc-id")
+
+    assert captured == [5, 60]
 
 
 def test_kaoseghis_patient_context_http_errors_are_safe(monkeypatch) -> None:

@@ -55,9 +55,15 @@ class UploadSummary:
 
 
 class AioClient:
-    def __init__(self, base_url: str, timeout: float = 5.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        timeout: float = 5.0,
+        temporary_opinion_timeout: float = 60.0,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.temporary_opinion_timeout = temporary_opinion_timeout
 
     def study_report(self, study_instance_uid: str) -> dict[str, Any]:
         return self._json("GET", f"/api/aio/study/{quote(study_instance_uid, safe='')}")
@@ -66,7 +72,11 @@ class AioClient:
         return self._json("POST", f"/api/aio/infer/{quote(orthanc_study_id, safe='')}")
 
     def temporary_image_opinion(self, orthanc_study_id: str) -> dict[str, Any]:
-        return self._json("POST", f"/api/aio/temporary/image-opinion/{quote(orthanc_study_id, safe='')}")
+        return self._json(
+            "POST",
+            f"/api/aio/temporary/image-opinion/{quote(orthanc_study_id, safe='')}",
+            timeout=self.temporary_opinion_timeout,
+        )
 
     def temporary_cxr_opinion(self, orthanc_study_id: str) -> dict[str, Any]:
         return self.temporary_image_opinion(orthanc_study_id)
@@ -86,6 +96,7 @@ class AioClient:
         method: str,
         path: str,
         payload: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
         request = Request(
@@ -97,7 +108,7 @@ class AioClient:
             },
             method=method,
         )
-        with urlopen(request, timeout=self.timeout) as response:
+        with urlopen(request, timeout=self.timeout if timeout is None else timeout) as response:
             return json.loads(response.read().decode("utf-8"))
 
 
