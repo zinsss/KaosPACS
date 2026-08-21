@@ -411,11 +411,14 @@ def test_aio_report_renders_details_and_findings_sections() -> None:
     assert 'sections.className = "aio-sections"' in AIO_PANEL_SCRIPT
     assert ".aio-sections { display:grid; grid-template-columns:minmax(0, 1fr);" in CSS
     assert 'section("Details"' in AIO_PANEL_SCRIPT
+    assert 'section("Details", details, false)' in AIO_PANEL_SCRIPT
     assert 'section("Findings"' in AIO_PANEL_SCRIPT
     assert '["result", reportStatusText(report)]' in AIO_PANEL_SCRIPT
     assert 'if (report.status === "completed") return "Generated";' in AIO_PANEL_SCRIPT
     assert 'if (report.physician_review_status === "pending") return "Needs physician review";' in AIO_PANEL_SCRIPT
     assert 'section("Findings", findings, hasFindings(report))' in AIO_PANEL_SCRIPT
+    assert "scoreFindings(report)" in AIO_PANEL_SCRIPT
+    assert "findingHasScores" in AIO_PANEL_SCRIPT
     assert 'section("Routing / Review"' not in AIO_PANEL_SCRIPT
     assert "document.createElement(\"details\")" in AIO_PANEL_SCRIPT
     assert "scoresBlock(item)" in AIO_PANEL_SCRIPT

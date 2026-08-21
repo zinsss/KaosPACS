@@ -1677,7 +1677,7 @@ AIO_PANEL_SCRIPT = r"""
       ["routing reason", routingReason(report)],
       ["review", reviewStatusText(report)]
     ]);
-    sections.appendChild(section("Details", details, true));
+    sections.appendChild(section("Details", details, false));
 
     const findings = findingsBlock(report);
     sections.appendChild(section("Findings", findings, hasFindings(report)));
@@ -1865,7 +1865,7 @@ AIO_PANEL_SCRIPT = r"""
 
   function findingsBlock(report) {
     const container = document.createElement("div");
-    const findings = Array.isArray(report.findings_json) ? report.findings_json : [];
+    const findings = scoreFindings(report);
     if (!findings.length) {
       container.appendChild(field("findings", "-"));
       return container;
@@ -1889,7 +1889,19 @@ AIO_PANEL_SCRIPT = r"""
   }
 
   function hasFindings(report) {
-    return !!(report && Array.isArray(report.findings_json) && report.findings_json.length);
+    return scoreFindings(report).length > 0;
+  }
+
+  function scoreFindings(report) {
+    const findings = report && Array.isArray(report.findings_json) ? report.findings_json : [];
+    return findings.filter(findingHasScores);
+  }
+
+  function findingHasScores(item) {
+    if (!item || typeof item !== "object" || !item.scores || typeof item.scores !== "object") return false;
+    return Object.values(item.scores).some(function (value) {
+      return typeof value === "number" && isFinite(value);
+    });
   }
 
   function reportStatusText(report) {
