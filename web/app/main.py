@@ -2061,6 +2061,10 @@ AIO_PANEL_SCRIPT = r"""
     if (!payload || !payload.input) return "-";
     const width = payload.input.width || "-";
     const height = payload.input.height || "-";
+    const count = Number(payload.input.image_count || 1);
+    if (count > 1) {
+      return count + " rendered PNGs from DICOM PixelData (first " + width + " x " + height + ")";
+    }
     return "rendered PNG from DICOM PixelData (" + width + " x " + height + ")";
   }
 
