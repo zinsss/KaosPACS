@@ -1786,13 +1786,7 @@ AIO_PANEL_SCRIPT = r"""
     const body = document.createElement("div");
     const warning = document.createElement("pre");
     warning.className = "aio-temporary-warning";
-    warning.textContent = [
-      "AIO",
-      "Not saved.",
-      "Not official report.",
-      payload.warning_text || "*** AI assisted Opinion, not clinical report",
-      "Physician review required."
-    ].join("\n");
+    warning.textContent = "Temporary AI-assisted opinion. Not saved. Not an official report. Physician review required.";
     const opinion = document.createElement("pre");
     opinion.className = "aio-temporary-opinion";
     opinion.textContent = payload.opinion_text || "-";
