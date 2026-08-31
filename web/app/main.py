@@ -71,11 +71,15 @@ class AioClient:
     def infer(self, orthanc_study_id: str) -> dict[str, Any]:
         return self._json("POST", f"/api/aio/infer/{quote(orthanc_study_id, safe='')}")
 
-    def temporary_image_opinion(self, orthanc_study_id: str) -> dict[str, Any]:
+    def temporary_image_opinion(self, orthanc_study_id: str, request_attempt_id: str = "") -> dict[str, Any]:
+        headers = {}
+        if request_attempt_id:
+            headers["X-KaosPACS-AIO-Attempt-ID"] = request_attempt_id
         return self._json(
             "POST",
             f"/api/aio/temporary/image-opinion/{quote(orthanc_study_id, safe='')}",
             timeout=self.temporary_opinion_timeout,
+            extra_headers=headers,
         )
 
     def temporary_cxr_opinion(self, orthanc_study_id: str) -> dict[str, Any]:
@@ -97,15 +101,19 @@ class AioClient:
         path: str,
         payload: dict[str, Any] | None = None,
         timeout: float | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        if extra_headers:
+            headers.update(extra_headers)
         request = Request(
             f"{self.base_url}{path}",
             data=data,
-            headers={
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             method=method,
         )
         with urlopen(request, timeout=self.timeout if timeout is None else timeout) as response:
@@ -348,7 +356,12 @@ def create_handler(
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             try:
-                self._json(aio_client.temporary_image_opinion(orthanc_study_id))
+                self._json(
+                    aio_client.temporary_image_opinion(
+                        orthanc_study_id,
+                        request_attempt_id=self.headers.get("X-KaosPACS-AIO-Attempt-ID", ""),
+                    )
+                )
             except HTTPError as exc:
                 try:
                     payload = json.loads(exc.read().decode("utf-8"))
@@ -1728,10 +1741,14 @@ AIO_PANEL_SCRIPT = r"""
     if (!orthancStudyId) return;
     button.disabled = true;
     button.textContent = "Running temporary opinion";
+    const attemptId = temporaryAttemptId();
     renderTemporaryMessage(panel, "Temporary opinion is running. Result will not be saved.");
     fetch("/api/aio/temporary/image-opinion/" + encodeURIComponent(orthancStudyId), {
       method: "POST",
-      headers: { "Accept": "application/json" }
+      headers: {
+        "Accept": "application/json",
+        "X-KaosPACS-AIO-Attempt-ID": attemptId
+      }
     })
       .then(function (response) {
         if (!response.ok) {
@@ -1752,6 +1769,13 @@ AIO_PANEL_SCRIPT = r"""
         button.disabled = false;
         button.textContent = "AIO";
       });
+  }
+
+  function temporaryAttemptId() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return "web-" + window.crypto.randomUUID();
+    }
+    return "web-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
   }
 
   function temporaryResultContainer() {

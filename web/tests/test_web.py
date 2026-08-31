@@ -204,8 +204,8 @@ def test_kaoseghis_patient_context_success_preserves_korean(monkeypatch, caplog)
     assert "19700101" not in caplog.text
 
 
-def test_aio_temporary_image_opinion_uses_longer_timeout(monkeypatch) -> None:
-    captured: list[float] = []
+def test_aio_temporary_image_opinion_uses_longer_timeout_and_attempt_header(monkeypatch) -> None:
+    captured: dict[str, object] = {"timeouts": []}
 
     class FakeResponse:
         def __enter__(self):
@@ -218,7 +218,8 @@ def test_aio_temporary_image_opinion_uses_longer_timeout(monkeypatch) -> None:
             return b"{}"
 
     def fake_urlopen(request, timeout):
-        captured.append(timeout)
+        captured["timeouts"].append(timeout)
+        captured["attempt_header"] = request.get_header("X-kaospacs-aio-attempt-id")
         return FakeResponse()
 
     monkeypatch.setattr("app.main.urlopen", fake_urlopen)
@@ -229,9 +230,10 @@ def test_aio_temporary_image_opinion_uses_longer_timeout(monkeypatch) -> None:
     )
 
     client.study_report("1.2.3")
-    client.temporary_image_opinion("orthanc-id")
+    client.temporary_image_opinion("orthanc-id", request_attempt_id="attempt-1")
 
-    assert captured == [5, 60]
+    assert captured["timeouts"] == [5, 60]
+    assert captured["attempt_header"] == "attempt-1"
 
 
 def test_kaoseghis_patient_context_http_errors_are_safe(monkeypatch) -> None:
@@ -431,6 +433,8 @@ def test_aio_report_renders_details_and_findings_sections() -> None:
     assert "Reject/Hide" not in AIO_PANEL_SCRIPT
     assert "hide/reject workflow" not in AIO_PANEL_SCRIPT
     assert 'temporary.textContent = "AIO";' in AIO_PANEL_SCRIPT
+    assert "temporaryAttemptId" in AIO_PANEL_SCRIPT
+    assert "X-KaosPACS-AIO-Attempt-ID" in AIO_PANEL_SCRIPT
     assert "/api/aio/temporary/image-opinion/" in AIO_PANEL_SCRIPT
     assert "temporaryOpinionEligible" in AIO_PANEL_SCRIPT
     assert "Temporary opinion is running. Result will not be saved." in AIO_PANEL_SCRIPT
@@ -523,11 +527,12 @@ def test_aio_proxy_endpoints_call_aio_client() -> None:
         temporary = Request(
             f"{_server_url(server)}/api/aio/temporary/image-opinion/orthanc-id",
             data=b"",
+            headers={"X-KaosPACS-AIO-Attempt-ID": "web-attempt-1"},
             method="POST",
         )
         response = urlopen(temporary, timeout=3)
         assert response.status == 200
-        aio.temporary_image_opinion.assert_called_once_with("orthanc-id")
+        aio.temporary_image_opinion.assert_called_once_with("orthanc-id", request_attempt_id="web-attempt-1")
 
         review = Request(
             f"{_server_url(server)}/api/aio/report/report-1/review",
