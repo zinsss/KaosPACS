@@ -1918,8 +1918,14 @@ AIO_PANEL_SCRIPT = r"""
 
   function visibleFindings(report) {
     const findings = report && Array.isArray(report.findings_json) ? report.findings_json : [];
+    const seenGeneratedNotes = new Set();
     return findings.filter(function (item) {
-      return findingHasScores(item) || findingHasGeneratedNote(item);
+      if (findingHasScores(item)) return true;
+      if (!findingHasGeneratedNote(item)) return false;
+      const note = String(item.generated_note).trim();
+      if (seenGeneratedNotes.has(note)) return false;
+      seenGeneratedNotes.add(note);
+      return true;
     });
   }
 
