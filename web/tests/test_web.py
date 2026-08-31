@@ -439,7 +439,9 @@ def test_aio_report_renders_details_and_findings_sections() -> None:
     assert "AI second-look provider is unavailable. Please try again later." in AIO_PANEL_SCRIPT
     assert "AI second-look request timed out. Please retry." in AIO_PANEL_SCRIPT
     assert "Not saved." in AIO_PANEL_SCRIPT
-    assert "rendered PNGs from DICOM PixelData" in AIO_PANEL_SCRIPT
+    assert "rendered PNGs from \" + sourceLabel" in AIO_PANEL_SCRIPT
+    assert "DICOM PixelData" in AIO_PANEL_SCRIPT
+    assert "DICOM WaveformData" in AIO_PANEL_SCRIPT
     assert ".aio-generated-note" in CSS
     assert ".aio-temporary-result" in CSS
 

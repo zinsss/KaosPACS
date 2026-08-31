@@ -2068,10 +2068,14 @@ AIO_PANEL_SCRIPT = r"""
     const width = payload.input.width || "-";
     const height = payload.input.height || "-";
     const count = Number(payload.input.image_count || 1);
+    const source = payload.input.source || "";
+    const sourceLabel = source === "orthanc_instance_dicom_waveform_rendered_png"
+      ? "DICOM WaveformData"
+      : "DICOM PixelData";
     if (count > 1) {
-      return count + " rendered PNGs from DICOM PixelData (first " + width + " x " + height + ")";
+      return count + " rendered PNGs from " + sourceLabel + " (first " + width + " x " + height + ")";
     }
-    return "rendered PNG from DICOM PixelData (" + width + " x " + height + ")";
+    return "rendered PNG from " + sourceLabel + " (" + width + " x " + height + ")";
   }
 
   panels.forEach(loadPanel);
