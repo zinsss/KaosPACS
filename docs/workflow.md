@@ -247,9 +247,12 @@ Legacy modality
 
 KaosPACS Web is an Orthanc study browser, Weasis launcher, and patient-context
 document upload surface. It reads Orthanc, shows preview thumbnails when
-Orthanc can render one, and opens studies in Weasis through Orthanc DICOMweb.
-It does not own MWL state, infer completion/expiry, receive modality DICOM, or
-change Gateway receive/forward/charset behavior.
+Orthanc can render one, opens studies in Weasis through Orthanc DICOMweb, and
+offers an `Open in Web` action that loads the study in Orthanc Stone Web Viewer
+for quick browser review. This is useful for uploaded PDF-derived patient
+documents where launching Weasis is slower than needed. Web does not own MWL
+state, infer completion/expiry, receive modality DICOM, or change Gateway
+receive/forward/charset behavior.
 
 For patient-context web launch, eGHIS opens:
 

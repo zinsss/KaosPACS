@@ -179,6 +179,13 @@ def make_weasis_url(dicomweb_url: str, study_instance_uid: str) -> str:
     return "weasis://?" + quote_plus(command)
 
 
+def make_stone_web_url(orthanc_public_url: str, study_instance_uid: str) -> str:
+    return (
+        f"{orthanc_public_url.rstrip('/')}/stone-webviewer/index.html"
+        f"?study={quote_plus(study_instance_uid)}"
+    )
+
+
 def create_handler(
     config: Config,
     orthanc: OrthancClient,
@@ -1038,6 +1045,7 @@ def _study_card(config: Config, study: StudySummary) -> str:
         else '<div class="no-thumb">No preview</div>'
     )
     weasis_url = make_weasis_url(config.weasis_dicomweb_url, study.study_instance_uid)
+    stone_web_url = make_stone_web_url(config.orthanc_public_url, study.study_instance_uid)
     orthanc_url = f"{config.orthanc_public_url}/ui/app/"
     modality = ", ".join(study.modalities) or "-"
     date = _format_date(study.study_date)
@@ -1061,6 +1069,7 @@ def _study_card(config: Config, study: StudySummary) -> str:
     </dl>
     <div class="actions">
       <a class="primary" href="{html.escape(weasis_url)}">Open with Weasis</a>
+      <a href="{html.escape(stone_web_url)}" target="_blank" rel="noreferrer">Open in Web</a>
       <a href="{html.escape(orthanc_url)}" target="_blank" rel="noreferrer">Orthanc</a>
     </div>
     {_aio_panel(study)}
@@ -1195,6 +1204,10 @@ def _study_payload(study: StudySummary, config: Config) -> dict[str, Any]:
     )
     payload["weasis_url"] = make_weasis_url(
         config.weasis_dicomweb_url,
+        study.study_instance_uid,
+    )
+    payload["stone_web_url"] = make_stone_web_url(
+        config.orthanc_public_url,
         study.study_instance_uid,
     )
     return payload

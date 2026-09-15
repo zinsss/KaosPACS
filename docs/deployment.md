@@ -151,7 +151,9 @@ through Gateway, not physical DICOM or audit deletion.
 Browsers open `http://192.168.0.200/emr.php`. The Weasis buttons use the
 configured DICOMweb URL, so client workstations must be able to reach Orthanc
 HTTP at `192.168.0.200:8042` and must have Weasis installed and registered for
-the `weasis://` protocol.
+the `weasis://` protocol. The `Open in Web` buttons use the same Orthanc HTTP
+endpoint to open Stone Web Viewer at `/stone-webviewer/index.html?study=...`;
+no local Weasis installation is needed for that browser path.
 
 When eGHIS opens
 `http://192.168.0.200/emr.php?m_patid=<chart_no>&m_patname=<name>&m_dob=<yyyymmdd>&m_sex=<M|F|O>`,

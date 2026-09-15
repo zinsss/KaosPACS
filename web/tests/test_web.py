@@ -31,6 +31,7 @@ from app.main import (
     AioClient,
     CSS,
     create_handler,
+    make_stone_web_url,
     make_weasis_url,
     _aio_panel,
     _patient_context_with_fallback,
@@ -309,6 +310,15 @@ def test_weasis_url_uses_dicomweb_study_query() -> None:
     assert "192.168.0.200%3A8042%2Fdicom-web" in url
 
 
+def test_stone_web_url_uses_study_query() -> None:
+    url = make_stone_web_url(
+        "http://192.168.0.200:8042/",
+        "1.2.3",
+    )
+
+    assert url == "http://192.168.0.200:8042/stone-webviewer/index.html?study=1.2.3"
+
+
 def test_render_index_escapes_values() -> None:
     config = Mock()
     config.weasis_dicomweb_url = "http://pacs/dicom-web"
@@ -336,6 +346,8 @@ def test_render_index_escapes_values() -> None:
     assert "&lt;b&gt;NAME&lt;/b&gt;" in html
     assert "2026-07-02" in html
     assert "weasis://?" in html
+    assert "Open in Web" in html
+    assert "http://pacs/stone-webviewer/index.html?study=1.2.3" in html
     assert "KaosPACS-aio Opinion" in html
     assert ">AIO</button>" in html
     assert "NOT official YHSHFM Report." in html

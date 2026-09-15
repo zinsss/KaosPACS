@@ -262,6 +262,17 @@ does not load images, confirm the workstation can reach:
 http://192.168.0.200:8042/dicom-web
 ```
 
+If `Open in Web` does not load the browser viewer, confirm the workstation can
+reach Orthanc Stone Web Viewer:
+
+```text
+http://192.168.0.200:8042/stone-webviewer/index.html
+```
+
+`Open in Web` uses the study URL form
+`/stone-webviewer/index.html?study=<StudyInstanceUID>` and does not require
+Weasis to be installed.
+
 The Weasis URL is controlled by `WEASIS_DICOMWEB_URL`.
 
 If uploads do not appear in PACS, confirm the EMR URL includes `m_patid`.

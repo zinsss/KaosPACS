@@ -166,9 +166,12 @@ docker compose ps
   - `POST http://127.0.0.1:8060/admin/worklist/prune`
 - KaosPACS Web is an Orthanc study browser, Weasis launcher, and
   patient-context document upload surface. It reads Orthanc over Docker
-  internal HTTP and generates `weasis://` links that ask Weasis to load studies from
-  `http://192.168.0.200:8042/dicom-web`. Workstations need Weasis installed
-  and registered for the `weasis://` protocol. When eGHIS opens
+  internal HTTP, generates `weasis://` links that ask Weasis to load studies
+  from `http://192.168.0.200:8042/dicom-web`, and provides an `Open in Web`
+  link to Orthanc Stone Web Viewer for quick browser review of studies such as
+  uploaded PDF-derived patient documents. Workstations need Weasis installed
+  and registered for the `weasis://` protocol only for the Weasis button. When
+  eGHIS opens
   `/emr.php?m_patid=<chart_no>&m_patname=<name>&m_dob=<yyyymmdd>&m_sex=<M|F|O>`,
   Web scopes the page to that PatientID, displays chart number/name/DOB/sex
   from the launch context, and allows repeated pasted screenshots/images plus
