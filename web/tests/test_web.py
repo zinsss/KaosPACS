@@ -1126,6 +1126,31 @@ def test_patient_context_page_contains_upload_without_manual_patient_fields() ->
     assert 'name="sex"' not in html
 
 
+def test_pdf_upload_success_message_has_pacs_input_copy_button() -> None:
+    config = Mock()
+    config.weasis_dicomweb_url = "http://pacs/dicom-web"
+    config.orthanc_public_url = "http://pacs"
+
+    html = render_index(
+        config,
+        [],
+        query="",
+        patient_id="9426",
+        patient_name="이진성",
+        patient_birth_date="19700101",
+        patient_sex="M",
+        upload_message="Upload added to PACS.",
+        upload_copy_text="PACS입력: ",
+        error="",
+    )
+
+    assert "Upload added to PACS." in html
+    assert 'data-upload-copy-text="PACS입력: "' in html
+    assert ">Copy PACS입력: </button>" in html
+    assert "data-upload-copy-status" in html
+    assert "copyUploadText" in html
+
+
 def test_patient_context_fills_missing_demographics_from_studies() -> None:
     config = Mock()
     config.weasis_dicomweb_url = "http://pacs/dicom-web"
@@ -1643,6 +1668,7 @@ def test_web_upload_pdf_uploads_each_rendered_page() -> None:
             method="POST",
         )
         response = urlopen(request, timeout=3)
+        response_body = response.read().decode("utf-8")
 
         assert response.status == 200
         assert orthanc.upload_instance.call_count == 2
@@ -1652,6 +1678,9 @@ def test_web_upload_pdf_uploads_each_rendered_page() -> None:
         ]
         assert all(dataset.SOPClassUID == SecondaryCaptureImageStorage for dataset in datasets)
         assert all(dataset.StudyDescription == "Uploaded PDF as images" for dataset in datasets)
+        assert "Upload added 2 items to PACS." in response_body
+        assert 'data-upload-copy-text="PACS입력: "' in response_body
+        assert ">Copy PACS입력: </button>" in response_body
     finally:
         _stop_test_server(server, thread)
 

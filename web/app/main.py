@@ -52,6 +52,7 @@ class UploadSummary:
     uploaded_count: int = 0
     failed_count: int = 0
     first_error: str = ""
+    pdf_uploaded: bool = False
 
 
 class AioClient:
@@ -487,6 +488,10 @@ def create_handler(
                 params.get("uploaded_count", [""])[0],
                 params.get("failed_count", [""])[0],
             )
+            upload_copy_text = _upload_copy_text(
+                upload_status,
+                params.get("uploaded_pdf", [""])[0],
+            )
             try:
                 if path == "/emr.php" and patient.patient_id:
                     studies = orthanc.studies_for_patient(
@@ -516,6 +521,7 @@ def create_handler(
                     patient_birth_date=patient.patient_birth_date,
                     patient_sex=patient.patient_sex,
                     upload_message=upload_message,
+                    upload_copy_text=upload_copy_text,
                     error="",
                 )
             except Exception as exc:
@@ -538,6 +544,7 @@ def create_handler(
                     patient_birth_date=patient.patient_birth_date,
                     patient_sex=patient.patient_sex,
                     upload_message="",
+                    upload_copy_text="",
                     error="Orthanc is not reachable.",
                 )
             self._html(body)
@@ -604,15 +611,17 @@ def create_handler(
                 return
 
             LOGGER.info(
-                "Web upload batch complete event=upload_batch_complete uploaded_count=%s failed_count=%s",
+                "Web upload batch complete event=upload_batch_complete uploaded_count=%s failed_count=%s pdf_uploaded=%s",
                 summary.uploaded_count,
                 summary.failed_count,
+                summary.pdf_uploaded,
             )
             self._redirect_upload(
                 params,
                 _upload_redirect_status(summary),
                 summary.uploaded_count,
                 summary.failed_count,
+                summary.pdf_uploaded,
             )
 
         def _store_upload_fields(
@@ -623,6 +632,7 @@ def create_handler(
             uploaded_count = 0
             failed_count = 0
             first_error = ""
+            pdf_uploaded = False
             upload_count = len(fields)
             for index, field in enumerate(fields, start=1):
                 try:
@@ -631,6 +641,10 @@ def create_handler(
                         raise ValueError("missing_file")
                     if len(content) > config.upload_max_bytes:
                         raise ValueError("too_large")
+                    is_pdf = _is_pdf_upload(
+                        getattr(field, "filename", "") or "",
+                        getattr(field, "type", "") or "",
+                    )
                     results = create_upload_dicoms(
                         patient_id=patient.patient_id,
                         patient_name=patient.patient_name,
@@ -645,6 +659,8 @@ def create_handler(
                     for result in results:
                         orthanc.upload_instance(result.dicom_bytes)
                         uploaded_count += 1
+                        if is_pdf:
+                            pdf_uploaded = True
                         LOGGER.info(
                             "Web upload stored event=upload_stored accession_number=%s modality=%s upload_index=%s upload_count=%s",
                             result.accession_number,
@@ -670,7 +686,7 @@ def create_handler(
                         index,
                         upload_count,
                     )
-            return UploadSummary(uploaded_count, failed_count, first_error)
+            return UploadSummary(uploaded_count, failed_count, first_error, pdf_uploaded)
 
         def _redirect_upload(
             self,
@@ -678,6 +694,7 @@ def create_handler(
             status: str,
             uploaded_count: int = 0,
             failed_count: int = 0,
+            pdf_uploaded: bool = False,
         ) -> None:
             query = {key: values[0] for key, values in params.items() if values}
             query["upload"] = status
@@ -685,6 +702,8 @@ def create_handler(
                 query["uploaded_count"] = str(uploaded_count)
             if failed_count:
                 query["failed_count"] = str(failed_count)
+            if pdf_uploaded and status in {"success", "partial"}:
+                query["uploaded_pdf"] = "1"
             location = "/emr.php?" + urlencode(query)
             self.send_response(HTTPStatus.SEE_OTHER)
             self.send_header("Location", location)
@@ -735,6 +754,7 @@ def render_index(
     patient_birth_date: str = "",
     patient_sex: str = "",
     upload_message: str = "",
+    upload_copy_text: str = "",
     error: str,
 ) -> str:
     patient = _patient_context_from_studies(
@@ -760,6 +780,7 @@ def render_index(
             patient,
             query,
             upload_message,
+            upload_copy_text,
         )
         if patient.patient_id
         else '<div class="notice">No patient/chart number was provided in m_patid.</div>'
@@ -1152,10 +1173,25 @@ def _contains_any(value: str, terms: tuple[str, ...]) -> bool:
     return any(term in value for term in terms)
 
 
+def _upload_message_html(upload_message: str, upload_copy_text: str) -> str:
+    if not upload_message:
+        return ""
+    copy_button = ""
+    if upload_copy_text:
+        copy_button = (
+            f' <button type="button" class="secondary upload-copy-button" '
+            f'data-upload-copy-text="{html.escape(upload_copy_text, quote=True)}">'
+            f'Copy {html.escape(upload_copy_text)}</button>'
+            f' <span class="upload-copy-status" data-upload-copy-status aria-live="polite"></span>'
+        )
+    return f'<div class="upload-message">{html.escape(upload_message)}{copy_button}</div>'
+
+
 def _upload_form(
     patient: PatientContext,
     query: str,
     upload_message: str,
+    upload_copy_text: str,
 ) -> str:
     query_params = {"m_patid": patient.patient_id}
     if patient.patient_name:
@@ -1167,11 +1203,7 @@ def _upload_form(
     if query:
         query_params["q"] = query
     action = "/emr.php?" + urlencode(query_params)
-    message = (
-        f'<div class="upload-message">{html.escape(upload_message)}</div>'
-        if upload_message
-        else ""
-    )
+    message = _upload_message_html(upload_message, upload_copy_text)
     return f"""
 <section class="upload-panel">
   <form method="post" action="{html.escape(action)}" enctype="multipart/form-data" data-paste-upload data-patient-upload-form>
@@ -1468,6 +1500,18 @@ def _upload_status_message(status: str, uploaded_count: str = "", failed_count: 
     return messages.get(status, "")
 
 
+def _upload_copy_text(status: str, uploaded_pdf: str = "") -> str:
+    if status not in {"success", "partial"}:
+        return ""
+    if uploaded_pdf != "1":
+        return ""
+    return "PACS입력: "
+
+
+def _is_pdf_upload(filename: str, content_type: str) -> bool:
+    return content_type.lower().split(";", 1)[0].strip() == "application/pdf" or filename.lower().endswith(".pdf")
+
+
 def _safe_count(raw: str) -> int:
     try:
         return max(int(raw), 0)
@@ -1516,7 +1560,9 @@ main { padding:18px 28px 32px; }
 .upload-row { display:flex; gap:8px; align-items:center; }
 .upload-row input { min-height:36px; }
 .upload-panel p { font-size:13px; }
-.upload-message { margin-top:8px; color:var(--green); font-weight:700; }
+.upload-message { margin-top:8px; color:var(--green); font-weight:700; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.upload-copy-button { border-color:var(--green); color:var(--text); }
+.upload-copy-status { color:var(--muted); font-size:12px; font-weight:600; }
 .paste-zone { border:1px dashed #81A1C1; border-radius:8px; padding:12px; margin:8px 0 10px; background:var(--panel-2); outline:none; }
 .paste-zone:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(136,192,208,.18); }
 .paste-zone.drag-over { border-color:var(--accent); background:#3A4B5E; box-shadow:0 0 0 3px rgba(136,192,208,.2); }
@@ -2218,9 +2264,47 @@ PASTE_SCRIPT = r"""
   let syncingInput = false;
 
   const allowedTypes = new Set(["image/jpeg", "image/png", "application/pdf"]);
+  bindUploadCopyButtons();
 
   function setStatus(message) {
     status.textContent = message;
+  }
+
+  function bindUploadCopyButtons() {
+    document.querySelectorAll("[data-upload-copy-text]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        const text = button.dataset.uploadCopyText || "";
+        const status = document.querySelector("[data-upload-copy-status]");
+        copyUploadText(text).then(function () {
+          if (status) status.textContent = "Copied";
+        }).catch(function () {
+          if (status) status.textContent = "Copy failed";
+        });
+      });
+    });
+  }
+
+  function copyUploadText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        if (document.execCommand("copy")) resolve();
+        else reject(new Error("copy failed"));
+      } catch (error) {
+        reject(error);
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    });
   }
 
   function syncInputFiles() {
