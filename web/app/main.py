@@ -1561,7 +1561,8 @@ main { padding:18px 28px 32px; }
 .upload-row input { min-height:36px; }
 .upload-panel p { font-size:13px; }
 .upload-message { margin-top:8px; color:var(--green); font-weight:700; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-.upload-copy-button { border-color:var(--green); color:var(--text); }
+.upload-copy-button { background:var(--yellow); border-color:var(--yellow); color:#2E3440; font-weight:800; box-shadow:0 0 0 3px rgba(235,203,139,.22); }
+.upload-copy-button:hover { border-color:#F3DCA7; box-shadow:0 0 0 4px rgba(235,203,139,.32); }
 .upload-copy-status { color:var(--muted); font-size:12px; font-weight:600; }
 .paste-zone { border:1px dashed #81A1C1; border-radius:8px; padding:12px; margin:8px 0 10px; background:var(--panel-2); outline:none; }
 .paste-zone:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(136,192,208,.18); }

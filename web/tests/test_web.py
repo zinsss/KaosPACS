@@ -1149,6 +1149,7 @@ def test_pdf_upload_success_message_has_pacs_input_copy_button() -> None:
     assert ">Copy PACS입력: </button>" in html
     assert "data-upload-copy-status" in html
     assert "copyUploadText" in html
+    assert ".upload-copy-button { background:var(--yellow);" in CSS
 
 
 def test_patient_context_fills_missing_demographics_from_studies() -> None:
